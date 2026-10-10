@@ -58,6 +58,8 @@ DuckDB CLI version recorded in `docs/development.md`.
 
 ### Phase I0 — Repository foundation (small, sequential, done by the coordinator)
 
+**Done 2026-10-10** (commit `5d10e20`): git, Cargo workspace with strict lints and four crate skeletons, Julia workspace (`tools`), Makefile gates (`make check`), hook installed, session-start rewritten, README and `docs/`. Remaining: `rustfmt` and `clippy` must be installed (`sudo dnf install rustfmt clippy`) before `make check` passes end to end; no remote, so no CI workflow yet. A `Makefile` is used because `just` is not installed.
+
 1. `git init`, `.gitignore` (data trees, `target/`, Julia depots), first commit of the specs as they are now. **Owner confirms** before the first commit, and whether a remote (GitHub or other) exists.
 2. Cargo workspace at the root: members `symbols/`, `calendar/` (new, see I1), `lake/` (new), `ingest/`; later `execution/`. Shared `[workspace.lints]`, `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`.
 3. Julia workspace: root `Project.toml` with `[workspace] projects = ["features", "models", "portfolio", "regime", "conviction", "ledger", "backtest", "schemas", "tools"]` (Julia 1.12 workspaces; verify) and one shared `Manifest.toml`.
