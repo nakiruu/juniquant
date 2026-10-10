@@ -9,7 +9,7 @@ Overview of how the system fits together. Details live in the skills
  Yahoo / EDGAR / FRED+ALFRED / iShares
         │  Rust ingest (direct HTTP, raw landing zone, resumable manifest)      01
         ▼
- Parquet lake ($QUANT_ROOT/lake, 34 datasets, schema registry)                13
+ Parquet lake ($QUANT_ROOT/lake, 35 datasets, schema registry)                13
         │  Julia: universe (point-in-time), coverage, total-return index, panel  02
         ▼
  GSPQR: 21 LightGBM quantile models, monthly walk-forward generations           03

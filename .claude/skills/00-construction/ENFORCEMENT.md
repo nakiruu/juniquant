@@ -190,7 +190,7 @@ the hook's own text and this file do not self-match).
 ## §5 Parquet Schema Immutability — MECHANICAL
 
 The repository file `schemas/registry.json` stores a SHA-256 hash of each
-dataset's schema, keyed by dataset name (34 datasets, `13-parquet-lake/SKILL.md`
+dataset's schema, keyed by dataset name (35 datasets, `13-parquet-lake/SKILL.md`
 §3; a dataset is a single file or a hive directory of `data.parquet` leaves,
 `13-parquet-lake/IO-CONTRACT.md`). A CI job reads one leaf of every dataset,
 hashes its schema in the canonical form, and compares to the registry. Mismatch without a corresponding migration file in

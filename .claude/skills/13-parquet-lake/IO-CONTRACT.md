@@ -108,6 +108,11 @@ Rust and any future language it does exactly this:
      overwrite): a colliding row with different content is an error, an
      identical row is dropped.
    `mode = replace` skips the read and writes `df` alone (used for rebuilds).
+   Key comparison treats a null as an ordinary value equal to another null
+   (so `evaluation_metrics` legacy rows, whose run columns are null, stay
+   unique on `(eval_date, horizon)`). A dataset with no primary key
+   (`audit_log`) is `append_only` over whole rows. The primary key, sort key
+   and merge rule come from `schemas/registry.json` (`SKILL.md` §6).
 3. **Sort** by the primary key (deterministic row order).
 4. **Write** to the temporary path in the same directory with ZSTD level 3 and
    a fixed row-group size; `fsync` the file.

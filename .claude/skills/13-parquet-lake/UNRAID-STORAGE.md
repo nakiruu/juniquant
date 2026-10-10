@@ -106,7 +106,9 @@ cache drive is the norm, and the nightly array backup is the safety net.
 │   ├── security_master.parquet         # #31
 │   ├── delistings.parquet              # #32
 │   ├── filing_events.parquet           # #33
-│   └── price_coverage.parquet          # #34
+│   ├── price_coverage.parquet          # #34
+│   └── listings/                       # #35 listed securities per date (D12), P(year)
+│       └── year=YYYY/data.parquet
 ├── raw/                                # immutable landing zone (01 BACKFILL.md §3); not registered
 │   └── <source>/<entity>/<chunk>/<fetched_at>__<sha8>.<ext>.zst (+ .meta.json)
 ├── stage/                              # parsed per-chunk intermediates, rebuildable; not registered

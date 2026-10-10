@@ -7,7 +7,7 @@ description: The data lake. Every Parquet dataset in the system, its schema,
 
 # Parquet Lake
 
-The lake is 34 datasets. Their schemas are frozen once written (constitution
+The lake is 35 datasets. Their schemas are frozen once written (constitution
 §5). This skill is the authoritative definition of each dataset's layout; the
 column lists are in `SCHEMAS.md`; the read/write semantics are in
 `IO-CONTRACT.md`.
@@ -50,7 +50,7 @@ migration file is a build failure.
 
 See `MIGRATIONS.md` for the additive change procedure.
 
-## 3. The 34 Datasets (layout, writer, cadence)
+## 3. The 35 Datasets (layout, writer, cadence)
 
 This is the single table of layouts. `SCHEMAS.md`, `UNRAID-STORAGE.md` and
 `scripts/generate-registry.jl` must agree with it; `verify-schemas.sh` fails
@@ -96,9 +96,10 @@ names only, never stored columns.
 | 32 | `delistings` (EDGAR-derived delisting events) | S | Rust (ingest) | Daily |
 | 33 | `filing_events` (8-K items, Form 25/15) | S | Rust (ingest) | Daily |
 | 34 | `price_coverage` (survivorship coverage, per ticker) | S | Julia (universe builder) | Daily, after the universe |
+| 35 | `listings` (listed securities per date, D12) | P(`year`) | Rust (ingest) | Daily |
 
 Numbers #1-#27 are unchanged from the earlier inventory (other skills cite
-them). #28-#34 are appended. Never renumber.
+them). #28-#35 are appended. Never renumber.
 
 **Single-writer rule.** No dataset has more than one writer. If two modules
 need to write the same data, they write two datasets. This eliminates write
@@ -165,29 +166,65 @@ the readable column list and its hash:
 
 ```json
 {
-  "format_version": 1,
+  "format_version": 2,
   "canonical_form": "DuckDB DESCRIBE: 'column_name:column_type' lines joined by '|', SHA-256 of the UTF-8 string",
   "datasets": {
     "prices": {
+      "number": 2,
       "layout": "partitioned",
       "partition_keys": ["year", "month"],
+      "partition_column": "date",
       "writer": "rust-ingest",
       "schemas_md": "#2",
+      "fields": [
+        { "name": "ticker", "type": "utf8",   "nullable": false },
+        { "name": "date",   "type": "date32", "nullable": false },
+        { "name": "...",    "type": "...",    "nullable": true }
+      ],
+      "primary_key": ["ticker", "date"],
+      "sort_key": ["ticker", "date"],
+      "merge": "overwrite",
       "columns": ["ticker:VARCHAR", "date:DATE", "..."],
       "hash": "a3f9...",
       "last_migration": "2026-10-10-initial"
-    },
-    "audit_log": {
-      "layout": "partitioned", "partition_keys": ["date"],
-      "writer": "rust-eventbus", "schemas_md": "#21", "columns": ["..."],
-      "hash": "...", "last_migration": "2026-10-10-initial"
     }
   }
 }
 ```
 
 The key is the dataset name without `.parquet` (so `audit_log`, not
-`audit_log.parquet`; the audit log is a dataset, not a file).
+`audit_log.parquet`; the audit log is a dataset, not a file). Datasets are
+listed in `number` order. Every dataset in §3 is registered from the start,
+before its first real write (the hash comes from a probe leaf, below).
+
+**Fields of an entry (format_version 2).**
+
+| Field | Meaning | Source |
+|---|---|---|
+| `number` | The `#` in §3; never reused | §3 |
+| `layout` | `single` or `partitioned` | §3 |
+| `partition_keys` | Directory keys in order (`year`, `month`, `date`, `session`); `[]` for `single` | §3 |
+| `partition_column` | The stored column whose value places a row in a leaf (`year=`/`month=` from a `date32`; `date=` from the UTC date of a `timestamp`; `session=` from a `date32`); `null` for `single` | Generator table, checked against `SCHEMAS.md` |
+| `writer` | Writer tag (one module, §3) | Generator table |
+| `schemas_md` | `#<number>` section in `SCHEMAS.md` | `SCHEMAS.md` |
+| `fields` | Every stored column in order: `name`, Arrow `type` (one of `utf8`, `bool`, `int16`, `int32`, `int64`, `float64`, `date32`, `timestamp[ns, UTC]`), `nullable` | `SCHEMAS.md` column table |
+| `primary_key` | Primary-key columns in order; `[]` when the dataset has none (`audit_log`) | `SCHEMAS.md` "Primary key:" line |
+| `sort_key` | Row order written to every leaf: the primary key, or for a dataset without one the generator table's key (`audit_log`: `timestamp`, `event_id`) | Derived |
+| `merge` | `overwrite` (new row wins on a key collision) or `append_only` (a differing row is an error, an identical row is dropped), `IO-CONTRACT.md` §3 | Generator table |
+| `columns`, `hash` | DuckDB `DESCRIBE` of a leaf written by the real Rust writer, and its SHA-256 (canonical form above) | Probe leaf |
+| `last_migration` | Last migration that changed the entry | Generator |
+
+`fields` is what writers validate against (`IO-CONTRACT.md` §3 step 1);
+`columns`/`hash` are what the verifier compares lake files against. The
+generator derives `fields`, `primary_key` and `schemas_md` by parsing
+`SCHEMAS.md` (the four-column `Column | Type | Nullable | Notes` tables and the
+`Primary key:` lines), so the registry cannot drift from this skill. It then
+writes one empty leaf per dataset through the Rust writer
+(`lake-schema-probe`) into a temporary lake and takes `columns`/`hash` from
+DuckDB `DESCRIBE` of those leaves. A type in `SCHEMAS.md` outside the list
+above, a section without a primary-key line (other than a documented
+exception), or a `DESCRIBE` type that disagrees with the expected mapping in
+`SCHEMAS.md` fails the generator.
 
 **One canonical form.** The generator (`scripts/generate-registry.jl`) and
 the verifier (`scripts/verify-schemas.sh`) both compute the hash from the

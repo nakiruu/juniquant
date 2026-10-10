@@ -1030,3 +1030,43 @@ dataset (`QUERY-PATTERNS.md`).
 
 Primary key: `ticker`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 
+
+---
+
+## 35. `listings`
+
+Rows: about 8,000 symbol-directory lines per archived day (about 2M per year
+from the day archiving starts; estimate), plus the reconstructed history
+(`source = edgar_reconstructed`, size set in I2). Writer: Rust (ingest). Update: daily. Partitioned: `year` (of `date`).
+
+Which securities were listed on each date, the data scope of DECISIONS D12
+(every NYSE, NYSE American and Nasdaq common stock; trading stays IWF/IWP).
+Raw facts from the Nasdaq Trader symbol directories (`nasdaqlisted.txt`,
+`otherlisted.txt`) as archived each day, plus earlier history reconstructed
+from EDGAR (Form 25, submissions) and labelled as such (D13). Test issues and
+symbols that do not normalize (preferreds, warrants, rights, units) are
+dropped at parse time and counted in `data_quality`. ETFs are kept and
+flagged. The files have no security-type field, so `security_class` is a
+rule-based classification whose rule is recorded; every rule is a **verify**
+item until checked against a sample.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `date` | `date32` | no | Listing date the row describes: the `America/New_York` date of the file's creation stamp, or the reconstructed date |
+| `ticker` | `utf8` | no | Canonical symbol after normalization (`01-data-ingestion/UNIVERSE.md` §3) |
+| `vendor_symbol` | `utf8` | no | The symbol exactly as in the file (`Symbol` or `ACT Symbol`) |
+| `exchange` | `utf8` | no | `NASDAQ` / `NYSE` / `NYSE_AMERICAN` / `NYSE_ARCA` / `CBOE_BZX` / `IEX` (from the file's exchange code) |
+| `security_name` | `utf8` | no | As in the file |
+| `is_etf` | `bool` | no | The file's ETF flag |
+| `market_category` | `utf8` | yes | Nasdaq market category (`Q` / `G` / `S`); null for other exchanges |
+| `financial_status` | `utf8` | yes | Nasdaq financial status code; null for other exchanges |
+| `round_lot` | `int32` | yes | Round lot size as in the file |
+| `security_class` | `utf8` | no | `common` / `adr` / `fund` / `preferred` / `other` / `unknown`; D12's ingest scope is `common` on `NYSE`, `NYSE_AMERICAN` or `NASDAQ` |
+| `class_rule` | `utf8` | no | Id of the classification rule that decided `security_class` |
+| `cik` | `utf8` | yes | 10-digit zero-padded, from SEC `company_tickers_exchange.json` or the reconstruction; null if unresolved |
+| `source` | `utf8` | no | `nasdaqtrader` / `edgar_reconstructed` |
+| `file_created_at` | `timestamp[ns, UTC]` | yes | The file's creation stamp; null for reconstructed rows |
+| `fetched_at` | `timestamp[ns, UTC]` | yes | When the file was fetched; null for reconstructed rows |
+| `raw_sha256` | `utf8` | yes | SHA-256 of the raw file in the landing zone; null for reconstructed rows |
+
+Primary key: `(date, source, ticker)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).

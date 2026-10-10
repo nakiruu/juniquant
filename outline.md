@@ -138,7 +138,7 @@ The execution hot path does not cross the Julia boundary. Julia is the sole writ
 
 ## Data Lake
 
-34 datasets (`13-parquet-lake/SKILL.md` §3), ZSTD-compressed, schema-immutable. A dataset is either a single file `lake/<name>.parquet` or a hive-partitioned directory whose every leaf is one `data.parquet` (large daily datasets by year/month; `audit_log` by `date`; `quote_spread_1m` by `session`). Paths come from `QUANT_ROOT`, `QUANT_STATE` and `QUANT_CONFIG` (`13-parquet-lake/IO-CONTRACT.md`, the single definition). Single-writer rule: each dataset has exactly one writing module. Schemas are hashed in the repository file `schemas/registry.json` and verified by CI. Additive changes only.
+35 datasets (`13-parquet-lake/SKILL.md` §3), ZSTD-compressed, schema-immutable. A dataset is either a single file `lake/<name>.parquet` or a hive-partitioned directory whose every leaf is one `data.parquet` (large daily datasets by year/month; `audit_log` by `date`; `quote_spread_1m` by `session`). Paths come from `QUANT_ROOT`, `QUANT_STATE` and `QUANT_CONFIG` (`13-parquet-lake/IO-CONTRACT.md`, the single definition). Single-writer rule: each dataset has exactly one writing module. Schemas are hashed in the repository file `schemas/registry.json` and verified by CI. Additive changes only.
 
 ## Backtest
 

@@ -361,7 +361,7 @@ The skill-local Julia oracles of the lock (`09-lock-state-machine/scripts/lock_r
 
 ```
 $QUANT_ROOT/                             # container /data, host /mnt/cache/quant
-├── lake/                                # the 34 datasets (13-parquet-lake SKILL §3), table below
+├── lake/                                # the 35 datasets (13-parquet-lake SKILL §3), table below
 ├── raw/                                 # immutable landing zone: every raw response, fetch timestamp + SHA-256 (01 BACKFILL.md)
 ├── stage/                               # parsed per-chunk intermediates, rebuildable
 ├── reports/                             # coverage / caveat / gate reports; backtest run artifacts (reports/backtest/<run_id>/cpcv/split=<k>/)
@@ -426,6 +426,7 @@ $QUANT_STATE/                            # container /state, host /mnt/cache/app
 | 32 | `delistings` | `delistings.parquet` | Rust (ingest) |
 | 33 | `filing_events` | `filing_events.parquet` | Rust (ingest) |
 | 34 | `price_coverage` | `price_coverage.parquet` | Julia (universe builder) |
+| 35 | `listings` | `listings/year=YYYY/data.parquet` | Rust (ingest) |
 
 ---
 
@@ -443,7 +444,7 @@ Five additions, all driven by the ledger skill:
 
 Plus the two test files (`lot_fifo.rs`, `lot_partial_close.rs`) and the two scripts (`write-ledger.jl`, `update-lots.rs`).
 
-Later additions (2026-10-10 integration): the shared `symbols/` crate; the ingestion backfill modules (`backfill.rs`, `manifest.rs`, `landing.rs`, `parse/`, `gates.rs`, `holdings.rs`, `identifiers.rs`, `filing_events.rs`, `delistings.rs`); the Julia universe builder and price coverage (`features/src/universe.jl`, `coverage.jl`); the walk-forward model modules (`gspqr/backfill.jl`, `tcp/pooled.jl`, `evt/gpd_mle.jl`, `regime/src/online_viterbi.jl`); `execution/src/symbols.rs`, `locks/gate.rs`, `locks/halt.rs`; the `schemas/` Julia environment and symbol fixtures; the data and state trees and the 34-dataset table above.
+Later additions (2026-10-10 integration): the shared `symbols/` crate; the ingestion backfill modules (`backfill.rs`, `manifest.rs`, `landing.rs`, `parse/`, `gates.rs`, `holdings.rs`, `identifiers.rs`, `filing_events.rs`, `delistings.rs`); the Julia universe builder and price coverage (`features/src/universe.jl`, `coverage.jl`); the walk-forward model modules (`gspqr/backfill.jl`, `tcp/pooled.jl`, `evt/gpd_mle.jl`, `regime/src/online_viterbi.jl`); `execution/src/symbols.rs`, `locks/gate.rs`, `locks/halt.rs`; the `schemas/` Julia environment and symbol fixtures; the data and state trees and the 35-dataset table above (`listings`, #35, added for DECISIONS D12).
 
 ---
 
