@@ -23,3 +23,12 @@ todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
 indexing_slicing = "warn"
+
+# Shared dependency versions; member crates use `dep = { workspace = true }`.
+[workspace.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+csv = "1"
+proptest = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+toml = "0.9"
