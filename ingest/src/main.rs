@@ -6,6 +6,8 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    eprintln!("quant-ingest: not implemented yet (phase I2). See .claude/skills/01-data-ingestion/BACKFILL.md");
+    eprintln!(
+        "quant-ingest: not implemented yet (phase I2). See .claude/skills/01-data-ingestion/BACKFILL.md"
+    );
     ExitCode::FAILURE
 }
