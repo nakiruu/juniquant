@@ -29,3 +29,8 @@ config/production.toml
 # Python is not allowed in this repository (constitution §4); keep caches out regardless
 __pycache__/
 *.pyc
+
+# Pkg.test writes a throwaway sandbox manifest per package; the workspace's one committed
+# manifest is the root Manifest.toml.
+/julia/*/Manifest.toml
+/julia/*/test/Manifest.toml

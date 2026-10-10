@@ -2,10 +2,10 @@
 # against the golden fixtures and prints ALL ORACLE CHECKS PASSED (re-run after any change).
 #
 # ORACLE for the NYSE full-day-closure calendar (09-lock-state-machine/SKILL.md section 4).
-# It re-implements, in Julia, the functions that the Rust module `execution/src/locks/calendar.rs`
+# It re-implements, in Julia, the functions that the Rust `calendar` crate (`calendar/src/`)
 # must implement (rules + overrides, computed for ANY year), and is checked against the language-
-# neutral golden file `fixtures/nyse_calendar_cases.json` (22 years of holidays, 1500
-# add_trading_days cases). The Rust tests `execution/tests/lock_fixtures.rs` consume the SAME
+# neutral golden file `fixtures/nyse_calendar_cases.json` (23 years of holidays, 1500
+# add_trading_days cases). The Rust `calendar` tests and the Julia `NYSECalendar` package tests consume the SAME
 # fixture file. Where this file and the fixture disagree, the fixture wins and one of the two
 # implementations is wrong.
 #
