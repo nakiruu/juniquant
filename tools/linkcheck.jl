@@ -1,7 +1,7 @@
 # Checks that relative markdown links [text](path) point at existing files or directories.
 # External links (http, https, mailto) and pure anchors are skipped. Exits 1 on a broken link.
 files = [joinpath(r, f) for (r, _, fs) in walkdir(".") for f in fs
-         if endswith(f, ".md") && !occursin("/target", r) && !occursin("/.git", r)]
+         if endswith(f, ".md") && !occursin("/target", r) && !occursin("/.git", r) && !occursin("/.claude/worktrees", r) && !occursin("/.remember", r)]
 broken = Tuple{String,String}[]
 for f in files
     infence = false

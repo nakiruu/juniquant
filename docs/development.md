@@ -10,7 +10,7 @@ How to work on this repository. Session conventions for AI-assisted work are in
 | Julia | 1.12 | Workspace at the repository root; one committed `Manifest.toml` |
 | Rust | 1.98.1 | `rust-toolchain.toml` (honoured by rustup). On Fedora's system toolchain install `rustfmt` and `clippy`: `sudo dnf install rustfmt clippy` |
 | GNU make | any | Single entry point for the gates |
-| DuckDB CLI | to be pinned in phase I1 | Schema registry checks and ad-hoc queries |
+| DuckDB CLI | 1.5.6 locally (pin and CI install come with the schema registry, I1 W4) | Schema registry checks and ad-hoc queries |
 | Bun | later | Dashboard |
 
 No Python, in any form (constitution §4; the pre-commit hook rejects `*.py`).
@@ -21,7 +21,8 @@ No Python, in any form (constitution §4; the pre-commit hook rejects `*.py`).
 |---|---|
 | `make check` | Every gate below; run before claiming anything is done |
 | `make rust` | `cargo fmt --check`, `clippy -D warnings`, tests, rustdoc with warnings as errors |
-| `make julia` | Instantiate the workspace, parse every `.jl`, golden lock and calendar fixtures |
+| `make julia` | Instantiate the workspace, parse every `.jl`, golden lock and calendar fixtures, `Pkg.test` of every package under `julia/` |
+| `make julia-test` | `Pkg.test` only (packages without `test/runtests.jl` are skipped) |
 | `make md-check` | Markdown code fences and table column counts |
 | `make hook-test` | The constitution pre-commit hook's own test suite |
 | `make hook-install` | Install the hook into `.git/hooks` |
@@ -37,7 +38,9 @@ No Python, in any form (constitution §4; the pre-commit hook rejects `*.py`).
 - **Rust:** no `unwrap`, `expect` or `panic!` in library code (workspace lints); typed errors;
   `unsafe` forbidden; every public item documented.
 - **Julia:** packages join the root workspace; never `Pkg.add` at run time; tests with
-  `Test.jl`; docstrings on public functions.
+  `Test.jl` in `test/runtests.jl`, test-only dependencies in `test/Project.toml` (also a
+  workspace member); docstrings on public functions. `Pkg.test` writes a throwaway
+  package-level manifest, which is gitignored: the root `Manifest.toml` is the only one.
 - **Contracts first:** golden fixtures and schema tests are written before the code that must
   satisfy them. Where an implementation and a fixture disagree, the fixture wins.
 - **Commits:** `<layer>: <imperative summary>`, body explaining what and why, and

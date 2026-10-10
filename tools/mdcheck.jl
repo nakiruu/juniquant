@@ -1,4 +1,4 @@
-files = [joinpath(r,f) for (r,_,fs) in walkdir(".") for f in fs if endswith(f,".md") && !occursin("/target", r) && !occursin("/.git", r)]
+files = [joinpath(r,f) for (r,_,fs) in walkdir(".") for f in fs if endswith(f,".md") && !occursin("/target", r) && !occursin("/.git", r) && !occursin("/.claude/worktrees", r) && !occursin("/.remember", r)]
 odd = String[]; bad = Tuple{String,Int}[]
 strip_code(l) = replace(replace(l, r"`[^`]*`" => ""), "\\|" => "")
 for f in files

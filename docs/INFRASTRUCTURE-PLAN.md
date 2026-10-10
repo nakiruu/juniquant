@@ -18,9 +18,9 @@ backtest, ledger, frontend and execution come after (`scaffold.md`, Build Order)
 | Specs | 19 skills, constitution amended to 1.13, `DECISIONS.md` all resolved |
 | Code | None yet. Skill `scripts/` hold sketches only (not normative) |
 | Verified artifacts | Golden fixtures for the lock rule and NYSE calendar (`09-lock-state-machine/fixtures/`), Julia oracles that pass them, pre-commit hook with 52 passing tests |
-| Toolchains present | Julia 1.12.1, Rust/cargo 1.98.1, git, jq |
-| Toolchains missing | DuckDB CLI (schema verification, queries), Bun (frontend, later), SQLite CLI (backups, later) |
-| Repository | Not a git repository yet |
+| Toolchains present | Julia 1.12.1, Rust/cargo 1.98.1 with rustfmt and clippy, git, jq, DuckDB CLI 1.5.6, Bun 1.4.3 |
+| Toolchains missing | SQLite CLI (backups, later) |
+| Repository | Private GitHub repository with CI (`make check`) |
 
 ---
 
@@ -78,6 +78,8 @@ DuckDB CLI version recorded in `docs/development.md`.
 | W4 Schema registry | `schemas/registry.json`, `generate-registry.jl`, `verify-schemas.sh`, `migrations/2026-10-10-initial.md` | Canonical DuckDB `DESCRIBE` hash form (13 SKILL §6); needs DuckDB CLI |
 
 W1-W3 own disjoint directories and run in parallel. W4 starts when DuckDB is installed.
+
+**Status 2026-10-10:** W1 `symbols` and W2 `calendar` + `NYSECalendar` are merged. The workers hit the usage limit, so the coordinator finished, reviewed and merged them. Rust, Julia and the oracle agree on the 1990-2100 holiday list. Next: W3 + W4 together (lake crate and registry; the registry hash comes from the writer's output), then Julia `LakeIO`. Open question from W1: a ticker reused by a new issuer after a rename currently fails the symbol-map load as an alias collision (safe, but strict).
 
 ### Phase I2 — Ingestion and the 15+ year backfill (critical path)
 

@@ -53,7 +53,11 @@ bash .claude/skills/15-ai-dev-workflow/scripts/session-start.sh   # environment 
 | `.claude/skills/` | The specification: 19 skills, one per layer, plus the constitution |
 | `docs/` | Readable overview: architecture, data, compliance, development, plans |
 | `config/` | Restricted list, NYSE calendar overrides, quality gates, symbol map |
-| `symbols/`, `calendar/`, `lake/`, `ingest/` | Rust crates (skeletons until phase I1/I2) |
+| [`symbols/`](symbols/README.md) | Rust: canonical tickers, vendor spellings, the symbol map and lock groups |
+| [`calendar/`](calendar/README.md) | Rust: the NYSE trading calendar (rules + add-only overrides) |
+| `lake/`, `ingest/` | Rust crates (skeletons until phases I1/I2) |
+| [`julia/`](julia/NYSECalendar/README.md) | Shared Julia packages: `NYSECalendar` (done), `LakeIO` (placeholder) |
+| `schemas/` | Golden fixtures for shared contracts; schema registry tooling (phase I1) |
 | `tools/` | Julia repository checks (markdown, syntax) |
 | `outline.md`, `scaffold.md` | Functional outline and target directory layout |
 | `DECISIONS.md` | The owner's decisions and their status |
