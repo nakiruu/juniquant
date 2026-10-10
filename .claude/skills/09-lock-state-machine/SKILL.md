@@ -573,8 +573,8 @@ FIDELITY,MSFT,BUY,2026-10-12,FILLED,10
 ## 4. Trading Days
 
 Trading days come from the **NYSE holiday rules, computed for any year**
-(`execution/src/locks/calendar.rs`, checked against `fixtures/nyse_calendar_cases.json`
-and the Julia oracle `scripts/nyse_calendar_oracle.jl`), **unioned with an
+(the shared Rust crate `calendar/` and the Julia package `julia/NYSECalendar`, both checked
+against `fixtures/nyse_calendar_cases.json` and the Julia oracle `scripts/nyse_calendar_oracle.jl`), **unioned with an
 overrides set** for ad-hoc closures that rules cannot predict (national days of
 mourning, disasters). They never come from `prices.parquet` (it cannot contain
 future holidays, and a missing price row is a data gap, not a closure). The one

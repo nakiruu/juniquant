@@ -4,12 +4,12 @@
 JULIA ?= julia --startup-file=no --project=tools
 SKILLS := .claude/skills
 
-.PHONY: check rust julia rust-fmt rust-clippy rust-test rust-doc julia-instantiate julia-parse fixtures md-check hook-test hook-install fmt schemas doc help
+.PHONY: check rust julia rust-fmt rust-clippy rust-test rust-doc julia-instantiate julia-parse fixtures julia-test md-check hook-test hook-install fmt schemas doc help
 
 help:
 	@echo "make check        all gates (rust + julia + docs + constitution hook)"
 	@echo "make rust         rustfmt check, clippy -D warnings, tests, rustdoc"
-	@echo "make julia        parse check, golden lock/calendar fixtures"
+	@echo "make julia        parse check, golden lock/calendar fixtures, Julia package tests"
 	@echo "make md-check     markdown fences and tables"
 	@echo "make hook-test    constitution pre-commit hook test suite"
 	@echo "make hook-install install the constitution hook into .git/hooks"
@@ -20,7 +20,7 @@ check: rust julia md-check hook-test
 	@echo "ALL CHECKS PASSED"
 
 rust: rust-fmt rust-clippy rust-test rust-doc
-julia: julia-instantiate julia-parse fixtures
+julia: julia-instantiate julia-parse fixtures julia-test
 
 rust-fmt:
 	@cargo fmt --version >/dev/null 2>&1 || { echo "rustfmt missing: sudo dnf install rustfmt" >&2; exit 1; }
@@ -45,6 +45,11 @@ julia-parse:
 
 fixtures:
 	$(JULIA) $(SKILLS)/09-lock-state-machine/scripts/run_fixtures.jl
+
+# Pkg.test for every shared Julia package under julia/.
+JULIA_PACKAGES := $(wildcard julia/*/Project.toml)
+julia-test:
+	@for p in $(dir $(JULIA_PACKAGES)); do [ -f $${p}test/runtests.jl ] || { echo "SKIP $$p (no test/runtests.jl)"; continue; }; echo "Pkg.test $$p"; julia --startup-file=no --project=$$p -e "using Pkg; Pkg.test()" || exit 1; done
 
 md-check:
 	$(JULIA) tools/mdcheck.jl
