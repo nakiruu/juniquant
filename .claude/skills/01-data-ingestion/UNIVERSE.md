@@ -180,8 +180,22 @@ the vetoes come later (`07-fundamental-overlay`).
 
 - `sector` is the GICS sector in the latest snapshot usable at `t` (from
   `etf_holdings.sector`; verify the file uses GICS). It is what the 25%
-  sector cap uses (constitution §6). Null sector on more than 1% of member
-  rows is a G5 failure.
+  sector cap uses (constitution §6), and `sector_source = gics_snapshot`.
+- **SIC fallback.** When the snapshot gives no sector (blank, `Cash and/or
+  Derivatives`, or a label outside the 11 GICS sectors), `sector` is mapped
+  from `security_master.sic` through `config/sic_to_gics.toml` (the narrowest
+  range containing the code wins) and `sector_source = sic_fallback`. SIC
+  comes from EDGAR submissions (`sic`, `sicDescription`; verify the field
+  names with P5) and is the **current** value only: using it for past dates
+  is a mild look-ahead, accepted because it fills gaps only, is flagged per
+  row, and a company's industry rarely changes. SIC is per issuer, so every
+  share class of a CIK gets the same code. Codes with no range (for example
+  9995-9999, non-classifiable) leave `sector` null.
+- Null sector on more than 1% of member rows is a G5 failure; `sic_fallback`
+  on more than 5% of member rows in a year is a G5 warning (the snapshot
+  source may have changed format).
+- SIC is a classification, not a lake column per price row: it lives once per
+  security in `security_master` and is joined by `ticker`.
 - `cik` joins `universe` to `fundamentals` and `filing_events` (through
   `security_master`).
 

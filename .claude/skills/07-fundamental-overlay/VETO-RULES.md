@@ -21,7 +21,7 @@ inactive in every run and never simulated.
 
 | # | Trigger | Status | Source / rule |
 |---|---|---|---|
-| 1 | Altman Z < 1.8 | Active (non-financial issuers only) | `fundamentals` (as-first-reported, `filing_date`) |
+| 1 | Altman Z < 1.8 | Active (non-financial issuers only: `universe.sector` at `t` is not `Financials` or `Real Estate`; when `sector` is null, `security_master.sic` outside 6000-6799) | `fundamentals` (as-first-reported, `filing_date`) |
 | 2 | Going-concern qualification | **Inactive** | No free point-in-time source for the audit-opinion text |
 | 3 | Negative book + negative OCF | Active | `fundamentals` |
 | 4 | Pending delisting notice | Active | `filing_events`: 8-K Item 3.01 (verify) |

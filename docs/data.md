@@ -10,12 +10,20 @@ survivorship, universe, quality gates) and [`13-parquet-lake`](../.claude/skills
 | Source | What | History |
 |---|---|---|
 | Yahoo chart API | Raw as-traded daily OHLCV, split and dividend events | From 2005-01-01 |
-| SEC EDGAR | XBRL fundamentals (bulk), 8-K events, delistings, company identifiers | XBRL from about 2009 |
+| SEC EDGAR | XBRL fundamentals (bulk), 8-K events, delistings, company identifiers and SIC industry codes | XBRL from about 2009 |
 | FRED / ALFRED | Treasury yields, credit spreads, CPI, VIX, with publication vintages | From 2004-01-01 |
 | iShares | IWF and IWP holdings by as-of date (point-in-time universe) | As far back as iShares serves (probe P7 decides) |
 
 Every value is used only from the date it became public (filing date, release vintage,
 holdings as-of date). Requires a FRED API key and a contact email for the SEC User-Agent.
+
+## Sectors
+
+The 25% sector cap uses the GICS sector from the iShares holdings file in force on each
+date. When a holdings row has no sector, the issuer's SIC code from EDGAR is mapped to a
+GICS sector (`config/sic_to_gics.toml`) and the row is flagged as a fallback. SIC also
+identifies financial companies for the Altman Z veto. SIC is stored once per security in
+`security_master`, not in the daily price data.
 
 ## The backfill
 

@@ -8,7 +8,7 @@
 /raw/
 /stage/
 /reports/
-/lake/
+# No /lake/ entry: lake/ is the Rust crate; the data lake lives under $QUANT_ROOT.
 *.parquet
 *.db
 *.db-wal

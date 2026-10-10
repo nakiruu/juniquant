@@ -49,7 +49,8 @@ holdings snapshot with `available_date <= date`, and prices through `date`.
 | `date` | `date32` | no | Trading day (NYSE calendar rules, not the dates present in `prices`) |
 | `ticker` | `utf8` | no | Canonical symbol (`UNIVERSE.md` §3) |
 | `cik` | `utf8` | yes | 10-digit zero-padded; null if unresolved |
-| `sector` | `utf8` | yes | GICS sector from the snapshot used; needed for the 25% sector cap |
+| `sector` | `utf8` | yes | GICS sector from the snapshot used; needed for the 25% sector cap. When the snapshot has none, the SIC fallback (`UNIVERSE.md` §6) |
+| `sector_source` | `utf8` | yes | `gics_snapshot` / `sic_fallback`; null when `sector` is null |
 | `in_iwf` | `bool` | no | Member of IWF in the snapshot used |
 | `in_iwp` | `bool` | no | Member of IWP in the snapshot used. A ticker can be in both |
 | `snapshot_date` | `date32` | no | `snapshot_date` of the `etf_holdings` snapshot used |
@@ -940,6 +941,9 @@ security (listed share class), keyed by the canonical symbol.
 | `resolution` | `utf8` | no | How `cik` was found: `exact` / `name` / `manual` / `unresolved` |
 | `resolution_note` | `utf8` | yes | Evidence (matched name, override row) |
 | `updated_at` | `timestamp[ns, UTC]` | no | |
+| `sic` | `utf8` | yes | 4-digit SIC code of the issuer (CIK) from EDGAR submissions `sic`; null if unresolved or absent. Current value only (`UNIVERSE.md` §6) |
+| `sic_description` | `utf8` | yes | EDGAR `sicDescription` |
+| `sic_asof` | `date32` | yes | Date the `sic` value was fetched; a change is logged, never back-dated |
 
 Primary key: `ticker`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 

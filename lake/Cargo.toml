@@ -1,0 +1,11 @@
+[package]
+name = "lake"
+version = "0.1.0"
+description = "Parquet lake I/O contract: write_partition / read_dataset (13-parquet-lake/IO-CONTRACT.md)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

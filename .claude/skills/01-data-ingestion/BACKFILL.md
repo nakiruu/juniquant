@@ -38,7 +38,7 @@ backfill for that source until the owner decides.
 | P2 | What does Yahoo return for delisted, acquired and renamed symbols? Candidates (acquired or delisted; the outcome is the point): TWX, MON, CELG, RHT, LLTC, SHLD, LEH, TWTR | The survivorship expectation; recorded per symbol in `reports/probes/yahoo_delisted.json` |
 | P3 | How far back does Yahoo go (SPY, a 2005-listed name)? Does `meta.firstTradeDate` detect symbol reuse (a recycled ticker)? | History depth; the reuse guard |
 | P4 | Rate behaviour: ramp the request rate in steps from 0.5/s, stop at the first 429, record the ceiling and the recovery time | Yahoo bucket (`SKILL.md` §5) |
-| P5 | EDGAR bulk files: URLs, `Last-Modified`, size, whether `filings.files[]` pages are in the submissions zip, a multi-class company's dei shares facts (GOOGL, BRK), the `fy`/`fp` quirk | SOURCES.md EDGAR items |
+| P5 | EDGAR bulk files: URLs, `Last-Modified`, size, whether `filings.files[]` pages are in the submissions zip, a multi-class company's dei shares facts (GOOGL, BRK), the `fy`/`fp` quirk, the `sic` and `sicDescription` fields | SOURCES.md EDGAR items |
 | P6 | ALFRED: full-vintage fetch of `DGS3MO` and `CPIAUCSL`; the earliest `realtime_start`; vintage-count limits; the earliest observation of the ICE BofA series | `config/macro_series.toml` lags, deferral of the credit spreads |
 | P7 | iShares: is `asOfDate` valid, the earliest date served for IWF and IWP, whether non-month-end dates work, the CSV layout and sector labels, publication time of the latest file | Snapshot grid; §7 OPEN |
 | P8 | EDGAR Form 25 timing: for 3 known delistings, the Form 25 filing date vs the last Yahoo bar | The "+10 days" rule in `SURVIVORSHIP.md` |
