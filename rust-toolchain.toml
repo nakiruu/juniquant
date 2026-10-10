@@ -1,0 +1,5 @@
+# Honoured by rustup. The Fedora system toolchain (rustc 1.98.1) ignores this file;
+# rustfmt and clippy must then be installed with: sudo dnf install rustfmt clippy
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

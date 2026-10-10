@@ -1,0 +1,43 @@
+# Ad-hoc NYSE full-day closures that the holiday RULES cannot predict (national days of
+# mourning, disasters). Unioned with the computed rules (09-lock-state-machine SKILL.md section 4).
+# This is the checked-in SEED. The runtime copy at $QUANT_STATE/nyse_calendar_overrides.toml
+# (container /state; host /mnt/cache/appdata/quant/) is written only by `calendar-sync` (on the FIRST
+# sighting, today included) and by the owner's `quant-exec calendar add`. It only ever ADDS dates:
+# treating an extra date as closed can only lengthen a lock block, never shorten it. No code removes a line.
+# Runtime entries carry extra keys: added_on, first_seen, source ("schwab_marketdata" |
+# "same_day_signal" | "price_bar_backfill" | "manual"). The seed covers the backfill window (prices
+# from 2005-01-01, macro from 2004-01-01; owner decision D7) plus the September 2001 closures, which
+# the one-time historical price-bar backfill (09 SKILL.md section 4) should rediscover. Each
+# historical entry: VERIFY against NYSE notices.
+# Must stay identical to OVERRIDES_SEED in .claude/skills/09-lock-state-machine/scripts/nyse_calendar_oracle.jl.
+
+[[closure]]
+date = "2001-09-11"
+name = "September 11 attacks"   # verify against NYSE notices
+[[closure]]
+date = "2001-09-12"
+name = "September 11 attacks"   # verify against NYSE notices
+[[closure]]
+date = "2001-09-13"
+name = "September 11 attacks"   # verify against NYSE notices
+[[closure]]
+date = "2001-09-14"
+name = "September 11 attacks"   # verify against NYSE notices
+[[closure]]
+date = "2004-06-11"
+name = "National Day of Mourning (President Ronald Reagan)"   # verify against NYSE notices
+[[closure]]
+date = "2007-01-02"
+name = "National Day of Mourning (President Gerald R. Ford)"   # verify against NYSE notices
+[[closure]]
+date = "2012-10-29"
+name = "Hurricane Sandy"   # verify against NYSE notices
+[[closure]]
+date = "2012-10-30"
+name = "Hurricane Sandy"   # verify against NYSE notices
+[[closure]]
+date = "2018-12-05"
+name = "National Day of Mourning (President George H. W. Bush)"
+[[closure]]
+date = "2025-01-09"
+name = "National Day of Mourning (President Jimmy Carter)"

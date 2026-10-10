@@ -1,0 +1,11 @@
+[package]
+name = "symbols"
+version = "0.1.0"
+description = "Canonical ticker symbols shared by ingestion and execution (01-data-ingestion/UNIVERSE.md §3)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

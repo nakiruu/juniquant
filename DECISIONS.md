@@ -1,0 +1,55 @@
+# Decisions (owner)
+
+Answered by the account owner on 2026-10-10. Everything below is RESOLVED and applied
+in the skills.
+
+## A. Constitutional amendments
+
+| # | Section | Status | Decision |
+|---|---|---|---|
+| A1 | §6a | RESOLVED (amendment 1.13) | (a) In the Standard tier a Market order may sell only a legacy fractional remainder (0 < qty < 1 share) of a position bought in an earlier tier, as part of a full exit. (b) In the Bootstrap tier any reduce-only exit of a held position may be a Market order. Both stay subject to the lock, the restricted list, the halt flag and the audit; neither permits a buy. |
+| A2 | §9 | RESOLVED (amendment 1.7) | TCP outputs are the endpoints of a 95%-coverage interval, not 5%/95% quantiles. |
+| A3 | §7 | RESOLVED (1.8) | Vetoed names never bought; held vetoed names sold on the first permitted day; triggers without a point-in-time source are inactive. |
+| A4 | §4 | RESOLVED (1.9) | Read-only frontend; Julia sole writer of `gspqr_predictions`; no Python. |
+| A5 | §3, §8 | RESOLVED (1.10, 1.11) | Vendor-snapshot wording; as-of predictions; audit journal is the system of record; companion docs linked. |
+| B3 | §1 rule 6 | RESOLVED (1.12) | Add-only backfill of missed closures from daily bars of IWF, IWP and SPY. |
+
+## B. Compliance (lock)
+
+| # | Decision |
+|---|---|
+| B1 | Share classes of one issuer are one lock group (a GOOGL buy blocks a GOOG sell). |
+| B2 | An order that ended with zero fills is not locked; the retrospective audit does not flag overlaps with it (INFO count only). |
+| B3 | Missed closures are filled from daily bars (add-only), and the check runs once over the whole historical backfill. |
+| B4 | Alerts stay on the dashboard (no other channel chosen). |
+
+## C. Modeling (best practice where asked)
+
+| # | Decision |
+|---|---|
+| C1 | CPCV: purge on both sides of each test block by the label horizon H, plus an embargo of max(21, ceil(0.01 T)) trading days after each block (about 38 for 15 years). AFML ch. 7. |
+| C2 | First generation no earlier than 504 matured days AND only once it beats a naive empirical-quantile baseline on its validation window. |
+| C3 | Panel keeps rows from the first date with at least 50 eligible names; training and calibration use only point-in-time eligible names ("train on what you would trade"). |
+| C4 | A generation more than 10% worse than the previous one aborts, also in the backfill; the previous generation serves for at most 3 months. |
+
+## D. Data
+
+| # | Decision |
+|---|---|
+| D1 | Probe P7 (iShares history depth) runs first; the universe start follows its result; today's membership is never used for past dates. |
+| D2 | Month-end snapshots, plus one after the June Russell reconstitution, plus extra snapshots after large holdings turnover (`config/quality_gates.toml`). |
+| D3 | Survivorship report always produced; WARN above 2% missing member-days in any year; above 10% a model is not promoted without owner acknowledgement. |
+| D4 | Multi-class shares: sum of cover-page shares (default kept). |
+| D5 | Auditor trigger only on an actual resignation or declined re-election (8-K 4.01 text rule); covenant breach via 8-K 2.04 as a labelled proxy; going-concern, analyst revisions and WACC inputs inactive. |
+| D6 | IJT off. |
+| D7 | Prices from 2005-01-01, macro from 2004-01-01; historical closures 2001-09-11..14, 2004-06-11, 2007-01-02, 2012-10-29..30, 2018-12-05, 2025-01-09 seeded (verify). |
+| D8 | Delisted names: later price if any; else performance delistings -30% (NYSE/AMEX) / -55% (Nasdaq) per Shumway; cash acquisitions at last price; other disappearances excluded and counted. |
+| D9 | `config/fractional_eligible.toml` is seeded by the owner; until then Bootstrap trades nothing. |
+| D10 | Unverified external facts are settled by probes P1-P8 and the live tests. |
+
+Also decided: `evt_tail_bounds` is partitioned by year (about 14M rows over 15 years).
+
+## E. Placeholders (tune on the walk-forward track, not by decision)
+
+TCP `M_d`, `omega`, `n_min`; EVT `W_full`, `W_min`, `B_min`; execution gate, ladder and band
+parameters; REST/streamer intervals. All are marked `[placeholder]` in the skills.

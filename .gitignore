@@ -1,0 +1,31 @@
+# Build output
+/target/
+**/target/
+
+# Data and service state live outside the repository ($QUANT_ROOT, $QUANT_STATE)
+/data/
+/state/
+/raw/
+/stage/
+/reports/
+/lake/
+*.parquet
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets and local config
+.env
+.env.*
+config/production.toml
+
+# Editor and tool state
+.vscode/
+.idea/
+*.swp
+.DS_Store
+.remember/
+
+# Python is not allowed in this repository (constitution §4); keep caches out regardless
+__pycache__/
+*.pyc

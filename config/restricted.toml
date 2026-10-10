@@ -1,0 +1,7 @@
+# Tickers the system must never order, buy or sell (constitution §6, amendment 1.5).
+# Adding or removing an entry is a commit approved by the account owner.
+
+[[restricted]]
+ticker = "ICE"
+rule   = "never_trade"        # no order in either direction, in any tier
+reason = "Account owner is barred from trading ICE (employer rules, blackout periods)"

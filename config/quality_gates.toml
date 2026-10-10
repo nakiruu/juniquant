@@ -1,0 +1,9 @@
+# Data-quality gate thresholds (01-data-ingestion/QUALITY-GATES.md). Changing a value is a commit
+# and the value in force is copied into every survivorship caveat.
+
+[survivorship]                 # gate G4, owner decision D3 (2026-10-10)
+warn_pct = 2.0                 # missing share of member-days in any year above this: WARN in the caveat
+ack_pct  = 10.0                # above this: no model generation is promoted without an owner acknowledgement
+
+[holdings]                     # owner decision D2
+extra_snapshot_turnover_pct = 5.0   # weight changed vs previous month-end above this: take an extra snapshot

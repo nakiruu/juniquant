@@ -1,0 +1,13 @@
+# Tickers that can be bought/sold as fractional shares through Schwab (Stock Slices). Tickers are canonicalised through symbol_map.toml.
+# OWNER-SEEDED. Single source for Julia (portfolio eligibility, 08) and Rust (order generator, 10).
+# Any ticker NOT listed as "Eligible" is treated as not eligible ("Unknown" = not eligible):
+#   Bootstrap tier  : the ticker cannot be bought at all
+#   Transition tier : whole shares only; the sub-share remainder stays in cash
+#   Standard tier   : not applicable
+# Fractional quantities are floored to 2 decimals (owner-reported limit; verify).
+# A missing or unparseable file halts a Bootstrap run (CRITICAL). The list is reported to be
+# limited to some stocks (no ETFs); obtain the current list from Schwab and seed it here.
+#
+# [[fractional]]
+# ticker      = "AAPL"
+# eligibility = "Eligible"

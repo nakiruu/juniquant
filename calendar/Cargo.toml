@@ -1,0 +1,11 @@
+[package]
+name = "calendar"
+version = "0.1.0"
+description = "NYSE trading calendar: holiday rules plus overrides (09-lock-state-machine §4)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+# Canonical symbol map (09-lock-state-machine SKILL.md section 3.8). SHAPE ONLY, not seeded.
+# One source of truth for how a company's ticker is spelled in each source. Implemented in Rust
+# (execution/src/symbols.rs); used by the lock history loader, the restricted list, the
+# fractional list, the order generator and the snapshot writer. Julia reads this same file read-only.
+# Seed it from universe.parquet and review it by hand; every spelling below is a `verify` item.
+# An UNMAPPED ticker is not tradable (fail closed, audited). Two entries claiming one Schwab spelling
+# make the map invalid: every lock check then denies until it is fixed.
+#
+# [[symbol]]
+# canonical  = "BRK.B"            # the form used inside the system
+# yahoo      = "BRK-B"            # verify
+# ishares    = "BRKB"             # verify
+# schwab     = "BRK/B"            # verify
+# lock_group = "BRK"              # share classes of one issuer share a group and block each other
+# aliases    = []                 # old tickers after a rename, e.g. [{ symbol = "OLD", until = "2022-06-09" }]
+#
+# [[symbol]]
+# canonical  = "GOOGL"
+# yahoo      = "GOOGL"
+# ishares    = "GOOGL"
+# schwab     = "GOOGL"
+# lock_group = "ALPHABET"         # GOOG and GOOGL are different securities in the same lock group (OPEN decision 4)
