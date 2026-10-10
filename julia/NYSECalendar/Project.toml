@@ -1,0 +1,7 @@
+name = "NYSECalendar"
+uuid = "76785e91-df8d-46fd-900f-0059955db495"
+version = "0.1.0"
+authors = ["juniquant"]
+
+[compat]
+julia = "1.12"

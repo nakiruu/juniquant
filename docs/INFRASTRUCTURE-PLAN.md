@@ -44,7 +44,7 @@ backtest, ledger, frontend and execution come after (`scaffold.md`, Build Order)
 | Julia tests | `Pkg.test` for each package in the Julia workspace |
 | Julia quality | Aqua.jl (ambiguities, stale deps, piracy), JET.jl on public entry points, JuliaFormatter check |
 | Golden fixtures | Julia oracles and the Rust `calendar`/lock crates reproduce `09-lock-state-machine/fixtures/*.json` exactly |
-| Constitution | `pre-commit-constitution.sh` and its 52-case test |
+| Constitution | `pre-commit-constitution.sh` and its test suite |
 | Schemas | `schemas/registry.json` hashes match (`verify-schemas.sh`, needs DuckDB CLI) |
 | Docs | Markdown fence/table checker (Julia, in `tools/`), link check, `cargo doc`, Documenter build (once packages exist) |
 

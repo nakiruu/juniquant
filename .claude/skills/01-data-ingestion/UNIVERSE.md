@@ -109,6 +109,16 @@ the shared crate offers `is_tradable(&str)` for that.
 | `ABCDEFG` | error (more than six characters) |
 | `ABC~0000012345` | `is_tradable` false; `normalize` rejects it (it is produced only by the master) |
 
+**Fixture format.** `schemas/fixtures/symbol_normalization.csv` has columns
+`input,normalized,error,is_tradable_input,note`. `error` is one of `empty`,
+`non_ascii`, `unparseable`, `superseded` (empty when `normalized` is set);
+`is_tradable_input` is `is_tradable` applied to the raw input, so only
+already-canonical inputs are true. Checks apply in this order: non-ASCII,
+then empty (after trim and `$`), then `superseded` (any `~`), then the
+grammar. `schemas/fixtures/symbol_render.csv` (`canonical,vendor,rendered,error,note`)
+holds the `render` vectors; `error` is `unverified_vendor` (Schwab class
+shares until verified), `input_only` (iShares) or `not_canonical`.
+
 ## 4. The Identifier Master (`security_master`)
 
 One row per security (listed share class), keyed by the canonical ticker.

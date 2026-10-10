@@ -1,0 +1,7 @@
+name = "LakeIO"
+uuid = "7cbf4f88-d04f-4afa-8b38-9ab6dc1c04df"
+version = "0.1.0"
+authors = ["juniquant"]
+
+[compat]
+julia = "1.12"

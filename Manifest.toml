@@ -2,7 +2,7 @@
 
 julia_version = "1.12.1"
 manifest_format = "2.0"
-project_hash = "8c684fd944621329785b0ba9c420c23dbd8c0830"
+project_hash = "555dcc285cb23ed8de6df8620935e890811ec4c5"
 
 [[deps.Dates]]
 deps = ["Printf"]
@@ -21,9 +21,19 @@ version = "1.14.3"
     [deps.JSON3.weakdeps]
     ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
+[[deps.LakeIO]]
+path = "julia/LakeIO"
+uuid = "7cbf4f88-d04f-4afa-8b38-9ab6dc1c04df"
+version = "0.1.0"
+
 [[deps.Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 version = "1.11.0"
+
+[[deps.NYSECalendar]]
+path = "julia/NYSECalendar"
+uuid = "76785e91-df8d-46fd-900f-0059955db495"
+version = "0.1.0"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]

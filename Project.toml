@@ -1,8 +1,9 @@
 # Julia workspace root (Julia >= 1.12). Each Julia package of the system joins this
 # workspace as it is created (features, models, portfolio, regime, conviction, ledger,
-# backtest, schemas); they share the committed Manifest.toml at the repository root.
+# backtest); they share the committed Manifest.toml at the repository root.
+# julia/ holds shared packages (NYSECalendar, LakeIO); schemas/ holds registry tooling.
 [workspace]
-projects = ["tools"]
+projects = ["tools", "schemas", "julia/NYSECalendar", "julia/LakeIO"]
 
 [compat]
 julia = "1.12"

@@ -1,0 +1,12 @@
+canonical,vendor,rendered,error,note
+"AAPL","yahoo","AAPL","","no class"
+"BRK.B","yahoo","BRK-B","","dot to hyphen (verify, P2/P3)"
+"BF.B","yahoo","BF-B","","dot to hyphen"
+"GOOGL","yahoo","GOOGL","","no class"
+"AAPL","sec","AAPL","","no class"
+"BRK.B","sec","BRK-B","","SEC company_tickers uses a hyphen (verify, P5)"
+"BRK.B","schwab","","unverified_vendor","Schwab class-share spelling is unverified: refuse to render (10-execution-schwab)"
+"AAPL","ishares","","input_only","iShares is an input source; never rendered"
+"ABC~0000012345","yahoo","","not_canonical","superseded form is not a tradable canonical symbol"
+"brk.b","yahoo","","not_canonical","render takes canonical input only"
+"AAPL","schwab","AAPL","","no class: identical everywhere"

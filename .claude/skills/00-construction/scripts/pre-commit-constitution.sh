@@ -20,7 +20,7 @@ fail() { echo "CONSTITUTION VIOLATION: $1" >&2; exit 1; }
 mapfile -d '' STAGED < <(git diff --cached --name-only -z --diff-filter=ACMR)
 (( ${#STAGED[@]} )) || { echo "Constitution pre-commit checks passed (nothing staged)."; exit 0; }
 
-JULIA_DIRS='models|portfolio|regime|conviction|features|ledger|backtest|tools'
+JULIA_DIRS='models|portfolio|regime|conviction|features|ledger|backtest|tools|julia'   # julia/: shared Julia packages (NYSECalendar, LakeIO)
 RUST_DIRS='execution|ingest|symbols|calendar|lake'   # shared crates: symbols/ (01 UNIVERSE.md §3), calendar/ (09 §4), lake/ (13 IO-CONTRACT); risk/ lives under execution/src/
 TS_DIRS='frontend|api'
 

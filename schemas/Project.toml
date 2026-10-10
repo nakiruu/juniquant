@@ -1,0 +1,5 @@
+# Schema registry tooling (13-parquet-lake SKILL.md section 6): generate-registry.jl and
+# the verifier run in this environment. Not a package.
+
+[compat]
+julia = "1.12"

@@ -173,7 +173,7 @@ or `Cargo.lock`):
 
 | Path prefix | Allowed |
 |---|---|
-| `models/`, `portfolio/`, `regime/`, `conviction/`, `features/`, `ledger/`, `backtest/`, `tools/` (Julia; `tools/` holds repository checks, never decision code) | `*.jl`; `Project.toml`, `Manifest.toml`, `JuliaManifest.toml`; `README.md`; `test/fixtures/*.{json,csv,toml,arrow}`; `.gitkeep` |
+| `models/`, `portfolio/`, `regime/`, `conviction/`, `features/`, `ledger/`, `backtest/`, `tools/`, `julia/` (Julia; `tools/` holds repository checks, never decision code; `julia/` holds shared packages such as `NYSECalendar` and `LakeIO`) | `*.jl`; `Project.toml`, `Manifest.toml`, `JuliaManifest.toml`; `README.md`; `test/fixtures/*.{json,csv,toml,arrow}`; `.gitkeep` |
 | `execution/` (incl. `execution/src/risk/`), `ingest/`, `symbols/`, `calendar/`, `lake/` (Rust; shared crates: `symbols/` canonical tickers, `01-data-ingestion/UNIVERSE.md` §3; `calendar/` NYSE calendar, `09-lock-state-machine` §4; `lake/` I/O contract, `13-parquet-lake/IO-CONTRACT.md`) | `*.rs`; `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`; `README.md`; `tests/fixtures/*.{json,csv,toml,arrow}`; `.gitkeep` |
 | `frontend/`, `api/` (Bun/TypeScript) | `*.ts`, `*.tsx`; `package.json`, `bun.lockb`, `tsconfig.json`; `README.md`; `index.html`, `*.css`; `tests/fixtures/*.{json,csv}`; `.gitkeep` |
 | anywhere | **no `*.py`, `*.pyi` or `*.ipynb`** (the repository has no Python) |
@@ -183,7 +183,7 @@ A `.rs` file in `models/` is a CI failure, and so is a `.jl` file in
 (`.jl`, outside `test/`) may not reference `schwabapi.com`, a Schwab token file
 or `TRADING_HALTED` (Julia never places orders, holds tokens or halts trading),
 and Rust execution sources reference only the v1 order types (§6). The hook is
-tested in a scratch repository (52 cases: allow-lists, the Python ban, the
+tested in a scratch repository (54 cases: allow-lists, the Python ban, the
 approved split modules, market-order and reserved-type references, and that
 the hook's own text and this file do not self-match).
 
