@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use chrono::NaiveDate;
-use symbols::{Canon, Cik, MapError, SymbolMap, Vendor};
+use chrono::{Days, NaiveDate};
+use symbols::{Canon, Cik, MapError, PriorTicker, SymbolMap, Vendor};
 
 // The helpers below sit outside `#[test]` functions, where clippy.toml's test allowance
 // does not reach; a bad literal in a test must fail that test.
@@ -325,4 +325,324 @@ lock_group = "GOOG"
     let err = map.validate_issuers(&issuers).unwrap_err();
     assert_eq!(err.kind(), "issuer_group_conflict");
     assert!(err.to_string().contains("0001652044"), "{err}");
+}
+
+// DECISIONS B5: a ticker string reused by another security after a rename. The reusing
+// entry is fictional ("FB" relisted by a new issuer); the dates only exercise the rules.
+const REUSE: &str = r#"
+[[symbol]]
+canonical  = "META"
+schwab     = "META"
+lock_group = "META"
+aliases    = [{ symbol = "FB", until = "2024-02-28" }]
+
+[[symbol]]
+canonical  = "FB"
+from       = "2024-03-01"
+ishares    = "FBNEW"
+schwab     = "FB"
+lock_group = "NEWFB"
+"#;
+
+const LOOKBACK: Days = Days::new(45);
+
+#[test]
+fn reused_ticker_loads_and_resolves_by_date() {
+    let map = SymbolMap::from_toml_str(REUSE).unwrap();
+    let (meta, fb) = (canon("META"), canon("FB"));
+    assert_eq!(map.get(&fb).unwrap().from(), Some(date("2024-03-01")));
+    // The old holder through `until`, nobody in the gap, the new holder from `from`.
+    assert_eq!(
+        map.resolve_on("FB", Vendor::Schwab, date("2024-02-28")),
+        Some(&meta)
+    );
+    assert_eq!(
+        map.resolve_on("FB", Vendor::Schwab, date("2024-02-29")),
+        None
+    );
+    assert_eq!(
+        map.resolve_on("fb", Vendor::Schwab, date("2024-03-01")),
+        Some(&fb)
+    );
+    assert_eq!(map.resolve_alias("FB", date("2024-03-01")), None);
+    // Today's lookup sees only the current holder.
+    assert_eq!(map.resolve("FB", Vendor::Schwab), Some(&fb));
+    assert_eq!(map.resolve("FB", Vendor::Sec), Some(&fb));
+}
+
+#[test]
+fn history_near_a_handover_counts_against_both_holders() {
+    let map = SymbolMap::from_toml_str(REUSE).unwrap();
+    let (meta, fb) = (canon("META"), canon("FB"));
+    let hist = |on: &str| map.resolve_history("FB", Vendor::Schwab, date(on), LOOKBACK);
+    assert_eq!(hist("2023-06-01"), vec![&meta]);
+    // Within the lookback of the handover on either side: both (fail closed).
+    assert_eq!(hist("2024-02-01"), vec![&fb, &meta]);
+    assert_eq!(hist("2024-03-05"), vec![&fb, &meta]);
+    assert_eq!(hist("2024-04-13"), vec![&fb, &meta]); // 2024-02-28 + 45 days (leap year)
+    assert_eq!(hist("2024-04-14"), vec![&fb]);
+    // With no margin it is the dated holder only.
+    assert_eq!(
+        map.resolve_history("FB", Vendor::Schwab, date("2024-03-05"), Days::new(0)),
+        vec![&fb]
+    );
+}
+
+#[test]
+fn stale_old_ticker_after_a_rename_still_reaches_the_renamed_security() {
+    let map = SymbolMap::from_toml_str(SAMPLE).unwrap();
+    let meta = canon("META");
+    // An external-file row typed with the old ticker 10 days after the rename.
+    assert_eq!(
+        map.resolve_on("FB", Vendor::Schwab, date("2022-06-19")),
+        None
+    );
+    assert_eq!(
+        map.resolve_history("FB", Vendor::Schwab, date("2022-06-19"), LOOKBACK),
+        vec![&meta]
+    );
+}
+
+#[test]
+fn history_in_a_gap_is_unmapped() {
+    let map = SymbolMap::from_toml_str(
+        r#"
+[[symbol]]
+canonical  = "META"
+lock_group = "META"
+aliases    = [{ symbol = "FB", until = "2022-06-09" }]
+[[symbol]]
+canonical  = "FB"
+from       = "2024-03-01"
+lock_group = "NEWFB"
+"#,
+    )
+    .unwrap();
+    // Nobody held FB in mid-2023: empty, so the record is carried under its raw symbol.
+    assert!(
+        map.resolve_history("FB", Vendor::Schwab, date("2023-06-01"), LOOKBACK)
+            .is_empty()
+    );
+}
+
+#[test]
+fn vendor_column_respects_the_entry_from_date() {
+    let map = SymbolMap::from_toml_str(REUSE).unwrap();
+    let fb = canon("FB");
+    assert_eq!(
+        map.resolve_on("FBNEW", Vendor::IShares, date("2024-01-02")),
+        None
+    );
+    assert_eq!(
+        map.resolve_on("FBNEW", Vendor::IShares, date("2024-03-01")),
+        Some(&fb)
+    );
+    assert_eq!(
+        map.resolve_history("FBNEW", Vendor::IShares, date("2024-02-01"), LOOKBACK),
+        vec![&fb]
+    );
+    assert!(
+        map.resolve_history("FBNEW", Vendor::IShares, date("2023-06-01"), LOOKBACK)
+            .is_empty()
+    );
+}
+
+#[test]
+fn two_dated_aliases_of_one_string_load() {
+    let map = SymbolMap::from_toml_str(
+        r#"
+[[symbol]]
+canonical = "META"
+lock_group = "META"
+aliases = [{ symbol = "FB", from = "2010-06-01", until = "2022-06-09" }]
+[[symbol]]
+canonical = "XYZ"
+lock_group = "XYZ"
+aliases = [{ symbol = "fb", until = "2010-01-01" }]
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        map.resolve_alias("FB", date("2009-12-31")),
+        Some(&canon("XYZ"))
+    );
+    assert_eq!(map.resolve_alias("FB", date("2010-03-01")), None);
+    assert_eq!(
+        map.resolve_alias("FB", date("2011-01-03")),
+        Some(&canon("META"))
+    );
+}
+
+#[test]
+fn overlapping_reuse_fails() {
+    for reuser_from in ["2024-02-28", "2024-01-01"] {
+        let err = load_err(&REUSE.replace("2024-03-01", reuser_from));
+        assert_eq!(err.kind(), "alias_collision", "{reuser_from}");
+        assert!(err.to_string().contains("FB"), "{err}");
+    }
+}
+
+#[test]
+fn bad_periods_fail() {
+    let err = load_err(
+        r#"
+[[symbol]]
+canonical = "META"
+lock_group = "META"
+aliases = [{ symbol = "FB", from = "2022-07-01", until = "2022-06-09" }]
+"#,
+    );
+    assert_eq!(err.kind(), "empty_period");
+    for toml in [
+        "[[symbol]]\ncanonical = \"FB\"\nfrom = \"2024-02-30\"\nlock_group = \"FB\"\n",
+        "[[symbol]]\ncanonical = \"META\"\nlock_group = \"META\"\naliases = [{ symbol = \"FB\", from = \"x\", until = \"2022-06-09\" }]\n",
+    ] {
+        assert_eq!(load_err(toml).kind(), "invalid_date", "{toml}");
+    }
+}
+
+#[test]
+fn prior_tickers_corroborate_alias_dates() {
+    let map = SymbolMap::from_toml_str(REUSE).unwrap();
+    let fb_prior = |to: &str| {
+        HashMap::from([(
+            canon("META"),
+            vec![PriorTicker {
+                ticker: canon("FB"),
+                from: Some(date("2012-05-18")),
+                to: date(to),
+            }],
+        )])
+    };
+    map.validate_prior_tickers(&fb_prior("2024-02-28")).unwrap();
+    // Securities absent from security_master are ignored.
+    map.validate_prior_tickers(&HashMap::new()).unwrap();
+    // An alias `until` one day off fails the load.
+    let err = map
+        .validate_prior_tickers(&fb_prior("2024-02-27"))
+        .unwrap_err();
+    assert_eq!(err.kind(), "prior_ticker_mismatch");
+    // A security_master row without the alias ticker fails too.
+    let err = map
+        .validate_prior_tickers(&HashMap::from([(canon("META"), Vec::new())]))
+        .unwrap_err();
+    assert_eq!(err.kind(), "prior_ticker_mismatch");
+}
+
+#[test]
+fn alias_from_must_match_prior_from() {
+    let map = SymbolMap::from_toml_str(
+        r#"
+[[symbol]]
+canonical = "META"
+lock_group = "META"
+aliases = [{ symbol = "FB", from = "2012-05-18", until = "2022-06-09" }]
+"#,
+    )
+    .unwrap();
+    let prior = |from: Option<&str>| {
+        HashMap::from([(
+            canon("META"),
+            vec![PriorTicker {
+                ticker: canon("FB"),
+                from: from.map(date),
+                to: date("2022-06-09"),
+            }],
+        )])
+    };
+    map.validate_prior_tickers(&prior(Some("2012-05-18")))
+        .unwrap();
+    for bad in [Some("2012-05-17"), None] {
+        assert_eq!(
+            map.validate_prior_tickers(&prior(bad)).unwrap_err().kind(),
+            "prior_ticker_mismatch"
+        );
+    }
+}
+
+#[test]
+fn vendor_spelling_reaching_another_entrys_ticker_fails() {
+    // Review finding: an iShares spelling "FB" on META while FB is another entry's ticker
+    // would let a record under "FB" skip META. The load must refuse it.
+    let err = load_err(
+        r#"
+[[symbol]]
+canonical = "META"
+ishares   = "FB"
+lock_group = "META"
+[[symbol]]
+canonical = "FB"
+lock_group = "NEWFB"
+"#,
+    );
+    assert_eq!(err.kind(), "spelling_collision");
+    // A spelling of a string the entry itself holds (the reuser's own ticker) is fine.
+    SymbolMap::from_toml_str(REUSE).unwrap();
+}
+
+#[test]
+fn reuse_boundary_is_strict() {
+    // Old alias until 2024-02-28: a reuser from the same day overlaps, from the next day loads.
+    let map = |from: &str| SymbolMap::from_toml_str(&REUSE.replace("2024-03-01", from));
+    assert_eq!(map("2024-02-28").unwrap_err().kind(), "alias_collision");
+    map("2024-02-29").unwrap();
+}
+
+#[test]
+fn overlap_between_first_and_third_holding_fails() {
+    let err = load_err(
+        r#"
+[[symbol]]
+canonical = "AAA"
+lock_group = "AAA"
+aliases = [{ symbol = "X", until = "2010-12-31" }]
+[[symbol]]
+canonical = "BBB"
+lock_group = "BBB"
+aliases = [{ symbol = "X", from = "2012-01-01", until = "2015-12-31" }]
+[[symbol]]
+canonical = "X"
+from = "2010-06-01"
+lock_group = "CCC"
+"#,
+    );
+    assert_eq!(err.kind(), "alias_collision");
+}
+
+#[test]
+fn margin_overflow_widens_without_bound() {
+    // Widening past the representable range counts as unbounded (fail closed), not as a
+    // miss: the old holder still matches near the end of time.
+    let map = SymbolMap::from_toml_str(&format!(
+        "[[symbol]]\ncanonical = \"META\"\nlock_group = \"META\"\naliases = [{{ symbol = \"FB\", from = \"{min}\", until = \"{max}\" }}]\n",
+        min = NaiveDate::MIN.format("%Y-%m-%d"),
+        max = NaiveDate::MAX.format("%Y-%m-%d"),
+    ));
+    // chrono's extreme dates round-trip through the date format (+262142-12-31), so both
+    // widenings overflow here.
+    let map = map.unwrap();
+    for on in [NaiveDate::MIN, NaiveDate::MAX] {
+        assert_eq!(
+            map.resolve_history("FB", Vendor::Schwab, on, LOOKBACK),
+            vec![&canon("META")]
+        );
+    }
+}
+
+#[test]
+fn prior_ticker_without_an_alias_fails() {
+    // Review finding: security_master knows META was FB, but the map forgot the alias.
+    let map = SymbolMap::from_toml_str("[[symbol]]\ncanonical = \"META\"\nlock_group = \"META\"\n")
+        .unwrap();
+    let prior = HashMap::from([(
+        canon("META"),
+        vec![PriorTicker {
+            ticker: canon("FB"),
+            from: None,
+            to: date("2022-06-09"),
+        }],
+    )]);
+    let err = map.validate_prior_tickers(&prior).unwrap_err();
+    assert_eq!(err.kind(), "missing_alias");
+    assert!(err.to_string().contains("FB"), "{err}");
 }

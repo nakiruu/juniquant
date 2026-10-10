@@ -506,6 +506,40 @@ Map shape: one entry per canonical ticker with its `yahoo`, `ishares` and
 the new canonical ticker for the lookback window, so an order placed under the
 old symbol still blocks the new one.
 
+**Ticker reuse: dated holdings (decided, owner, 2026-10-10, DECISIONS B5).**
+A ticker string can belong to different securities at different times: company
+A renames from `X` to `Y`, and later company B lists as `X`. Each string
+therefore has dated **holdings**: an entry holds its canonical ticker from its
+optional `from` date onward, and holds each alias from the alias's optional
+`from` through its `until` (inclusive; an absent date is unbounded on that
+side). Rules:
+
+1. **Overlap fails the load.** Two holdings of one string must not overlap.
+   Reuse loads only when the new holder's `from` is after the old holder's
+   `until`; an undated reuse overlaps and fails, as before. A vendor spelling
+   that normalizes to a string held only by other entries also fails the load.
+2. **Corroboration, both ways.** Every alias must match the security's
+   `security_master.prior_tickers` entry exactly (ticker, `until` = `to`, and
+   `from` when given), and every prior ticker must have such an alias; a
+   mismatch or a missing alias fails the load like an issuer-group conflict.
+3. **History resolves by date, order entry by today.** A history record (Schwab
+   order or transaction, journal row, `lock_external.csv` row) resolves through
+   the holding that covers its placement date; the order generator and
+   `authorize` use today's holder.
+4. **Doubt blocks both.** For lock history, every bounded side of every holding
+   is widened by the loader's entered-time lookback (45 calendar days, §3.1):
+   a record under `X` dated near a handover counts against **both** A's and
+   B's lock groups, and an old ticker typed by hand shortly after a rename still
+   reaches the renamed security. Over-blocking a few days is the fail-closed
+   direction.
+5. **Gaps stay unmapped.** A record dated when no holding covers the string
+   resolves to nothing and is carried under its normalised raw symbol (below),
+   never dropped.
+
+A record that carries a CUSIP (Schwab order legs and positions,
+`10-execution-schwab`) can settle ownership exactly; using it as a tie-breaker
+is a later-phase addition and does not replace the rules above.
+
 **Share classes are one lock group (decided, owner, 2026-10-10, DECISIONS B1).**
 All share classes of one issuer form **one** `lock_group`: a counted order in
 any class blocks the opposite side in **every** class of the same issuer, and a

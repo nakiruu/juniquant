@@ -22,6 +22,7 @@ in the skills.
 | B2 | An order that ended with zero fills is not locked; the retrospective audit does not flag overlaps with it (INFO count only). |
 | B3 | Missed closures are filled from daily bars (add-only), and the check runs once over the whole historical backfill. |
 | B4 | Alerts stay on the dashboard (no other channel chosen). |
+| B5 | Ticker reuse after a rename is allowed through dated holdings: overlapping holdings of one ticker string fail the map load; aliases must match `security_master.prior_tickers`; history resolves by placement date; within the lock lookback of a handover a record counts against both securities (09 §3.8). |
 
 ## C. Modeling (best practice where asked)
 
@@ -46,6 +47,9 @@ in the skills.
 | D8 | Delisted names: later price if any; else performance delistings -30% (NYSE/AMEX) / -55% (Nasdaq) per Shumway; cash acquisitions at last price; other disappearances excluded and counted. |
 | D9 | `config/fractional_eligible.toml` is seeded by the owner; until then Bootstrap trades nothing. |
 | D10 | Unverified external facts are settled by probes P1-P8 and the live tests. |
+| D11 | Altman Z is not applied to `Financials` or `Real Estate` (GICS `universe.sector` at `t`); when the sector is null, SIC 6000-6799 is excluded. Different sectors get different treatment (owner, 2026-10-10). |
+| D12 | Data scope is wider than the trading universe. I2 ingests every common stock listed on NYSE, NYSE American and Nasdaq from 2005 (ADRs and other foreign filers, ETFs, closed-end funds, preferreds, warrants, rights and units excluded) so a later universe change is a re-run, not a second backfill. The trading and training universe stays IWF/IWP (constitution §6) until a backtest supports a constitutional amendment (owner, 2026-10-10). |
+| D13 | Free sources only, reaffirmed (owner, 2026-10-10). Consequence: prices for stocks delisted before the backfill are unavailable for the wider set as for IWF/IWP; a point-in-time list of all listed stocks exists only from the day the system starts archiving the Nasdaq Trader symbol directories, and earlier listing history is reconstructed from EDGAR (Form 25, submissions) and labelled as such. Any backtest on the wider set carries the survivorship caveat. |
 
 Also decided: `evt_tail_bounds` is partitioned by year (about 14M rows over 15 years).
 

@@ -71,11 +71,8 @@ Session handoff for juniquant. Repository: `/home/nico/juniquant`, branch `main`
 
 ## Open questions for the owner
 
-- **Ticker reuse after a rename** (from W1). An alias that equals a canonical ticker currently
-  fails the symbol-map load, which is safe but strict. The alternative is to allow it and use
-  the alias `until` date to tell the two apart.
-- **Altman Z** excludes `Financials` and `Real Estate` (GICS), or SIC 6000-6799 when GICS is
-  missing. Including Real Estate was my call; confirm it.
+- ~~Ticker reuse after a rename~~: decided by the owner (DECISIONS B5), implemented in `symbols`.
+- ~~Altman Z sector exclusion~~: confirmed by the owner (DECISIONS D11).
 
 ## Owner setup pending
 

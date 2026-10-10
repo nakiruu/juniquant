@@ -79,7 +79,7 @@ DuckDB CLI version recorded in `docs/development.md`.
 
 W1-W3 own disjoint directories and run in parallel. W4 starts when DuckDB is installed.
 
-**Status 2026-10-10:** W1 `symbols` and W2 `calendar` + `NYSECalendar` are merged. The workers hit the usage limit, so the coordinator finished, reviewed and merged them. Rust, Julia and the oracle agree on the 1990-2100 holiday list. Next: W3 + W4 together (lake crate and registry; the registry hash comes from the writer's output), then Julia `LakeIO`. Open question from W1: a ticker reused by a new issuer after a rename currently fails the symbol-map load as an alias collision (safe, but strict).
+**Status 2026-10-10:** W1 `symbols` and W2 `calendar` + `NYSECalendar` are merged. The workers hit the usage limit, so the coordinator finished, reviewed and merged them. Rust, Julia and the oracle agree on the 1990-2100 holiday list. Next: W3 + W4 together (lake crate and registry; the registry hash comes from the writer's output), then Julia `LakeIO`. Ticker reuse after a rename (open question from W1) is decided as DECISIONS B5 and implemented in `symbols` (dated holdings).
 
 ### Phase I2 — Ingestion and the 15+ year backfill (critical path)
 
@@ -93,6 +93,28 @@ W1-W3 own disjoint directories and run in parallel. W4 starts when DuckDB is ins
 | W6 EDGAR | bulk companyfacts / submissions, 8-K items | `fundamentals`, `filing_events`, `delistings`, `security_master` (CIK side) |
 | W7 FRED/ALFRED | series + vintages | `macro` (long form, `known_from`) |
 | W8 iShares | holdings by as-of date (month-end + D2 extras) | `etf_holdings` |
+| W9 Listings (DECISIONS D12, D13) | Nasdaq Trader `nasdaqlisted.txt` / `otherlisted.txt`, SEC `company_tickers_exchange.json`, EDGAR Form 25 | a new additive dataset of listed common stocks per date (name to be fixed in `13-parquet-lake` during I1 W3); earlier history reconstructed from EDGAR and labelled |
+
+**Wider data scope (D12, D13).** The backfill covers every NYSE, NYSE American and Nasdaq
+common stock (about 4,500-5,500 today), not only IWF/IWP members; training and trading stay
+IWF/IWP. Consequences to settle in I2:
+
+- **Archive the listing files from day one.** No free point-in-time listing history exists
+  (Wayback snapshots are roughly yearly), so the daily Nasdaq Trader files go into the raw
+  landing zone as soon as the W9 fetcher exists; that archive is the only exact history.
+- **Request budget.** About 5,500 Yahoo symbols at the current rate (1 request per 2 s) is
+  about 3 hours for the backfill and for any full daily refresh. Probe P4 measures the real
+  ceiling; the rate is not widened without it (01 `BACKFILL.md`).
+- **Daily window (existing problem, any scope).** The 16:10 price fetch must finish before
+  16:30 inference, but even about 700 IWF/IWP requests at 0.5/s take about 23 minutes. Fix in
+  I2 design: fetch traded members first in the 16:10 slot (and move inference later or raise
+  the rate after P4), and refresh the rest of the listed set in an overnight job, which no
+  same-day decision depends on.
+- **Estimates to update.** Row counts, storage and wall-clock figures in 01 `BACKFILL.md` and
+  `13-parquet-lake/SCHEMAS.md` assume about 2,500 tickers; expect roughly 3-4x for prices,
+  fundamentals and filing events (lake still a few GB).
+- **ADRs and foreign filers stay out** (annual IFRS reporting); SIC is the only sector source
+  for names outside the ETF holdings.
 
 4. Backfill run on the owner's machine (or Unraid), resumable; the coverage and survivorship reports (`price_coverage`, `survivorship_caveat.json`) are reviewed with the owner before Phase I3.
 
@@ -130,6 +152,7 @@ Portfolio (06, 07, 08) with neutral defaults, CPCV evaluation (14), ledger (16),
 | Contact email for the SEC User-Agent header (`SEC_EDGAR_EMAIL`) | I2 W6 |
 | Local data location for development (`QUANT_ROOT`, `QUANT_STATE`) and disk budget (raw zone is the largest; estimates in 01 `BACKFILL.md`) | I2 |
 | Review the probe results and the survivorship report | End of I2 |
+| Check the ICE Global Personal Trading Policy for pre-clearance terms that affect automated trading | Before live trading |
 
 ---
 

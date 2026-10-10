@@ -11,7 +11,8 @@
 //! - [`is_tradable`]: true iff a string is already exactly canonical.
 //! - [`Cik`], [`SupersededTicker`]: the `SYMBOL~CIK10` form, never convertible to [`Canon`].
 //! - [`Vendor`], [`render`], [`render_str`]: canonical to vendor spelling.
-//! - [`SymbolMap`]: `config/symbol_map.toml`, validated at load (fail closed).
+//! - [`SymbolMap`]: `config/symbol_map.toml`, validated at load (fail closed); dated ticker
+//!   holdings for reuse after a rename (owner decision B5).
 
 mod canon;
 mod cik;
@@ -20,5 +21,5 @@ mod vendor;
 
 pub use canon::{Canon, NotCanonical, SymbolError, is_tradable, normalize};
 pub use cik::{Cik, CikError, SupersededError, SupersededTicker};
-pub use map::{Alias, MapError, SymbolEntry, SymbolMap};
+pub use map::{Alias, MapError, PriorTicker, SymbolEntry, SymbolMap};
 pub use vendor::{RenderError, UnknownVendor, Vendor, render, render_str};

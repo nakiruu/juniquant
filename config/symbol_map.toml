@@ -14,6 +14,16 @@
 # schwab     = "BRK/B"            # verify
 # lock_group = "BRK"              # share classes of one issuer (security_master CIK) share a group (DECISIONS B1)
 # aliases    = []                 # old tickers after a rename, e.g. [{ symbol = "OLD", until = "2022-06-09" }]
+#                                 # optional alias `from` (inclusive) when the string had an earlier holder
+#
+# Ticker reuse (DECISIONS B5): if another security later lists under an old ticker, its entry
+# gets `from`, the first date it holds the string. Holdings of one string must not overlap,
+# and every alias must match security_master.prior_tickers, or the map fails to load.
+#
+# [[symbol]]
+# canonical  = "OLD"              # a different issuer reusing the ticker
+# from       = "2024-03-01"       # after the old holder's alias `until`
+# lock_group = "NEWISSUER"
 #
 # [[symbol]]
 # canonical  = "GOOGL"

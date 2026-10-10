@@ -17,9 +17,11 @@ it reads canonical tickers from the lake.
 | `Cik` | SEC CIK, 1 to 10 digits in, ten-digit zero-padded out |
 | `SupersededTicker` | `SYMBOL~CIK10`; renders and parses, never converts to `Canon` |
 | `Vendor`, `render`, `render_str` | Canonical to vendor spelling; Yahoo/SEC hyphenate the class, Schwab refuses class shares (`unverified_vendor`), iShares is `input_only`, non-canonical input is `not_canonical` |
-| `SymbolMap` | `config/symbol_map.toml`, validated at load: duplicate canonical, duplicate vendor spelling, alias collisions, bad dates, empty lock groups are typed `MapError`s; `validate_issuers` enforces one lock group per CIK (B1); `resolve`, `resolve_alias`, `resolve_on`, `lock_group`, `group_members` |
+| `SymbolMap` | `config/symbol_map.toml`, validated at load: duplicate canonical, duplicate vendor spelling, overlapping ticker holdings, bad dates or periods, empty lock groups are typed `MapError`s; `validate_issuers` enforces one lock group per CIK (B1); `validate_prior_tickers` checks alias dates against `security_master.prior_tickers` (B5); `resolve` (today), `resolve_alias`, `resolve_on` (one holder on a date), `resolve_history` (every possible holder, widened around a ticker handover, fail closed), `lock_group`, `group_members` |
 
-An unmapped spelling resolves to `None`, never to a guess.
+An unmapped spelling resolves to `None`, never to a guess. A ticker reused by another security after a rename
+loads only with non-overlapping dated holdings (`from` on the new entry, `until` on the old alias;
+DECISIONS B5).
 
 ## Tests
 

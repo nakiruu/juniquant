@@ -276,6 +276,29 @@ LightGBM. The `use_missing=true` default handles it.
 are already on comparable scales (ranks are [0, 1]; raw features are
 unbounded but LightGBM is scale-invariant on splits).
 
+**Training speed (no new infrastructure).** The panel is small (about 3M
+rows by 12 features, about 145 MB as float32) and is read once per
+generation; I/O is negligible next to tree building. A vector store or an
+in-process cache between the lake and LightGBM buys nothing and adds a
+second copy of the data (owner, 2026-10-10). Where training time matters
+(the prediction backfill: one generation per month-end, 21 models each),
+use these, in this order:
+
+1. **One binned Dataset per horizon.** The seven quantile models of a
+   horizon share `X` and `y_fwd_Hd`; construct the LightGBM Dataset once
+   and train all seven `alpha` values on it instead of re-binning seven
+   times.
+2. **Arrow straight to the matrix.** Read the panel columns from Arrow into
+   the feature matrix without per-row conversion. Float32 features only if
+   the Rust parity test (§11) passes with the same dtype on both sides.
+3. **Generations in parallel.** Month-end generations are independent:
+   run several at once with `num_threads` split between them so the cores
+   are not oversubscribed. Each generation keeps its own fixed `seed` and
+   `num_threads`, recorded in the registry, so results stay reproducible.
+4. **Coarser histograms last.** `max_bin` and related binning settings are
+   hyperparameters: change them only through a tuning pass
+   (`HYPERPARAMETERS.md`), never as a speed tweak.
+
 ## 10. What Not to Do
 
 - Do not train a single multi-output model. One model per quantile.

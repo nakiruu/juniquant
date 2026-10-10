@@ -13,7 +13,8 @@ downside-risk-aware portfolio, and (in a later phase) places orders under a cont
 
 1. **Data:** daily prices and corporate actions (Yahoo), fundamentals and filing events
    (SEC EDGAR), macro series with vintages (FRED/ALFRED) and historical index holdings
-   (iShares IWF/IWP). Free sources only; the survivorship bias this causes is measured and
+   (iShares IWF/IWP); data is collected for every NYSE, NYSE American and Nasdaq common stock
+   (DECISIONS D12). Free sources only; the survivorship bias this causes is measured and
    reported with every result.
 2. **Forecasts:** GSPQR (21 LightGBM quantile models), calibrated by TCP (conformal
    prediction) and extended into the tails by EVT.
