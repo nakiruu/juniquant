@@ -34,3 +34,6 @@ __pycache__/
 # manifest is the root Manifest.toml.
 /julia/*/Manifest.toml
 /julia/*/test/Manifest.toml
+
+# Agent worktrees (Claude Code)
+/.claude/worktrees/

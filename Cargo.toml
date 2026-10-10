@@ -11,7 +11,9 @@ publish = false
 # Shared dependency versions; member crates opt in with `<name>.workspace = true`.
 [workspace.dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+csv = "1"
 proptest = "1.12.0"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.152"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
