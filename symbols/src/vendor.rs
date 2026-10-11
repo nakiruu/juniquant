@@ -13,7 +13,7 @@ use crate::canon::Canon;
 #[serde(rename_all = "lowercase")]
 pub enum Vendor {
     /// EODHD, the primary price source (DECISIONS D15): `BRK-B`, sent as `BRK-B.US` (the
-    /// client appends the exchange). Class-share form verify (P3).
+    /// client appends the exchange). Class-share form confirmed by probe P3.
     Eodhd,
     /// Yahoo Finance chart API (`BRK-B`), optional secondary source.
     Yahoo,

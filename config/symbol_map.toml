@@ -9,7 +9,7 @@
 #
 # [[symbol]]
 # canonical  = "BRK.B"            # the form used inside the system
-# eodhd      = "BRK-B"            # primary price source, sent as BRK-B.US (verify, P3)
+# eodhd      = "BRK-B"            # primary price source, sent as BRK-B.US (probe P3)
 # yahoo      = "BRK-B"            # verify
 # ishares    = "BRKB"             # verify
 # schwab     = "BRK/B"            # verify

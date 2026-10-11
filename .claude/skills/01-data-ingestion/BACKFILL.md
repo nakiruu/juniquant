@@ -158,7 +158,8 @@ final state; a test does exactly that (§12).
   American and Nasdaq, plus every ticker in any holdings snapshot (from
   `etf_holdings` and `security_master`, so this job runs after J4 in §8), plus
   the reference codes `SPY`, `IWF`, `IWP` and `VIX.INDX` (calendar and gate
-  checks). Estimated 5,500 active plus the delisted set (size from P2).
+  checks). 6,059 active and 16,588 delisted codes (P2); a historical holder of a
+  reused ticker is fetched under its `_old` code (`SOURCES.md` EODHD).
 - **Chunks.** Three per code: `eod-full`, `splits-full`, `div-full`, each
   `from` = `BACKFILL_START` (earlier is harmless) to the fetch date, fetched
   together in that order (the volume normalization needs the splits up to the
@@ -167,8 +168,7 @@ final state; a test does exactly that (§12).
   the whole exchange.
 - **Rate.** `SKILL.md` §5: 8 requests/s, burst 20, concurrency 4, and at most
   90,000 calls per day. Estimated calls: 3 x (5,500 + delisted) + 10% retries
-  + probes; about 17,000 before the delisted set, so the backfill fits in one
-  day's allowance.
+  + probes: about 68,000, so the backfill fits in one day's allowance.
 - **Result per chunk.** Rows into `prices` (partitions `year`/`month`),
   `splits` and `dividends` (`source = eodhd`). An empty array -> `gone`
   (`vendor_no_data`); a series that starts after the first holdings date, or
@@ -326,11 +326,11 @@ date is joined in `price_coverage`, which removes the J5 -> J6 cycle.
 | Item | Estimate | Basis |
 |---|---|---|
 | Distinct tickers ever in IWF/IWP, 2008-2026 | about 2,500 (range 2,000-3,000) | about 600 members now, roughly 15% annual replacement over 17 years |
-| EODHD calls | about 17,000 for 5,500 codes (3 each), plus 3 per delisted code | eod + splits + dividends per code; under the 90,000-call daily cap, so one day |
+| EODHD calls | about 68,000: 3 x (6,059 active + 16,588 delisted codes, P2) | eod + splits + dividends per code (1 call each, P4); under the 90,000-call daily cap, so one day |
 | EDGAR requests | under 100 | bulk + index + maps |
 | FRED requests | under 30 | 9 series, paged |
 | iShares requests | about 500 (month-end) | 2 ETFs x about 225 months + probes |
-| Wall clock, backfill fetching | about 1 hour of EODHD at 8/s; EDGAR bulk downloads dominate | EODHD 17,000 calls / 8 per s is about 35 minutes |
+| Wall clock, backfill fetching | about 2-3 hours of EODHD at 8/s | 68,000 calls / 8 per s is about 2.4 hours |
 | Raw landing zone | about 3-6 GB | EODHD about 0.5 GB, SEC zips 2-4 GB, rest small |
 | Stage | about 0.5 GB | rebuildable; may be deleted after compaction |
 | Lake after backfill | about 0.6-0.8 GB | `prices` about 9M rows x about 40 B; `universe` about 3M rows; fundamentals about 150K rows; events about 300K rows |

@@ -159,7 +159,7 @@ after its "as of" date.
 |---|---|
 | HTTP timeout | Retry up to 3 times with exponential backoff |
 | HTTP 429 (rate limit) | Back off 60 s, halve the refill rate for 10 min, retry |
-| EODHD `200` with `[]` (unknown or renamed code) | Not a retryable failure: mark the chunk `gone` with reason `vendor_no_data` (this is the survivorship signal, `SURVIVORSHIP.md`) |
+| EODHD `200` with `[]` or `404` (unknown code) | Not a retryable failure: mark the chunk `gone` with reason `vendor_no_data` (this is the survivorship signal, `SURVIVORSHIP.md`) |
 | HTTP 401 / 403 from EODHD (key or plan) | Stop the run; never retry. Log FAIL |
 | HTTP 4xx (other) | Do not retry. Log FAIL |
 | HTTP 5xx | Retry up to 5 times with backoff |

@@ -124,7 +124,7 @@ with [`first_price_date`, `last_price_date`] and the delisting record:
 |---|---|
 | `complete` | Prices on all member days (within a 2% internal-hole tolerance), through the last expected day: the data end for a live name, `est_last_trading_date` for a delisted one |
 | `terminal_known` | The series ends within 10 trading days of the `est_last_trading_date` of a `delistings` row whose class has a terminal rule (`bankruptcy`, `acquired`) |
-| `gap` | Anything else; `gap_reason` is one of `vendor_no_data`, `vendor_truncated` (series ends more than 10 trading days before the expected end), `late_start` (series starts after the first member day), `symbol_reused` (the vendor series starts after the security's first member day by more than 30 days and the security is old, or `firstTradeDate` contradicts the holdings), `identity_unresolved` (no CIK / vendor symbol), `internal_gaps` |
+| `gap` | Anything else; `gap_reason` is one of `vendor_no_data`, `vendor_wrong_holder` (the code answers with a different holder's series, `SOURCES.md` EODHD), `vendor_truncated` (series ends more than 10 trading days before the expected end), `late_start` (series starts after the first member day), `symbol_reused` (the vendor series starts after the security's first member day by more than 30 days and the security is old, or `firstTradeDate` contradicts the holdings), `identity_unresolved` (no CIK / vendor symbol), `internal_gaps` |
 
 `terminal_class` (used by the labels): `none` (alive at the data end),
 `bankrupt` (class `bankruptcy`, the series reaches the bankruptcy filing

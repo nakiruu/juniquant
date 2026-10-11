@@ -78,7 +78,7 @@ letter after a dot. Grammar for tradable symbols:
 
 | Vendor | `BRK.B` renders as | Status |
 |---|---|---|
-| EODHD (prices, D15) | `BRK-B`, sent as `BRK-B.US` | verify (P3) |
+| EODHD (prices, D15) | `BRK-B`, sent as `BRK-B.US` | confirmed (P3); a historical holder of a reused ticker has its own `_old` code (`SOURCES.md` EODHD) |
 | Yahoo (optional secondary) | `BRK-B` (dot -> hyphen) | verify |
 | SEC `company_tickers` | `BRK-B` | verify |
 | iShares | as published; input only | verify |

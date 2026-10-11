@@ -1,6 +1,6 @@
 canonical,vendor,rendered,error,note
 "AAPL","eodhd","AAPL","","no class (the client appends .US)"
-"BRK.B","eodhd","BRK-B","","dot to hyphen (verify, P3)"
+"BRK.B","eodhd","BRK-B","","dot to hyphen (confirmed, probe P3: BRK-B.US)"
 "brk.b","eodhd","","not_canonical","render takes canonical input only"
 "AAPL","yahoo","AAPL","","no class"
 "BRK.B","yahoo","BRK-B","","dot to hyphen (verify, P2/P3)"
