@@ -41,6 +41,7 @@ Measured on 2026-10-11 (EODHD symbol lists from P2; one OpenFIGI request):
 | ISIN (US = CUSIP + check) | Issue | EODHD symbol list `Isin` | 5,685 of 6,059 active (94%), 5,240 of 16,588 delisted (32%), 478 of 1,553 reused (31%) | No: a CUSIP can change on a name change or reorganization | Evidence, dated |
 | CUSIP | Issue | SEC 13(f) securities lists, N-PORT fund holdings (verify format and depth) | Exchange-listed equities in the 13(f) era | No (as ISIN) | Evidence, dated; a route to FIGI for names without an EODHD ISIN |
 | EODHD code | Vendor | EODHD | All of the backfill | No (`_old` renames) | Dated attribute; how prices are fetched |
+| EODHD search (`/api/search/{q}`) | Lookup | EODHD (in the plan, 1 call each) | **Active tickers only**: Monsanto by ISIN, by name and Lehman by CUSIP return nothing (tested 2026-10-11) | n/a | A fallback for resolving a current holdings name or ticker to an EODHD code and ISIN; no help for delisted securities |
 | Ticker | Exchange | Every source | All | No | Dated attribute; what holdings files and the broker use |
 
 gvkey, gvkey_iid, Capital IQ ids, PERMNO/PERMCO: not free. LEI: entity level and sparse for small
