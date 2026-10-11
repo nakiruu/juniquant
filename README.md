@@ -56,9 +56,10 @@ bash .claude/skills/15-ai-dev-workflow/scripts/session-start.sh   # environment 
 | `config/` | Restricted list, NYSE calendar overrides, quality gates, symbol map |
 | [`symbols/`](symbols/README.md) | Rust: canonical tickers, vendor spellings, the symbol map and lock groups |
 | [`calendar/`](calendar/README.md) | Rust: the NYSE trading calendar (rules + add-only overrides) |
-| `lake/`, `ingest/` | Rust crates (skeletons until phases I1/I2) |
-| [`julia/`](julia/NYSECalendar/README.md) | Shared Julia packages: `NYSECalendar` (done), `LakeIO` (placeholder) |
-| `schemas/` | Golden fixtures for shared contracts; schema registry tooling (phase I1) |
+| `lake/` | Rust crate: the lake I/O contract (`write_partition` / `read_dataset`), `lake-io` (the Julia bridge) and `lake-schema-probe` |
+| `ingest/` | Rust crate (skeleton until phase I2) |
+| [`julia/`](julia/NYSECalendar/README.md) | Shared Julia packages: `NYSECalendar`, `LakeIO` (the lake from Julia, through `lake-io`) |
+| `schemas/` | Golden fixtures for shared contracts; `registry.json` (all 35 datasets), its generator and verifier |
 | `tools/` | Julia repository checks (markdown, syntax) |
 | `outline.md`, `scaffold.md` | Functional outline and target directory layout |
 | `DECISIONS.md` | The owner's decisions and their status |

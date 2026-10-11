@@ -81,6 +81,8 @@ W1-W3 own disjoint directories and run in parallel. W4 starts when DuckDB is ins
 
 **Status 2026-10-10:** W1 `symbols` and W2 `calendar` + `NYSECalendar` are merged. The workers hit the usage limit, so the coordinator finished, reviewed and merged them. Rust, Julia and the oracle agree on the 1990-2100 holiday list. Next: W3 + W4 together (lake crate and registry; the registry hash comes from the writer's output), then Julia `LakeIO`. Ticker reuse after a rename (open question from W1) is decided as DECISIONS B5 and implemented in `symbols` (dated holdings).
 
+**Status 2026-10-10 (later):** W3 `lake` crate, W4 registry (all 35 datasets, `schemas/generate-registry.jl --check` and `verify-schemas.sh --self-test` in `make check`, DuckDB 1.5.6 in CI) and Julia `LakeIO` are done. By owner decision `LakeIO` writes and reads through the Rust `lake-io` binary over Arrow IPC (`12-julia-rust-bridge` §0), so the contract is implemented once. Next: I2.
+
 ### Phase I2 — Ingestion and the 15+ year backfill (critical path)
 
 1. **Probes first** (`quant-ingest probe P1..P8`, 01 `BACKFILL.md` §2): settle every "verify" item (Yahoo raw vs adjusted OHLCV and delisted symbols, EDGAR bulk URLs and sizes, ALFRED parameters, iShares `asOfDate` depth = decision D1, Form 25 timing, XBRL phase-in). Results are written to `docs/probes/` and fed back into the skills.
@@ -93,7 +95,7 @@ W1-W3 own disjoint directories and run in parallel. W4 starts when DuckDB is ins
 | W6 EDGAR | bulk companyfacts / submissions, 8-K items | `fundamentals`, `filing_events`, `delistings`, `security_master` (CIK side) |
 | W7 FRED/ALFRED | series + vintages | `macro` (long form, `known_from`) |
 | W8 iShares | holdings by as-of date (month-end + D2 extras) | `etf_holdings` |
-| W9 Listings (DECISIONS D12, D13) | Nasdaq Trader `nasdaqlisted.txt` / `otherlisted.txt`, SEC `company_tickers_exchange.json`, EDGAR Form 25 | a new additive dataset of listed common stocks per date (name to be fixed in `13-parquet-lake` during I1 W3); earlier history reconstructed from EDGAR and labelled |
+| W9 Listings (DECISIONS D12, D13) | Nasdaq Trader `nasdaqlisted.txt` / `otherlisted.txt`, SEC `company_tickers_exchange.json`, EDGAR Form 25 | `listings` (#35, `13-parquet-lake`); earlier history reconstructed from EDGAR and labelled |
 
 **Wider data scope (D12, D13).** The backfill covers every NYSE, NYSE American and Nasdaq
 common stock (about 4,500-5,500 today), not only IWF/IWP members; training and trading stay

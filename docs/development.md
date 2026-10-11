@@ -10,7 +10,7 @@ How to work on this repository. Session conventions for AI-assisted work are in
 | Julia | 1.12 | Workspace at the repository root; one committed `Manifest.toml` |
 | Rust | 1.98.1 | `rust-toolchain.toml` (honoured by rustup). On Fedora's system toolchain install `rustfmt` and `clippy`: `sudo dnf install rustfmt clippy` |
 | GNU make | any | Single entry point for the gates |
-| DuckDB CLI | 1.5.6 locally (pin and CI install come with the schema registry, I1 W4) | Schema registry checks and ad-hoc queries |
+| DuckDB CLI | 1.5.6, pinned; CI installs it | Schema registry checks and ad-hoc queries |
 | Bun | later | Dashboard |
 
 No Python, in any form (constitution §4; the pre-commit hook rejects `*.py`).
@@ -26,7 +26,8 @@ No Python, in any form (constitution §4; the pre-commit hook rejects `*.py`).
 | `make md-check` | Markdown code fences and table column counts |
 | `make hook-test` | The constitution pre-commit hook's own test suite |
 | `make hook-install` | Install the hook into `.git/hooks` |
-| `make schemas` | Verify lake schemas against `schemas/registry.json` (needs DuckDB) |
+| `make schemas` | Verify the lake at `$QUANT_ROOT/lake` against `schemas/registry.json` (needs DuckDB) |
+| `make schemas-check` | Part of `make check`: the registry regenerated from `SCHEMAS.md` and the Rust writer equals the committed one; verifier self-test |
 | `make fmt` | Format Rust code |
 
 `bash .claude/skills/15-ai-dev-workflow/scripts/session-start.sh` checks the environment.

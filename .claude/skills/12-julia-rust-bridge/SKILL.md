@@ -24,6 +24,13 @@ crosses the boundary at all**. Julia and Rust exchange data through files:
   and never feeds TCP or EVT (`03-gspqr-model/EXPORT.md` §4, §7). The `bosk`
   and `lightgbm-rust` crates are unverified (verify).
 - Julia audit events go through the atomic-file spool (§4).
+- Julia writes and reads the lake through `julia/LakeIO`, which hands an Arrow IPC stream file to the
+  Rust `lake-io` binary (`lake` crate): validation, merge, sort and the atomic rename of
+  `13-parquet-lake/IO-CONTRACT.md` exist once, in Rust, so a Julia-written leaf has the
+  registry hash by construction. Owner decision 2026-10-10. Copy semantics: the table is
+  copied into the IPC file and back (no zero-copy). Errors: the binary exits non-zero and
+  `LakeIO` throws with its message. `lake-io write` narrows `Int` columns to the registered
+  width (overflow is an error) and takes a naive `DateTime` column as UTC.
 - Data tables are Parquet (and Arrow IPC for in-memory exchange, §4).
 
 `jlrs` (Rust calls Julia) and `RustCall.jl` (Julia calls Rust) below are

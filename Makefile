@@ -4,7 +4,7 @@
 JULIA ?= julia --startup-file=no --project=tools
 SKILLS := .claude/skills
 
-.PHONY: check rust julia rust-fmt rust-clippy rust-test rust-doc julia-instantiate julia-parse fixtures julia-test md-check hook-test hook-install fmt schemas doc help
+.PHONY: check schemas-check rust julia rust-fmt rust-clippy rust-test rust-doc julia-instantiate julia-parse fixtures julia-test md-check hook-test hook-install fmt schemas doc help
 
 help:
 	@echo "make check        all gates (rust + julia + docs + constitution hook)"
@@ -14,9 +14,10 @@ help:
 	@echo "make hook-test    constitution pre-commit hook test suite"
 	@echo "make hook-install install the constitution hook into .git/hooks"
 	@echo "make fmt          format Rust code"
-	@echo "make schemas      verify lake schemas against schemas/registry.json (needs duckdb)"
+	@echo "make schemas      verify the lake at \$$QUANT_ROOT/lake against schemas/registry.json (needs duckdb)"
+	@echo "make schemas-check registry up to date with SCHEMAS.md and the writer, verifier self-test"
 
-check: rust julia md-check hook-test
+check: rust julia schemas-check md-check hook-test
 	@echo "ALL CHECKS PASSED"
 
 rust: rust-fmt rust-clippy rust-test rust-doc
@@ -65,9 +66,18 @@ hook-install:
 fmt:
 	cargo fmt --all
 
+DUCKDB_CHECK = @command -v duckdb >/dev/null 2>&1 || { echo "duckdb CLI missing: install 1.5.6 (docs/development.md)" >&2; exit 1; }
+
 schemas:
-	@command -v duckdb >/dev/null 2>&1 || { echo "duckdb CLI missing: install it (docs/development.md)" >&2; exit 1; }
-	bash $(SKILLS)/13-parquet-lake/scripts/verify-schemas.sh
+	$(DUCKDB_CHECK)
+	bash schemas/verify-schemas.sh
+
+# Registry regenerated from SCHEMAS.md + the Rust writer must equal the committed one.
+schemas-check:
+	$(DUCKDB_CHECK)
+	julia --startup-file=no --project=schemas/test schemas/test/runtests.jl
+	julia --startup-file=no --project=schemas schemas/generate-registry.jl --check
+	bash schemas/verify-schemas.sh --self-test
 
 doc:
 	cargo doc --workspace --no-deps

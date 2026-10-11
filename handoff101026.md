@@ -48,25 +48,11 @@ Session handoff for juniquant. Repository: `/home/nico/juniquant`, branch `main`
 
 ## Next
 
-1. **I1 W3 + W4, the `lake` crate and the schema registry, done together.** The design is in
-   the plan and in the lost W3 brief:
-   - The registry entries gain `fields`, `primary_key`, `merge`, `layout` and
-     `partition_keys`, parsed from `13-parquet-lake/SCHEMAS.md` by
-     `schemas/generate-registry.jl`.
-   - A Rust bin `lake-schema-probe` writes an empty leaf through the real writer, and DuckDB
-     `DESCRIBE` on that file gives the `columns`/`hash`.
-   - `schemas/verify-schemas.sh` gets a lake mode and a `--self-test` mode for CI.
-   - CI installs the pinned DuckDB CLI (1.5.6).
-   - The writer follows `IO-CONTRACT.md` §3 exactly: validate, merge (`overwrite` or
-     `append_only`), sort by primary key, write a ZSTD-3 temp file, fsync, rename, fsync the
-     directory.
-   - The W3 worker had picked `arrow`/`parquet` 60.0.0 and `sha2` 0.11.
-   - Add `migrations/2026-10-10-initial.md`, and replace the sketch scripts in
-     `13-parquet-lake/scripts/`.
-2. **Julia `LakeIO`** (`julia/LakeIO`, a placeholder for now). It must produce files whose
-   DuckDB `DESCRIBE` hash equals the registry's.
-3. Run an independent review of each workstream, then rerun `make check`, merge and push.
-4. Then I2: run probes P1-P8 first ([`01-data-ingestion/BACKFILL.md`](.claude/skills/01-data-ingestion/BACKFILL.md)
+1. ~~I1 W3 + W4 and Julia `LakeIO`~~: done on branch `i1-w3w4` (`docs/INFRASTRUCTURE-PLAN.md` I1 status).
+   Julia must run as 1.12 (`julia +1.12`): the juliaup default is now 1.13, and its `Pkg`
+   rewrites `Manifest.toml` to format 2.1.
+2. Merge `i1-w3w4` to `main` and push after the branch review.
+3. Then I2: run probes P1-P8 first ([`01-data-ingestion/BACKFILL.md`](.claude/skills/01-data-ingestion/BACKFILL.md)
    §2), then the common ingest infrastructure, then the per-source workers.
 
 ## Open questions for the owner
