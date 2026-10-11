@@ -102,10 +102,6 @@ days (§5). The queued `target_quantity` plays no part.
 3. Re-validate the signal (§4). If valid, release the intent to the generator
    and set `status = Fired` (the row records that the intent was released; the
    orders it produces are in `orders.parquet`); otherwise cancel with the reason.
-   Set `Fired` **before** sending the intent: a crash between the two loses a
-   release (a `Fired` row with no order, visible to the owner) but never
-   repeats one. A failed send alerts.
-
 Re-validation is load-bearing: a signal that was correct when queued may
 have reversed. Firing blindly executes a stale decision. Re-authorization is
 equally load-bearing: the queue never carries a permit across days, and the
