@@ -82,7 +82,7 @@ impl SourceSpec {
         id: "eodhd",
         label: "EODHD",
         burst: 20.0,
-        rate: 8.0,
+        rate: 14.0,
         concurrency: 4,
         base_backoff: Duration::from_secs(1),
         max_attempts: 3,

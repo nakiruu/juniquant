@@ -125,7 +125,7 @@ const JAN3: i32 = 19_725;
 
 fn prices(lake: &Lake, rows: &[(&'static str, i32, f64)]) -> RecordBatch {
     batch(lake, "prices", rows.len(), |c, i| match c {
-        "ticker" => Some(V::S(rows[i].0)),
+        "ticker" | "figi" => Some(V::S(rows[i].0)),
         "date" => Some(V::D(rows[i].1)),
         "close" => Some(V::F(rows[i].2)),
         "fetched_at" => Some(V::D(rows[i].1)),

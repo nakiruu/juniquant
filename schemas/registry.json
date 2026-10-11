@@ -129,6 +129,11 @@
             "schemas_md": "#2",
             "fields": [
                 {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
                     "name": "ticker",
                     "type": "utf8",
                     "nullable": false
@@ -185,15 +190,16 @@
                 }
             ],
             "primary_key": [
-                "ticker",
+                "figi",
                 "date"
             ],
             "sort_key": [
-                "ticker",
+                "figi",
                 "date"
             ],
             "merge": "overwrite",
             "columns": [
+                "figi:VARCHAR",
                 "ticker:VARCHAR",
                 "date:DATE",
                 "open:DOUBLE",
@@ -206,7 +212,7 @@
                 "fetched_at:TIMESTAMP WITH TIME ZONE",
                 "raw_sha256:VARCHAR"
             ],
-            "hash": "2e8eeba0fe031f26899b73d18371582c884f263df290910f45f796463bbcf5e6",
+            "hash": "7fd3ff5d068f25594c9cd665708923a32b8d1f41545b678f5a676d4ef2cfecd4",
             "last_migration": "2026-10-10-initial"
         },
         "fundamentals": {
@@ -3063,6 +3069,11 @@
             "schemas_md": "#28",
             "fields": [
                 {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
                     "name": "ticker",
                     "type": "utf8",
                     "nullable": false
@@ -3104,15 +3115,16 @@
                 }
             ],
             "primary_key": [
-                "ticker",
+                "figi",
                 "ex_date"
             ],
             "sort_key": [
-                "ticker",
+                "figi",
                 "ex_date"
             ],
             "merge": "overwrite",
             "columns": [
+                "figi:VARCHAR",
                 "ticker:VARCHAR",
                 "ex_date:DATE",
                 "numerator:DOUBLE",
@@ -3122,7 +3134,7 @@
                 "fetched_at:TIMESTAMP WITH TIME ZONE",
                 "raw_sha256:VARCHAR"
             ],
-            "hash": "e37db07e6b8fee2b0e6ca494522c7d1c4ef5b96880dfb6f251b50d4ab541d643",
+            "hash": "ceb766397df44747a6214163fce7a4a616f57bd3269862fd1a9b7ebaba184ccc",
             "last_migration": "2026-10-10-initial"
         },
         "dividends": {
@@ -3134,6 +3146,11 @@
             "writer": "rust-ingest",
             "schemas_md": "#29",
             "fields": [
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
+                },
                 {
                     "name": "ticker",
                     "type": "utf8",
@@ -3171,15 +3188,16 @@
                 }
             ],
             "primary_key": [
-                "ticker",
+                "figi",
                 "ex_date"
             ],
             "sort_key": [
-                "ticker",
+                "figi",
                 "ex_date"
             ],
             "merge": "overwrite",
             "columns": [
+                "figi:VARCHAR",
                 "ticker:VARCHAR",
                 "ex_date:DATE",
                 "amount:DOUBLE",
@@ -3188,7 +3206,7 @@
                 "fetched_at:TIMESTAMP WITH TIME ZONE",
                 "raw_sha256:VARCHAR"
             ],
-            "hash": "87ad49252e18938026a8420ff776e3581b81b354e63f16dec26a06647607180f",
+            "hash": "1f3af71b279f578f82bf9e4df10470816cb275c8f34f0731f711ab72edb290a8",
             "last_migration": "2026-10-10-initial"
         },
         "etf_holdings": {

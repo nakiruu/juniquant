@@ -89,7 +89,8 @@ except the reconciliation gate.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `ticker` | `utf8` | no | Canonical symbol |
+| `figi` | `utf8` | no | US composite FIGI of the security (`security_master`, DECISIONS D17); first column since the 2026-10-11 correction |
+| `ticker` | `utf8` | no | Canonical form of the EODHD code the row was fetched under (`MON_old` -> `MON`); not a key |
 | `date` | `date32` | no | NYSE trading day in the exchange time zone of the bar |
 | `open` | `float64` | no | As traded, USD |
 | `high` | `float64` | no | As traded |
@@ -101,7 +102,7 @@ except the reconciliation gate.
 | `fetched_at` | `timestamp[ns, UTC]` | no | Appended. When the raw response was fetched |
 | `raw_sha256` | `utf8` | no | Appended. SHA-256 of the raw response body in the landing zone; links the row to its replayable source |
 
-Primary key: `(ticker, date)`. One source per row; with more than one price
+Primary key: `(figi, date)`. One source per row; with more than one price
 source the highest-priority source wins and the loser is kept only in the raw
 zone (`01-data-ingestion/SURVIVORSHIP.md` §2).
 
@@ -851,7 +852,8 @@ Split events from the price vendor's `events=split` (`01-data-ingestion/SOURCES.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `ticker` | `utf8` | no | Canonical symbol |
+| `figi` | `utf8` | no | US composite FIGI of the security (`security_master`, DECISIONS D17); first column since the 2026-10-11 correction |
+| `ticker` | `utf8` | no | Canonical form of the EODHD code the row was fetched under (`MON_old` -> `MON`); not a key |
 | `ex_date` | `date32` | no | First trading day at the new share count |
 | `numerator` | `float64` | no | New shares (4 in a 4-for-1) |
 | `denominator` | `float64` | no | Old shares (1 in a 4-for-1; 8 in a 1-for-8 reverse split) |
@@ -860,7 +862,7 @@ Split events from the price vendor's `events=split` (`01-data-ingestion/SOURCES.
 | `fetched_at` | `timestamp[ns, UTC]` | no | |
 | `raw_sha256` | `utf8` | no | Landing-zone body this row came from |
 
-Primary key: `(ticker, ex_date)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+Primary key: `(figi, ex_date)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 
 ---
 
@@ -872,7 +874,8 @@ Cash dividends from the vendor's `events=div`. Used for the dividend-adjusted (t
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `ticker` | `utf8` | no | Canonical symbol |
+| `figi` | `utf8` | no | US composite FIGI of the security (`security_master`, DECISIONS D17); first column since the 2026-10-11 correction |
+| `ticker` | `utf8` | no | Canonical form of the EODHD code the row was fetched under (`MON_old` -> `MON`); not a key |
 | `ex_date` | `date32` | no | Ex-dividend date (EODHD `date`, documented as the ex-date) |
 | `amount` | `float64` | no | USD per share **as paid** (not split-adjusted): EODHD `unadjustedValue` |
 | `currency` | `utf8` | yes | From the response metadata, normally `USD` |
@@ -880,7 +883,7 @@ Cash dividends from the vendor's `events=div`. Used for the dividend-adjusted (t
 | `fetched_at` | `timestamp[ns, UTC]` | no | |
 | `raw_sha256` | `utf8` | no | |
 
-Primary key: `(ticker, ex_date)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+Primary key: `(figi, ex_date)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 
 ---
 

@@ -17,6 +17,7 @@ function with_lake(f)
 end
 
 prices(tickers, closes) = (
+    figi = ["F" * t for t in tickers],
     ticker = tickers, date = fill(Date(2024, 1, 2), length(tickers)),
     open = closes, high = closes, low = closes, close = closes,
     volume = fill(100, length(tickers)),

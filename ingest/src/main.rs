@@ -70,9 +70,15 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
         lake,
         today,
         quality,
-        ctx,
+        mut ctx,
         ..
     } = setup("backfill")?;
+    ctx.figis = load_figis(&lake)?;
+    if ctx.figis.is_empty() {
+        return Err(
+            "security_spells is empty: run `quant-ingest identity` first (J4a, ADR 0001)".into(),
+        );
+    }
     let ctx = Arc::new(ctx);
     let from = ctx.from;
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -94,7 +100,7 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
                 .collect(),
             None => run::symbols(&ctx, today).await.map_err(|e| e.to_string())?,
         };
-        for r in run::REFERENCE {
+        for (r, _) in run::REFERENCE {
             if !list.iter().any(|c| c.code == *r) {
                 list.push(Code {
                     code: (*r).into(),
@@ -110,6 +116,7 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
         println!("eodhd: {} codes from {from}", list.len());
         let mut set = tokio::task::JoinSet::new();
         let mut spans = Vec::new();
+        let mut unresolved_with_prices = 0usize;
         let (mut done, mut fatal) = (0usize, None);
         let mut todo = list.into_iter();
         loop {
@@ -128,6 +135,18 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
             let (c, r) = joined.map_err(|e| e.to_string())?;
             match r {
                 Ok(res) => {
+                    if !res.resolved && res.bars > 0 {
+                        unresolved_with_prices += 1;
+                        ctx.quality.push(ingest::infra::quality::Row {
+                            source: "EODHD",
+                            dataset: "prices".into(),
+                            entity: format!("{}.US", c.code),
+                            chunk: "eod-full".into(),
+                            level: ingest::infra::quality::Level::Warn,
+                            attempts: 1,
+                            notes: Some(format!("identity_unresolved_with_prices: {} bars, {:?}; landed, not compacted", res.bars, res.span)),
+                        });
+                    }
                     if let Some(s) = res.span {
                         spans.push((c, s));
                     }
@@ -139,9 +158,10 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
                 println!("eodhd: {done} codes done");
             }
         }
-        for c in run::collisions(&spans) {
+        for c in run::collisions(&spans, &ctx.figis) {
             run::exclude(&ctx, &c).map_err(|e| e.to_string())?;
         }
+        println!("eodhd: {unresolved_with_prices} unresolved codes have prices since {from} (landed, not compacted)");
         Ok::<_, String>(fatal)
     });
     // Whatever happened, keep what was staged and the quality rows.
@@ -208,6 +228,7 @@ fn setup(mode: &str) -> Result<Setup, String> {
         from,
         quality: quality.clone(),
         base: run::BASE.into(),
+        figis: std::collections::BTreeMap::new(),
     };
     Ok(Setup {
         paths,
@@ -347,4 +368,26 @@ fn identity(rest: &[&str]) -> Result<(), String> {
         s.ambiguous
     );
     Ok(())
+}
+
+/// EODHD code -> FIGI from `security_spells` (written by J4a).
+fn load_figis(lake: &lake::Lake) -> Result<std::collections::BTreeMap<String, String>, String> {
+    use arrow::array::AsArray;
+    let b = lake
+        .read_dataset(
+            "security_spells",
+            Some(&["figi", "id_type", "value"]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let (f, t, v) = (
+        b.column(0).as_string::<i32>(),
+        b.column(1).as_string::<i32>(),
+        b.column(2).as_string::<i32>(),
+    );
+    Ok((0..b.num_rows())
+        .filter(|&i| t.value(i) == "eodhd_code")
+        .map(|i| (v.value(i).to_owned(), f.value(i).to_owned()))
+        .collect())
 }

@@ -230,6 +230,11 @@ fn splits(ticker: &'static str, ex_days: &[i32]) -> RecordBatch {
     let s = |v: &'static str| -> ArrayRef { Arc::new(StringArray::from(vec![v; n])) };
     let f = |v: f64| -> ArrayRef { Arc::new(Float64Array::from(vec![v; n])) };
     let cols: Vec<ArrayRef> = vec![
+        s(if ticker == "AAPL" {
+            "BBG000B9XRY4"
+        } else {
+            "BBG000BBJQV0"
+        }),
         s(ticker),
         Arc::new(Date32Array::from(ex_days.to_vec())),
         f(4.0),
@@ -240,6 +245,7 @@ fn splits(ticker: &'static str, ex_days: &[i32]) -> RecordBatch {
         s("ab"),
     ];
     let names = [
+        "figi",
         "ticker",
         "ex_date",
         "numerator",

@@ -209,8 +209,9 @@ pub fn parse_mapping(body: &[u8]) -> Vec<Option<Figi>> {
                 .filter(|r| {
                     r.get("exchCode").and_then(Value::as_str) == Some("US")
                         && r.get("marketSector").and_then(Value::as_str) == Some("Equity")
-                        // `SWC/WD`, `X/WI`: when-distributed and when-issued lines of the same stock.
-                        && !r.get("ticker").and_then(Value::as_str).unwrap_or_default().contains('/')
+                        // `SWC/WD`, `X/WI`: when-distributed and when-issued lines of the same stock
+                        // (a class share is also written with a slash, `BRK/B`, and is kept).
+                        && !r.get("ticker").and_then(Value::as_str).unwrap_or_default().rsplit_once('/').is_some_and(|(_, s)| matches!(s, "WI" | "WD"))
                 })
                 .collect();
             let composites: BTreeSet<&str> = us
@@ -303,7 +304,10 @@ pub fn resolve(
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for c in codes {
         if let Some((isin, f)) = c.isin.as_ref().and_then(|i| by_isin.get(i).map(|f| (i, f))) {
-            if !IN_SCOPE.contains(&f.security_type2.as_str()) {
+            let reference = crate::eodhd::run::REFERENCE
+                .iter()
+                .any(|(r, _)| *r == c.code);
+            if !reference && !IN_SCOPE.contains(&f.security_type2.as_str()) {
                 bad.push((c.clone(), Unresolved::OutOfScope(f.security_type2.clone())));
                 continue;
             }
@@ -606,6 +610,13 @@ mod tests {
             only[0].as_ref().map(|f| f.figi.as_str()),
             Some("BBG000HYNVL9"),
             "a /WD line is not a second security"
+        );
+        let brk = json!({"figi": "BBG000DWG505", "compositeFIGI": "BBG000DWG505", "ticker": "BRK/B", "name": "BERKSHIRE HATHAWAY INC-CL B", "exchCode": "US", "marketSector": "Equity", "securityType2": "Common Stock"});
+        let class = parse_mapping(json!([{"data": [brk]}]).to_string().as_bytes());
+        assert_eq!(
+            class[0].as_ref().map(|f| f.figi.as_str()),
+            Some("BBG000DWG505"),
+            "a class share keeps its slash ticker"
         );
         let foreign = json!({"figi": "BBGX", "compositeFIGI": "BBGX", "exchCode": "GR", "marketSector": "Equity", "securityType2": "Common Stock"});
         let body = json!([
@@ -946,10 +957,21 @@ pub mod run {
         today: NaiveDate,
         codes: Option<Vec<Code>>,
     ) -> Result<Summary, RunError> {
-        let codes = match codes {
+        let mut codes = match codes {
             Some(c) => c,
             None => crate::eodhd::run::symbols(&job.eodhd, today).await?,
         };
+        for (code, isin) in crate::eodhd::run::REFERENCE {
+            if !codes.iter().any(|c| c.code == *code) {
+                codes.push(Code {
+                    code: (*code).into(),
+                    ticker: (*code).into(),
+                    name: (*code).into(),
+                    isin: Some((*isin).into()),
+                    delisted: false,
+                });
+            }
+        }
         let mut s = Summary {
             codes: codes.len(),
             ..Summary::default()

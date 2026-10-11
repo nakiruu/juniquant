@@ -132,6 +132,8 @@ pub fn parse_splits(body: &[u8]) -> Vec<(NaiveDate, f64, f64)> {
 /// Provenance stamped on every row.
 #[derive(Debug, Clone)]
 pub struct Origin {
+    /// US composite FIGI (DECISIONS D17).
+    pub figi: String,
     /// Canonical ticker.
     pub ticker: String,
     /// When the body was fetched.
@@ -244,6 +246,7 @@ pub fn prices(
     let n = dates.len();
     let [op, hi, lo, cl] = ohlc;
     let cols: Vec<ArrayRef> = vec![
+        Arc::new(StringArray::from(vec![o.figi.as_str(); n])),
         Arc::new(StringArray::from(vec![o.ticker.as_str(); n])),
         Arc::new(Date32Array::from(dates)),
         Arc::new(Float64Array::from(op)),
@@ -257,6 +260,7 @@ pub fn prices(
         Arc::new(StringArray::from(vec![o.raw_sha256.as_str(); n])),
     ];
     let s = schema(&[
+        ("figi", DataType::Utf8),
         ("ticker", DataType::Utf8),
         ("date", DataType::Date32),
         ("open", DataType::Float64),
@@ -286,6 +290,7 @@ pub fn splits_batch(
         Arc::new(Float64Array::from(splits.iter().map(f).collect::<Vec<_>>()))
     };
     let cols: Vec<ArrayRef> = vec![
+        Arc::new(StringArray::from(vec![o.figi.as_str(); n])),
         Arc::new(StringArray::from(vec![o.ticker.as_str(); n])),
         Arc::new(Date32Array::from(
             splits.iter().map(|s| days(s.0)).collect::<Vec<_>>(),
@@ -298,6 +303,7 @@ pub fn splits_batch(
         Arc::new(StringArray::from(vec![o.raw_sha256.as_str(); n])),
     ];
     let s = schema(&[
+        ("figi", DataType::Utf8),
         ("ticker", DataType::Utf8),
         ("ex_date", DataType::Date32),
         ("numerator", DataType::Float64),
@@ -342,6 +348,7 @@ pub fn dividends(
     }
     let n = by_date.len();
     let cols: Vec<ArrayRef> = vec![
+        Arc::new(StringArray::from(vec![o.figi.as_str(); n])),
         Arc::new(StringArray::from(vec![o.ticker.as_str(); n])),
         Arc::new(Date32Array::from(
             by_date.keys().map(|d| days(*d)).collect::<Vec<_>>(),
@@ -361,6 +368,7 @@ pub fn dividends(
         Arc::new(StringArray::from(vec![o.raw_sha256.as_str(); n])),
     ];
     let s = schema(&[
+        ("figi", DataType::Utf8),
         ("ticker", DataType::Utf8),
         ("ex_date", DataType::Date32),
         ("amount", DataType::Float64),
@@ -396,6 +404,7 @@ mod tests {
 
     fn origin(fetched: &str) -> Origin {
         Origin {
+            figi: "BBG000B9XRY4".into(),
             ticker: "AAPL".into(),
             fetched_at: fetched.parse().unwrap(),
             raw_sha256: "ab".into(),
@@ -466,12 +475,12 @@ mod tests {
         let (b, dropped) = prices(body, &splits, &origin("2020-09-03T19:00:00Z")).unwrap();
         assert_eq!(b.num_rows(), 2);
         assert_eq!(
-            b.column(5).as_primitive::<Float64Type>().values().to_vec(),
+            b.column(6).as_primitive::<Float64Type>().values().to_vec(),
             [499.23, 129.04],
             "closes raw"
         );
         assert_eq!(
-            b.column(6).as_primitive::<Int64Type>().values().to_vec(),
+            b.column(7).as_primitive::<Int64Type>().values().to_vec(),
             [46_907_479, 225_702_700],
             "volume as traded"
         );
@@ -483,8 +492,44 @@ mod tests {
         let later = [(NaiveDate::from_ymd_opt(2030, 1, 2).unwrap(), 2.0, 1.0)];
         let (b, _) = prices(body, &later, &origin("2020-09-04T00:00:00Z")).unwrap();
         assert_eq!(
-            b.column(6).as_primitive::<Int64Type>().value(0),
+            b.column(7).as_primitive::<Int64Type>().value(0),
             187_629_916
+        );
+    }
+
+    #[test]
+    fn figi_collisions_keep_the_preferred_code() {
+        let d = |y| NaiveDate::from_ymd_opt(y, 1, 1).unwrap();
+        let code = |c: &str, delisted| Code {
+            code: c.into(),
+            ticker: "X".into(),
+            delisted,
+            ..Code::default()
+        };
+        let figis = BTreeMap::from([
+            ("X".to_owned(), "F1".to_owned()),
+            ("X_old".to_owned(), "F1".to_owned()),
+            ("Y".to_owned(), "F2".to_owned()),
+        ]);
+        let spans = [
+            (code("X_old", true), (d(2005), d(2015))),
+            (code("X", false), (d(2010), d(2026))),
+            (code("Y", true), (d(2005), d(2026))),
+            (code("Z", true), (d(2005), d(2026))),
+        ];
+        let out = run::collisions(&spans, &figis);
+        assert_eq!(
+            out.iter().map(|c| c.code.as_str()).collect::<Vec<_>>(),
+            ["X_old"],
+            "active X kept; unresolved Z ignored"
+        );
+        let apart = [
+            (code("X_old", true), (d(2005), d(2009))),
+            (code("X", false), (d(2010), d(2026))),
+        ];
+        assert!(
+            run::collisions(&apart, &figis).is_empty(),
+            "spans that do not overlap are one series"
         );
     }
 
@@ -500,7 +545,7 @@ mod tests {
         assert_eq!(
             splits_batch(&s, &origin("2026-01-01T00:00:00Z"))
                 .unwrap()
-                .column(4)
+                .column(5)
                 .as_primitive::<Float64Type>()
                 .value(0),
             0.125
@@ -512,7 +557,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            d.column(2).as_primitive::<Float64Type>().values().to_vec(),
+            d.column(3).as_primitive::<Float64Type>().values().to_vec(),
             [1.32]
         );
         assert_eq!(dropped.get("null_field"), Some(&1));
@@ -543,7 +588,13 @@ pub mod run {
     pub const BASE: &str = "https://eodhd.com/api";
 
     /// Reference codes fetched on every run (calendar and gate checks; `BACKFILL.md` §5.1).
-    pub const REFERENCE: &[&str] = &["SPY", "IWF", "IWP"];
+    /// `(code, ISIN)`: J4a resolves them by ISIN whatever their type (they are ETFs, outside
+    /// the stock scope, but `prices` needs them).
+    pub const REFERENCE: &[(&str, &str)] = &[
+        ("SPY", "US78462F1030"),
+        ("IWF", "US4642876142"),
+        ("IWP", "US4642874816"),
+    ];
 
     /// A run failure.
     #[derive(Debug, thiserror::Error)]
@@ -581,6 +632,8 @@ pub mod run {
         pub quality: QualityLog,
         /// API base URL (a local server in tests).
         pub base: String,
+        /// EODHD code (without `.US`) -> US composite FIGI, from `security_spells` (J4a).
+        pub figis: BTreeMap<String, String>,
     }
 
     impl Ctx {
@@ -658,9 +711,14 @@ pub mod run {
         pub span: Option<Span>,
         /// The eod chunk was gone (no data) or failed.
         pub no_prices: bool,
+        /// The code has a FIGI (`security_spells`), so its rows are staged.
+        pub resolved: bool,
     }
 
-    /// Fetch, land and stage one code (three chunks).
+    /// Fetch, land and (for a resolved code) stage one code. Prices come first: a code with no
+    /// bars since `BACKFILL_START` gets no splits or dividends request. An unresolved code (no
+    /// FIGI in `figis`) is fetched and landed but not staged, so it never reaches the lake;
+    /// its span is still reported (the gap that matters is unresolved codes with prices).
     ///
     /// # Errors
     ///
@@ -668,96 +726,94 @@ pub mod run {
     pub async fn code(ctx: &Ctx, c: &Code) -> Result<CodeResult, RunError> {
         let entity = format!("{}.US", c.code);
         let from = format!("&from={}", ctx.from);
-        let kinds = [
-            ("eod-full", "eod", "prices"),
-            ("splits-full", "splits", "splits"),
-            ("div-full", "div", "dividends"),
-        ];
-        let mut ok = BTreeMap::new();
-        for (chunk, path, dataset) in kinds {
-            let url = ctx.url(&format!("{path}/{entity}"), &from);
-            let r = Request {
-                entity: &entity,
-                chunk,
-                url: &url,
-                ext: "json",
-                cost: 1,
-                dataset,
-                empty_is_gone: chunk == "eod-full",
-            };
-            let outcome = ctx.fetcher.fetch(&r).await?;
-            ok.insert(
-                chunk,
-                !matches!(outcome, Outcome::Failed(_) | Outcome::Gone(_)),
-            );
-        }
         let id = ctx.fetcher.spec.id;
         let key = |chunk: &'static str| (id, entity.as_str(), chunk);
+        let fetch = |chunk: &'static str, path: &'static str, dataset: &'static str| {
+            let url = ctx.url(&format!("{path}/{entity}"), &from);
+            let entity = entity.clone();
+            async move {
+                let r = Request {
+                    entity: &entity,
+                    chunk,
+                    url: &url,
+                    ext: "json",
+                    cost: 1,
+                    dataset,
+                    empty_is_gone: chunk == "eod-full",
+                };
+                ctx.fetcher.fetch(&r).await
+            }
+        };
+        let figi = ctx.figis.get(&c.code).cloned();
         let mut result = CodeResult {
-            no_prices: !ok.get("eod-full").copied().unwrap_or_default(),
+            resolved: figi.is_some(),
             ..CodeResult::default()
         };
-        // Prices need the splits (volume normalization): stage only when both are settled.
+        if matches!(
+            fetch("eod-full", "eod", "prices").await?,
+            Outcome::Failed(_) | Outcome::Gone(_)
+        ) {
+            result.no_prices = true;
+            return Ok(result);
+        }
+        fetch("splits-full", "splits", "splits").await?;
+        fetch("div-full", "div", "dividends").await?;
+        let origin = |sha: String, at| Origin {
+            figi: figi.clone().unwrap_or_default(),
+            ticker: c.ticker.clone(),
+            fetched_at: at,
+            raw_sha256: sha,
+        };
+        // Prices need the splits (volume normalization): parse only when both are settled.
         let splits = match read_landed(&ctx.manifest, key("splits-full"))? {
-            Some((body, sha, at)) => {
-                let s = super::parse_splits(&body);
-                let o = Origin {
-                    ticker: c.ticker.clone(),
-                    fetched_at: at,
-                    raw_sha256: sha,
-                };
-                stage::write_stage(
-                    &ctx.stage,
-                    &ctx.manifest,
-                    "splits",
-                    key("splits-full"),
-                    PARSE_VERSION,
-                    &super::splits_batch(&s, &o)?,
-                )?;
-                Some(s)
-            }
+            Some((body, sha, at)) => Some((super::parse_splits(&body), Some((sha, at)))),
             None if ctx.manifest.status(key("splits-full"))?
                 == Some(crate::infra::manifest::Status::Gone) =>
             {
-                Some(Vec::new())
+                Some((Vec::new(), None))
             }
             None => None,
         };
-        if let (Some(splits), Some((body, sha, at))) =
-            (splits, read_landed(&ctx.manifest, key("eod-full"))?)
-        {
-            let o = Origin {
-                ticker: c.ticker.clone(),
-                fetched_at: at,
-                raw_sha256: sha,
-            };
-            let (batch, dropped) = super::prices(&body, &splits, &o)?;
-            result.bars = batch.num_rows();
-            result.span = span(&batch);
+        let Some((splits, splits_origin)) = splits else {
+            return Ok(result);
+        };
+        let Some((body, sha, at)) = read_landed(&ctx.manifest, key("eod-full"))? else {
+            return Ok(result);
+        };
+        let (batch, dropped) = super::prices(&body, &splits, &origin(sha, at))?;
+        result.bars = batch.num_rows();
+        result.span = span(&batch);
+        if figi.is_none() {
+            return Ok(result);
+        }
+        stage::write_stage(
+            &ctx.stage,
+            &ctx.manifest,
+            "prices",
+            key("eod-full"),
+            PARSE_VERSION,
+            &batch,
+        )?;
+        note_dropped(
+            ctx,
+            &entity,
+            "eod-full",
+            "prices",
+            &dropped,
+            batch.num_rows(),
+        );
+        if let Some((sha, at)) = splits_origin {
             stage::write_stage(
                 &ctx.stage,
                 &ctx.manifest,
-                "prices",
-                key("eod-full"),
+                "splits",
+                key("splits-full"),
                 PARSE_VERSION,
-                &batch,
+                &super::splits_batch(&splits, &origin(sha, at))?,
             )?;
-            note_dropped(
-                ctx,
-                &entity,
-                "eod-full",
-                "prices",
-                &dropped,
-                batch.num_rows(),
-            );
         }
         if let Some((body, sha, at)) = read_landed(&ctx.manifest, key("div-full"))? {
-            let o = Origin {
-                ticker: c.ticker.clone(),
-                fetched_at: at,
-                raw_sha256: sha,
-            };
-            let (batch, dropped) = super::dividends(&body, &o)?;
+            let (batch, dropped) = super::dividends(&body, &origin(sha, at))?;
             stage::write_stage(
                 &ctx.stage,
                 &ctx.manifest,
@@ -820,23 +876,27 @@ pub mod run {
         });
     }
 
-    /// Codes whose ticker is shared by another code with an overlapping price span: neither
-    /// can be stored under the ticker without mixing two securities (`SOURCES.md` EODHD).
+    /// Codes to leave out because another code of the same FIGI covers overlapping dates (two
+    /// vendor codes of one security, `SOURCES.md` EODHD): per FIGI the preferred code is kept
+    /// (active before delisted, a plain code before `_old`, then by name) and every later code
+    /// that overlaps a kept one is returned. Unresolved codes are not considered.
     #[must_use]
-    pub fn collisions(spans: &[(Code, Span)]) -> Vec<Code> {
-        let mut by_ticker: BTreeMap<&str, Vec<&(Code, Span)>> = BTreeMap::new();
+    pub fn collisions(spans: &[(Code, Span)], figis: &BTreeMap<String, String>) -> Vec<Code> {
+        let mut by_figi: BTreeMap<&str, Vec<&(Code, Span)>> = BTreeMap::new();
         for s in spans {
-            by_ticker.entry(s.0.ticker.as_str()).or_default().push(s);
+            if let Some(f) = figis.get(&s.0.code) {
+                by_figi.entry(f.as_str()).or_default().push(s);
+            }
         }
         let mut out = Vec::new();
-        for group in by_ticker.values() {
-            for (i, a) in group.iter().enumerate() {
-                let hit = group
-                    .iter()
-                    .enumerate()
-                    .any(|(j, b)| i != j && a.1.0 <= b.1.1 && b.1.0 <= a.1.1);
-                if hit {
-                    out.push(a.0.clone());
+        for group in by_figi.values_mut() {
+            group.sort_by_key(|(c, _)| (c.delisted, c.code.contains("_old"), c.code.clone()));
+            let mut kept: Vec<Span> = Vec::new();
+            for (c, s) in group.iter() {
+                if kept.iter().any(|k| s.0 <= k.1 && k.0 <= s.1) {
+                    out.push(c.clone());
+                } else {
+                    kept.push(*s);
                 }
             }
         }
@@ -851,11 +911,8 @@ pub mod run {
     pub fn exclude(ctx: &Ctx, c: &Code) -> Result<(), RunError> {
         let entity = format!("{}.US", c.code);
         for chunk in ["eod-full", "splits-full", "div-full"] {
-            ctx.manifest.gone(
-                (ctx.fetcher.spec.id, &entity, chunk),
-                200,
-                "ticker_collision",
-            )?;
+            ctx.manifest
+                .gone((ctx.fetcher.spec.id, &entity, chunk), 200, "figi_collision")?;
         }
         ctx.quality.push(Row {
             source: "EODHD",
@@ -865,7 +922,7 @@ pub mod run {
             level: Level::Fail,
             attempts: 1,
             notes: Some(format!(
-                "ticker {} shared with an overlapping code; excluded",
+                "shares its FIGI with a preferred code over overlapping dates; excluded (ticker {})",
                 c.ticker
             )),
         });
