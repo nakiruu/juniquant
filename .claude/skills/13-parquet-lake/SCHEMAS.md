@@ -231,10 +231,14 @@ Rows: ~2.3M (about 600 eligible names x about 3,800 days; estimate). Writer: Jul
 | `label_flag_63d` | `utf8` | yes | Appended. Null for an ordinary label. Else `bankrupt` / `acquired` (terminal-value rules applied, label is finite) or `immature` / `survivorship_gap` / `data_gap` (label is NaN). `TARGETS.md` §3 |
 | `label_flag_126d` | `utf8` | yes | Appended. Same |
 | `label_flag_252d` | `utf8` | yes | Appended. Same |
+| `log_mcap` | `float64` | yes | Appended (2026-10-11, before first write; DECISIONS D18). **Candidate, not a feature**: `ln(market_cap[t])` (`02-panel-construction/FEATURES.md` §0, §7a); NaN when `market_cap` is NaN or not positive |
+| `r_size` | `float64` | yes | Appended (D18). Candidate: cross-sectional rank of `market_cap` (`CROSS-SECTIONAL.md`); the stationary form a model would use |
+| `amihud_60d` | `float64` | yes | Appended (D18). Candidate: mean over the last 60 bars of `abs(ret[s]) / dollar_vol[s]`, per USD million (`FEATURES.md` §7a); NaN below 40 valid days |
+| `r_amihud` | `float64` | yes | Appended (D18). Candidate: cross-sectional rank of `amihud_60d` (higher = less liquid) |
 
 Primary key: `(ticker, date)`. Feature column order is frozen. The 18 earlier
-columns are unchanged; the three flags are appended (21 columns). Models read
-the 12 features by name and ignore the flags; the flags exist so calibration
+columns are unchanged; the three flags and the four candidate columns (D18) are appended (25 columns). Models read
+the 12 features by name and ignore the flags and the candidates; the flags exist so calibration
 and evaluation can exclude `survivorship_gap` rows and report their count.
 
 ---

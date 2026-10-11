@@ -89,8 +89,8 @@ Three non-negotiables:
   `02-panel-construction/TARGETS.md` §3); the count of excluded rows is
   reported per year and horizon, and every generation's registry entry and
   report carry the survivorship caveat (`01-data-ingestion/SURVIVORSHIP.md`).
-  The panel has 21 columns (`02-panel-construction` SKILL); training reads
-  the 12 features and the target, never the flags as features.
+  The panel has 25 columns (`02-panel-construction` SKILL); training reads
+  the 12 features and the target, never the flags or the D18 candidate columns as features.
 - **Fixed feature order.** The 12 features are always in the order
   specified in `02-panel-construction/FEATURES.md` §7. Reordering
   invalidates every trained model. The export step embeds the feature

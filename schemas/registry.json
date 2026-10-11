@@ -644,6 +644,26 @@
                     "name": "label_flag_252d",
                     "type": "utf8",
                     "nullable": true
+                },
+                {
+                    "name": "log_mcap",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_size",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "amihud_60d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_amihud",
+                    "type": "float64",
+                    "nullable": true
                 }
             ],
             "primary_key": [
@@ -676,9 +696,13 @@
                 "r_turn:DOUBLE",
                 "label_flag_63d:VARCHAR",
                 "label_flag_126d:VARCHAR",
-                "label_flag_252d:VARCHAR"
+                "label_flag_252d:VARCHAR",
+                "log_mcap:DOUBLE",
+                "r_size:DOUBLE",
+                "amihud_60d:DOUBLE",
+                "r_amihud:DOUBLE"
             ],
-            "hash": "94dc912a063fa2869f7038948919bd3513392677d27834198ec220ddf915cc8f",
+            "hash": "478c7021064e03a234acaa260aee7b743fe4c43ef8ac626b70fa03b6c033c2d2",
             "last_migration": "2026-10-10-initial"
         },
         "regime_states": {

@@ -12,9 +12,9 @@ description: Building the 12-feature panel that feeds GSPQR. Load when
 The panel is the training and inference matrix. One row per universe member
 with prices per trading day, from the first trading day with at least 50
 eligible names; training and calibration use only the rows that are
-point-in-time eligible (§2, decision C3). Twenty-one columns: three identifiers, three forward-return
-targets, six raw features, six cross-sectional rank features, and three
-appended label-flag columns.
+point-in-time eligible (§2, decision C3). Twenty-five columns: three identifiers, three forward-return
+targets, six raw features, six cross-sectional rank features, three
+appended label-flag columns and four appended candidate columns (not features, D18).
 
 ## 0. Preconditions
 
@@ -35,9 +35,10 @@ The exact schema is in `13-parquet-lake/SCHEMAS.md` §5. The breakdown:
 | Raw features | `mom_20d`, `mom_60d`, `mom_12m_1m`, `vol_60d_res`, `sp_ratio`, `turn_20d` | 6 |
 | Rank features | `r_mom_20d`, `r_mom_60d`, `r_mom_12m_1m`, `r_vol_60d`, `r_sp`, `r_turn` | 6 |
 | Label flags (appended) | `label_flag_63d`, `label_flag_126d`, `label_flag_252d` | 3 |
+| Candidates (appended, not features; `FEATURES.md` §7a) | `log_mcap`, `r_size`, `amihud_60d`, `r_amihud` | 4 |
 
-Total: 21 columns (the first 18 are the frozen model-facing schema; the
-three flags are appended and are not features). Feature column order is
+Total: 25 columns (the first 18 are the frozen model-facing schema; the
+three flags and the four candidates are appended and are not features). Feature column order is
 frozen (constitution §5).
 
 ## 2. Non-Negotiables

@@ -89,6 +89,8 @@ The six rank columns and their source features:
 | `r_vol_60d` | `vol_60d_res` | Lower is better (sign-flipped) |
 | `r_sp` | `sp_ratio` | Higher is better |
 | `r_turn` | `turn_20d` | Higher is better |
+| `r_size` (candidate, not a feature; `FEATURES.md` §7a) | `market_cap` | None: larger = higher rank |
+| `r_amihud` (candidate, not a feature) | `amihud_60d` | None: less liquid = higher rank |
 
 **Sign flip for `r_vol_60d`:** Low volatility is the desirable signal. The
 rank is computed on `-vol_60d_res`, so a high rank means low volatility.

@@ -299,6 +299,47 @@ backtest. Do not add it silently.
 
 ---
 
+## 7a. Candidate Columns (stored, not features; DECISIONS D18)
+
+Four columns are computed and stored in `panel` so a later ablation can test
+them without rebuilding the panel. **GSPQR does not read them**: the model
+input stays the 12 features of §8 until a skill amendment adds one.
+
+    log_mcap[t]    = ln(market_cap[t])                       # §0; NaN if market_cap is NaN or <= 0
+    r_size[t]      = cross-sectional rank of market_cap[t]   # CROSS-SECTIONAL.md, like the r_ columns
+    amihud_60d[t]  = mean over the last 60 bars of  abs(ret[s]) / dollar_vol[s] * 1e6
+    r_amihud[t]    = cross-sectional rank of amihud_60d[t]   # higher = less liquid
+
+- `amihud_60d` skips a day with NaN `ret` or NaN or zero `dollar_vol` and
+  needs at least 40 valid days, else NaN; units: absolute daily return per
+  USD million traded (Amihud 2002).
+- `market_cap` needs shares from XBRL filings, so `log_mcap` and `r_size`
+  are NaN before about 2009-2011, like `sp_ratio`.
+- A model would use the **ranks**: market cap trends with the price level over
+  the years, so a tree split on the raw level does not carry across time;
+  `log_mcap` and `amihud_60d` are kept for diagnostics.
+- Short-term reversal is not a candidate: it is `mom_20d` (the prior-month
+  return), and shorter lags are excluded above.
+
+**The pre-registered ablation** (owner, 2026-10-11). After the baseline run on
+the 12 features, exactly three configurations are compared on the same CPCV
+paths (`14-backtest-protocol`), and N = 3 is logged for the Deflated Sharpe
+Ratio:
+
+1. baseline: the 12 features;
+2. baseline + `r_size`;
+3. baseline + `r_size` + `r_amihud`.
+
+A candidate is adopted only if, on a clear majority of paths, it improves
+pinball loss (per quantile, tails included) and CRPS, does not reduce
+calibrated coverage after TCP, and does not lower the Sortino distribution.
+Adoption is a skill amendment that appends it to the feature order (#13,
+#14). No automated feature selection: with correlated features, gain, SHAP
+and permutation importances mostly measure substitution, and every extra
+configuration is a trial against the Deflated Sharpe Ratio.
+
+---
+
 ## 8. Feature Ordering
 
 The 12 features are stored in this exact order in `panel`:
@@ -308,7 +349,7 @@ The 12 features are stored in this exact order in `panel`:
 
 The GSPQR feature matrix uses this order. Reordering breaks the model's
 feature-name binding. The linter enforces this order via the schema hash. The
-three appended `label_flag_*` columns are not features.
+three appended `label_flag_*` columns and the four candidate columns of §7a are not features.
 
 ---
 
