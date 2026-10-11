@@ -79,10 +79,11 @@ function write_partition(name::AbstractString, partition::AbstractVector{<:Abstr
 end
 
 """
-    read_dataset(name; columns = nothing, partition = Pair{String,String}[]) -> Arrow.Table
+    read_dataset(name; columns = nothing, partition = Pair{String,String}[], dates = nothing) -> Arrow.Table
 
 Read dataset `name`: the leaves matching every `key => value` in `partition`, projected to
-`columns` (all when `nothing`). Partition keys are not columns. An unwritten dataset reads
+`columns` (all when `nothing`). `dates = (from, to)` (two `Date`s, inclusive) keeps rows whose
+date column (the partition column, else `date`) is in range; other leaves are not opened. Partition keys are not columns. An unwritten dataset reads
 as an empty table.
 
 # Returns
@@ -94,11 +95,12 @@ t = read_dataset("prices"; columns = ["ticker", "close"], partition = ["year" =>
 ```
 """
 function read_dataset(name::AbstractString; columns = nothing,
-                      partition::AbstractVector{<:Pair} = Pair{String,String}[])
+                      partition::AbstractVector{<:Pair} = Pair{String,String}[], dates = nothing)
     mktempdir() do dir
         path = joinpath(dir, "out.arrow")
         args = ["read", name, path]
         columns === nothing || push!(args, "columns=" * join(columns, ","))
+        dates === nothing || append!(args, ["from=$(dates[1])", "to=$(dates[2])"])
         append!(args, ["$k=$v" for (k, v) in partition])
         run_lake_io(args)
         Arrow.Table(read(path))  # bytes, not mmap: the file is deleted on return

@@ -43,6 +43,8 @@ prices(tickers, closes) = (
         @test collect(t.close) == [9.0, 2.0]                 # new row wins, MSFT kept
         @test collect(propertynames(t)) == [:close, :ticker]
         @test length(read_dataset("prices"; partition = ["month" => "02"]).ticker) == 0
+        @test length(read_dataset("prices"; dates = (Date(2024, 1, 3), Date(2024, 12, 31))).ticker) == 0
+        @test length(read_dataset("prices"; dates = (Date(2024, 1, 2), Date(2024, 1, 2))).ticker) == 2
 
         @test_throws ErrorException write_dataset("prices", (ticker = ["X"],))
         @test_throws ArgumentError write_dataset("prices", prices(["A"], [1.0]); mode = :upsert)

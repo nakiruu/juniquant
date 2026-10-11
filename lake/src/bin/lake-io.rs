@@ -5,7 +5,7 @@
 //! Usage (paths from `QUANT_ROOT`, `QUANT_STATE`, `QUANT_REGISTRY_PATH`):
 //!
 //!     lake-io write <dataset> <in.arrow> append|replace [partition values...]
-//!     lake-io read  <dataset> <out.arrow> [columns=a,b] [key=value ...]
+//!     lake-io read  <dataset> <out.arrow> [columns=a,b] [from=YYYY-MM-DD to=YYYY-MM-DD] [key=value ...]
 //!
 //! Without partition values `write` splits the input by partition (`write_dataset`).
 //!
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
         [cmd, name, path, rest @ ..] if cmd == "read" => read(name, path, rest),
         _ => {
             eprintln!(
-                "usage: lake-io write <dataset> <in.arrow> append|replace [partition values...]\n       lake-io read <dataset> <out.arrow> [columns=a,b] [key=value ...]"
+                "usage: lake-io write <dataset> <in.arrow> append|replace [partition values...]\n       lake-io read <dataset> <out.arrow> [columns=a,b] [from=YYYY-MM-DD to=YYYY-MM-DD] [key=value ...]"
             );
             return ExitCode::from(2);
         }
@@ -118,14 +118,23 @@ fn read(name: &str, path: &str, rest: &[String]) -> Res<()> {
     let lake = Lake::from_env()?;
     let mut columns: Option<Vec<&str>> = None;
     let mut partition = Vec::new();
+    let (mut from, mut to) = (None, None);
+    let day = |v: &str| chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d");
     for arg in rest {
         match arg.split_once('=') {
             Some(("columns", c)) => columns = Some(c.split(',').collect()),
+            Some(("from", v)) => from = Some(day(v)?),
+            Some(("to", v)) => to = Some(day(v)?),
             Some((k, v)) => partition.push((k, v)),
             None => return Err(format!("expected key=value, got `{arg}`").into()),
         }
     }
-    let batch = lake.read_dataset(name, columns.as_deref(), &partition)?;
+    let dates = match (from, to) {
+        (Some(f), Some(t)) => Some((f, t)),
+        (None, None) => None,
+        _ => return Err("from= and to= go together".into()),
+    };
+    let batch = lake.read_dataset(name, columns.as_deref(), &partition, dates)?;
     let mut writer = StreamWriter::try_new(File::create(path)?, &batch.schema())?;
     writer.write(&batch)?;
     writer.finish()?;

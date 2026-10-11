@@ -142,7 +142,7 @@ impl Lake {
         let path = self.leaf_path(name, spec, partition);
         let existing = match mode {
             Mode::Append if path.exists() => {
-                Some(conform(name, &schema, &read_leaf(&path, None)?)?)
+                Some(conform(name, &schema, &read_leaf(&path, None, None)?)?)
             }
             _ => None,
         };
@@ -315,7 +315,18 @@ fn sort(spec: &DatasetSpec, batch: &RecordBatch) -> Result<RecordBatch, LakeErro
 /// the temporary file is removed on failure.
 fn write_atomic(path: &Path, batch: &RecordBatch) -> Result<(), LakeError> {
     let dir = path.parent().unwrap_or(Path::new("."));
+    let created: Vec<PathBuf> = dir
+        .ancestors()
+        .take_while(|a| !a.exists())
+        .map(Path::to_path_buf)
+        .collect();
     fs::create_dir_all(dir).map_err(io_err(dir))?;
+    // A new directory entry is durable only once its parent directory is fsynced.
+    for parent in created.iter().filter_map(|c| c.parent()) {
+        File::open(parent)
+            .and_then(|d| d.sync_all())
+            .map_err(io_err(parent))?;
+    }
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())

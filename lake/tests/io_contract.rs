@@ -140,7 +140,7 @@ fn leaf(dir: &TempDir) -> PathBuf {
 
 fn closes(lake: &Lake) -> Vec<(String, f64)> {
     let b = lake
-        .read_dataset("prices", Some(&["ticker", "close"]), &[])
+        .read_dataset("prices", Some(&["ticker", "close"]), &[], None)
         .unwrap();
     let t = b.column(0).as_string::<i32>();
     let c = b.column(1).as_primitive::<arrow::datatypes::Float64Type>();
@@ -163,7 +163,7 @@ fn round_trip_keeps_registered_schema_and_sorts_by_primary_key() {
     lake.write_partition("prices", &["2024", "01"], &input, Mode::Append)
         .unwrap();
     assert!(leaf(&dir).is_file());
-    let back = lake.read_dataset("prices", None, &[]).unwrap();
+    let back = lake.read_dataset("prices", None, &[], None).unwrap();
     assert_eq!(
         back.schema(),
         lake.registry().get("prices").unwrap().schema().unwrap(),
@@ -274,7 +274,7 @@ fn audit_log_without_primary_key_dedups_whole_rows_and_partitions_by_utc_day() {
             .is_file()
     );
     assert_eq!(
-        lake.read_dataset("audit_log", None, &[])
+        lake.read_dataset("audit_log", None, &[], None)
             .unwrap()
             .num_rows(),
         2
@@ -297,7 +297,7 @@ fn null_key_columns_compare_equal() {
     lake.write_dataset("evaluation_metrics", &row(2.0), Mode::Append)
         .unwrap();
     let b = lake
-        .read_dataset("evaluation_metrics", Some(&["crps"]), &[])
+        .read_dataset("evaluation_metrics", Some(&["crps"]), &[], None)
         .unwrap();
     assert_eq!(
         b.num_rows(),
@@ -436,7 +436,12 @@ fn write_dataset_splits_by_partition_and_read_prunes() {
         );
     }
     let jan = lake
-        .read_dataset("prices", Some(&["date", "ticker"]), &[("month", "01")])
+        .read_dataset(
+            "prices",
+            Some(&["date", "ticker"]),
+            &[("month", "01")],
+            None,
+        )
         .unwrap();
     assert_eq!(jan.num_rows(), 2);
     assert_eq!(
@@ -447,7 +452,9 @@ fn write_dataset_splits_by_partition_and_read_prunes() {
     let d = jan.column(0).as_primitive::<Date32Type>();
     assert_eq!((d.value(0), d.value(1)), (JAN2, JAN2 + 366));
     assert_eq!(
-        lake.read_dataset("splits", None, &[]).unwrap().num_rows(),
+        lake.read_dataset("splits", None, &[], None)
+            .unwrap()
+            .num_rows(),
         0,
         "unwritten reads as empty"
     );
@@ -486,5 +493,48 @@ fn duplicate_whole_rows_in_one_input_are_rejected_without_a_primary_key() {
     assert!(matches!(
         lake.write_dataset("audit_log", &twice, Mode::Replace),
         Err(LakeError::DuplicateKey { row: 1, .. })
+    ));
+}
+
+#[test]
+fn date_filter_skips_leaves_and_filters_rows() {
+    let (_dir, lake) = lake();
+    let input = prices(
+        &lake,
+        &[
+            ("AAPL", JAN2, 1.0),
+            ("AAPL", JAN2 + 31, 2.0),
+            ("AAPL", JAN2 + 366, 3.0),
+        ],
+    );
+    lake.write_dataset("prices", &input, Mode::Append).unwrap();
+    let day = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap();
+    let feb = lake
+        .read_dataset(
+            "prices",
+            Some(&["close"]),
+            &[],
+            Some((day("2024-01-03"), day("2024-02-10"))),
+        )
+        .unwrap();
+    let c = feb
+        .column(0)
+        .as_primitive::<arrow::datatypes::Float64Type>();
+    assert_eq!(c.values().to_vec(), [2.0], "only the 2024-02-02 row");
+    let none = lake.read_dataset(
+        "prices",
+        None,
+        &[],
+        Some((day("2030-01-01"), day("2030-12-31"))),
+    );
+    assert_eq!(none.unwrap().num_rows(), 0);
+    assert!(matches!(
+        lake.read_dataset(
+            "audit_log",
+            None,
+            &[],
+            Some((day("2024-01-01"), day("2024-01-02")))
+        ),
+        Err(LakeError::Schema { .. })
     ));
 }

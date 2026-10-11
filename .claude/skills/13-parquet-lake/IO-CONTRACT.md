@@ -158,8 +158,8 @@ row counts.
 `read_dataset(name, columns, filters)` reads
 `$LAKE/<name>.parquet` or `$LAKE/<name>/**/data.parquet` with hive
 partitioning enabled, selecting columns and pushing down filters on the
-partition keys and on `date` (the Rust reader prunes on partition keys only so far;
-the `date` row-group filter is due before I2 readers need less than a partition).
+partition keys and on `date` (the partition column, else `date`: leaves outside the range
+are not opened, rows inside a leaf are filtered while decoding).
 
 - Never read a leaf by hand-built path in production code; use the glob and
   let the reader prune.
