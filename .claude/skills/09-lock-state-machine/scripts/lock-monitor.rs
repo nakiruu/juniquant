@@ -15,7 +15,8 @@
 //    the per-ticker OrderGate and `authorize_and_reserve` (authoritative). A permit is never carried
 //    out of the gate, never queued, never sent through a channel.
 //  * The halt flag is checked first: halted => release nothing, leave every row Pending.
-//  * No ANCHOR_MAX_AGE: every authorize/pre-check is preceded by its own REST read (N = 0).
+//  * No ANCHOR_MAX_AGE: the run's pre-checks share one REST read taken at the start of the run
+//    (N = 0), refreshed per ticker after a release; every placement does its own fresh read.
 
 use chrono::NaiveDate;
 use tokio::sync::mpsc;
@@ -51,19 +52,31 @@ impl LockMonitor {
 
         let due = self.pending.due(today).await?; // earliest_execution <= today, status = Pending
 
+        // One REST read serves every due row (N = 0 at the start of the run). It is re-read only
+        // for a ticker that was just released, since that release changes that ticker's history
+        // (a due Buy and a due Sell of one name). One read per row would serialise a REST round
+        // trip per account in front of every release, at the moment the window opens.
+        let mut cached = None;
+        let mut released = std::collections::HashSet::new();
+
         for order in due {
-            // A pre-check only: a fresh REST read of every account's orders and the 14-day
-            // transactions (N = 0). The authoritative check is the one at placement, inside the
-            // ticker gate. Re-read for each due row: an intent released a moment ago is visible
-            // to the next pre-check through the journal.
-            let history = match self.history.ready_for_submission(chrono::Utc::now(), &self.calendar).await {
-                Ok(h) => h,
-                Err(_incomplete) => { self.pending.alert_unresolved(&order.pending_id).await?; continue; }
-            };
+            // A pre-check only; the authoritative check is the one at placement, inside the
+            // ticker gate, which always reads fresh.
+            if cached.is_none() || released.contains(&order.ticker) {
+                match self.history.ready_for_submission(chrono::Utc::now(), &self.calendar).await {
+                    Ok(h) => cached = Some(h),
+                    Err(_incomplete) => {
+                        cached = None;
+                        self.pending.alert_unresolved(&order.pending_id).await?;
+                        continue;
+                    }
+                }
+            }
+            let Some(history) = cached.as_ref() else { continue };
             let shares_held = self.pending.broker_shares(&order.ticker).await?;
 
             match authorize(
-                &order.ticker, order.side, today, &history,
+                &order.ticker, order.side, today, history,
                 &self.restricted, &halt, shares_held, &self.calendar,
             ) {
                 // Still blocked (a new same-direction counted order, possibly placed outside
@@ -98,6 +111,7 @@ impl LockMonitor {
                             })
                             .await?;
                         self.pending.mark_fired(&order.pending_id).await?; // = released
+                        released.insert(order.ticker.clone());
                     }
                     RevalidationDecision::Cancel(reason) => {
                         self.pending.cancel(&order.pending_id, &reason).await?;
@@ -142,11 +156,12 @@ impl LockMonitor {
             });
         }
         // Crisis blocks new capital only; it cancels BUYS and never a sell.
-        if latest.regime_factor == 0.0 && order.side == Side::Buy {
+        if latest.regime_factor <= 0.0 && order.side == Side::Buy {
             return Ok(RevalidationDecision::Cancel("regime_crisis".into()));
         }
         // Comparison rules (PENDING-ORDERS.md section 4)
-        if latest.q_50.signum() != snapshot.q_50.signum() {
+        // Product, not signum: signum(0.0) is 1.0, so a zero forecast would read as a reversal.
+        if latest.q_50 * snapshot.q_50 < 0.0 {
             return Ok(RevalidationDecision::Cancel("signal_reversed".into()));
         }
         if latest.q_50.abs() < 0.5 * snapshot.q_50.abs() {

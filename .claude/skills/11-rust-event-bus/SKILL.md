@@ -190,8 +190,11 @@ async fn handle_event(
 
     // 4. Outcome record. The side effect has already happened, so a failure
     //    here is never answered by re-running `process`. It sets the global
-    //    halt flag and surfaces the error.
-    if let Err(e) = audit.append_durable(AuditEvent::outcome(&event, &result)).await {
+    //    halt flag and surfaces the error. Queued, not awaited: the durable intent
+    //    already guards a crash (startup resolves an intent with no outcome against
+    //    the broker), and awaiting a second fsync would delay the next order.
+    //    A failed commit stops the writer, which halts trading.
+    if let Err(e) = audit.append_deferred(AuditEvent::outcome(&event, &result)).await {
         halt_trading("audit outcome write failed");
         return Err(e.into());
     }

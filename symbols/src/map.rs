@@ -389,12 +389,16 @@ fn parse_date(
     symbol: &Canon,
     field: &'static str,
 ) -> Result<NaiveDate, MapError> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| MapError::InvalidDate {
-        canonical: canonical.clone(),
-        symbol: symbol.clone(),
-        field,
-        value: value.to_owned(),
-    })
+    // Round-trip so only zero-padded `YYYY-MM-DD` loads, as in the calendar overrides.
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .filter(|d| d.format("%Y-%m-%d").to_string() == value)
+        .ok_or_else(|| MapError::InvalidDate {
+            canonical: canonical.clone(),
+            symbol: symbol.clone(),
+            field,
+            value: value.to_owned(),
+        })
 }
 
 impl SymbolMap {
@@ -730,7 +734,7 @@ impl SymbolMap {
         if let Some(holdings) = self.holders.get(&normalized) {
             return holdings.iter().find(|h| h.covers(on)).map(|h| &h.owner);
         }
-        self.vendor_column(&normalized, vendor)
+        self.vendor_column(normalized, vendor)
             .filter(|c| self.held_from(c, on, Days::new(0)))
     }
 
@@ -752,18 +756,21 @@ impl SymbolMap {
         let Ok(normalized) = normalize(spelling) else {
             return Vec::new();
         };
-        let mut owners: Vec<&Canon> = match self.holders.get(&normalized) {
-            Some(holdings) => holdings
-                .iter()
-                .filter(|h| h.covers_widened(on, margin))
-                .map(|h| &h.owner)
-                .collect(),
-            None => self
-                .vendor_column(&normalized, vendor)
-                .filter(|c| self.held_from(c, on, margin))
-                .into_iter()
-                .collect(),
-        };
+        let mut owners: Vec<&Canon> = self.holders.get(&normalized).map_or_else(
+            || {
+                self.vendor_column(normalized, vendor)
+                    .filter(|c| self.held_from(c, on, margin))
+                    .into_iter()
+                    .collect()
+            },
+            |holdings| {
+                holdings
+                    .iter()
+                    .filter(|h| h.covers_widened(on, margin))
+                    .map(|h| &h.owner)
+                    .collect()
+            },
+        );
         owners.sort();
         owners.dedup();
         owners
@@ -779,11 +786,11 @@ impl SymbolMap {
     }
 
     /// The canonical ticker claiming the normalized `spelling` in `vendor`'s column.
-    fn vendor_column(&self, normalized: &Canon, vendor: Vendor) -> Option<&Canon> {
+    fn vendor_column(&self, normalized: Canon, vendor: Vendor) -> Option<&Canon> {
         match vendor {
             Vendor::Sec => None,
             Vendor::Yahoo | Vendor::IShares | Vendor::Schwab => {
-                self.spellings.get(&(vendor, normalized.clone()))
+                self.spellings.get(&(vendor, normalized))
             }
         }
     }

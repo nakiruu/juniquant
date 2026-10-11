@@ -337,8 +337,10 @@ impl Calendar {
                 source: std::io::Error::other("rendered entry did not read back"),
             });
         }
-        write_atomic(runtime, content.as_bytes())?;
+        // Inserted before the write: a write that fails after the rename (directory fsync)
+        // has still changed the file, and an extra in-memory closure can only lengthen a block.
         self.insert(closure.to_closure());
+        write_atomic(runtime, content.as_bytes())?;
         Ok(AddOutcome::Added)
     }
 }

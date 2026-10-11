@@ -81,8 +81,19 @@ pub fn is_weekend(date: NaiveDate) -> bool {
 /// is the safe direction for the lock (09 SKILL.md §4 "Errors err toward closed").
 #[must_use]
 pub fn rule_holidays(year: i32) -> Vec<RuleHoliday> {
+    let mut out: Vec<RuleHoliday> = candidates(year)
+        .into_iter()
+        .filter_map(|(date, rule)| date.map(|date| RuleHoliday { date, rule }))
+        .collect();
+    out.sort();
+    out
+}
+
+/// The ten rules applied to `year`, unsorted; allocation-free so `is_rule_holiday` can sit in
+/// the per-day loops of the trading-day walks.
+fn candidates(year: i32) -> [(Option<NaiveDate>, HolidayRule); 10] {
     let fixed = |month: u32, day: u32| NaiveDate::from_ymd_opt(year, month, day);
-    let candidates: [(Option<NaiveDate>, HolidayRule); 10] = [
+    [
         (
             fixed(1, 1).and_then(observed_new_years),
             HolidayRule::NewYearsDay,
@@ -118,19 +129,15 @@ pub fn rule_holidays(year: i32) -> Vec<RuleHoliday> {
             HolidayRule::Thanksgiving,
         ),
         (fixed(12, 25).and_then(observed), HolidayRule::Christmas),
-    ];
-    let mut out: Vec<RuleHoliday> = candidates
-        .into_iter()
-        .filter_map(|(date, rule)| date.map(|date| RuleHoliday { date, rule }))
-        .collect();
-    out.sort();
-    out
+    ]
 }
 
 /// `true` when `date` is a rule-computed holiday (overrides not included).
 #[must_use]
 pub fn is_rule_holiday(date: NaiveDate) -> bool {
-    rule_holidays(date.year()).iter().any(|h| h.date == date)
+    candidates(date.year())
+        .iter()
+        .any(|(d, _)| *d == Some(date))
 }
 
 /// Gregorian Easter Sunday of `year` (anonymous Gregorian algorithm, Meeus/Jones/Butcher).

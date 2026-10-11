@@ -147,6 +147,19 @@ impl AuditHandle {
             .map_err(|_| AuditError::Closed)?;
         done.await.map_err(|_| AuditError::Closed)?
     }
+
+    /// Queues the row without waiting for the commit. For `phase = "outcome"` rows only: the
+    /// `intent` row (durable, awaited) is what must precede the broker call, and a crash that
+    /// loses an outcome leaves an unresolved intent that the startup scan resolves against the
+    /// broker. Keeps the second fsync off the order's critical path; the writer still group-
+    /// commits it with the next row. A writer failure still halts trading (`run` returns Err).
+    pub async fn append_deferred(&self, event: AuditEvent) -> Result<(), AuditError> {
+        let (ack, _unused) = oneshot::channel();
+        self.tx
+            .send(AuditRequest { event, ack })
+            .await
+            .map_err(|_| AuditError::Closed)
+    }
 }
 
 pub struct AuditWriter {
@@ -329,7 +342,9 @@ pub async fn ingest_spool(dir: &Path, audit: &AuditHandle) -> Result<usize, Audi
                 // Malformed file: quarantine and raise a CRITICAL row; do not loop on it.
                 let rej = dir.join("rejected");
                 fs::create_dir_all(&rej).ok();
-                fs::rename(&p, rej.join(p.file_name().unwrap())).ok();
+                if let Some(name) = p.file_name() {
+                    fs::rename(&p, rej.join(name)).ok();
+                }
                 audit
                     .append_durable(AuditEvent::spool_rejected(&p, &e.to_string()))
                     .await?;
@@ -398,6 +413,10 @@ fn read_back(path: &Path) -> Result<Vec<Row>, AuditError> {
 /// journal; then renamed into place (atomic) and the directory fsynced.
 /// Idempotent: a crash before the mark just redoes the day (the rename
 /// replaces an identical file).
+///
+/// Runs in the 18:00 ET slot, outside the execution window. Its only write is the single
+/// `audit_export` insert (autocommit, one fsync); the Parquet work holds no write lock, so it
+/// cannot make the writer's `BEGIN IMMEDIATE` wait for the 5 s busy timeout.
 pub fn export_closed_days(conn: &Connection, lake_audit_dir: &Path) -> Result<Vec<String>, AuditError> {
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let days: Vec<String> = {
