@@ -278,6 +278,11 @@ is computed on the panel dates. If the iShares history starts later than
 2008 (probe P7, `01-data-ingestion/BACKFILL.md` §2), the first date with 50
 eligible names, and so the panel, starts later.
 
+**De-SPACed companies (DECISIONS D19).** For a company that listed through a SPAC, the
+bar count of every feature starts at the business-combination date
+(`01-data-ingestion/UNIVERSE.md` §5a): shell bars before it are never inside a feature
+window, so `mom_12m_1m` needs 253 bars after the combination.
+
 ---
 
 ## 7. What Is Not a Feature

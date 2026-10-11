@@ -117,6 +117,7 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
         let mut set = tokio::task::JoinSet::new();
         let mut spans = Vec::new();
         let mut unresolved_with_prices = 0usize;
+        let mut spac_with_prices = 0usize;
         let (mut done, mut fatal) = (0usize, None);
         let mut todo = list.into_iter();
         loop {
@@ -136,15 +137,26 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
             match r {
                 Ok(res) => {
                     if !res.resolved && res.bars > 0 {
-                        unresolved_with_prices += 1;
+                        // A SPAC shell is out of scope, not an identity gap (D19).
+                        let spac = ingest::identity::is_spac_name(&c.name);
+                        if spac {
+                            spac_with_prices += 1;
+                        } else {
+                            unresolved_with_prices += 1;
+                        }
+                        let (level, what) = if spac {
+                            (ingest::infra::quality::Level::Ok, "out_of_scope_with_prices: SPAC shell (name, D19)")
+                        } else {
+                            (ingest::infra::quality::Level::Warn, "identity_unresolved_with_prices")
+                        };
                         ctx.quality.push(ingest::infra::quality::Row {
                             source: "EODHD",
                             dataset: "prices".into(),
                             entity: format!("{}.US", c.code),
                             chunk: "eod-full/identity".into(),
-                            level: ingest::infra::quality::Level::Warn,
+                            level,
                             attempts: 1,
-                            notes: Some(format!("identity_unresolved_with_prices: {} bars, {:?}; landed, not compacted", res.bars, res.span)),
+                            notes: Some(format!("{what}: {} bars, {:?}; landed, not compacted", res.bars, res.span)),
                         });
                     }
                     if let Some(s) = res.span {
@@ -161,7 +173,7 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
         for c in run::collisions(&spans, &ctx.figis) {
             run::exclude(&ctx, &c).map_err(|e| e.to_string())?;
         }
-        println!("eodhd: {unresolved_with_prices} unresolved codes have prices since {from} (landed, not compacted)");
+        println!("eodhd: {unresolved_with_prices} unresolved codes have prices since {from}, plus {spac_with_prices} SPAC shells (out of scope); landed, not compacted");
         Ok::<_, String>(fatal)
     });
     // Whatever happened, keep what was staged and the quality rows.

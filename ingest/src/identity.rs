@@ -162,6 +162,18 @@ pub fn normalize_name(s: &str) -> String {
         .join(" ")
 }
 
+/// A pre-merger SPAC (blank-check company) by its name: `ACQUISITION` or `BLANK CHECK` in the
+/// normalized name (DECISIONS D19). Shells are outside the training scope and not an identity
+/// gap.
+///
+/// shortcut: a name rule; replace it with EDGAR SIC 6770 ("blank checks") once the EDGAR
+/// worker fills `security_master.sic` (W6).
+#[must_use]
+pub fn is_spac_name(s: &str) -> bool {
+    let n = normalize_name(s);
+    n.split_whitespace().any(|w| w == "ACQUISITION") || n.contains("BLANK CHECK")
+}
+
 /// The comparison key of a name: [`normalize_name`] without spaces, so `P F CHANGS` and
 /// `PF CHANGS` are one name.
 #[must_use]
@@ -329,6 +341,10 @@ pub fn resolve(
                     });
                 }
             }
+            _ if is_spac_name(&c.name) => bad.push((
+                c.clone(),
+                Unresolved::OutOfScope("SPAC shell (name, D19)".into()),
+            )),
             Some(m) => bad.push((
                 c.clone(),
                 Unresolved::Ambiguous(m.keys().cloned().collect()),
@@ -571,6 +587,14 @@ mod tests {
 
     #[test]
     fn names_compare_without_legal_form_and_punctuation() {
+        assert!(
+            is_spac_name("Golden Path Acquisition Corp")
+                && is_spac_name("Colombier Acquisition Corp. II")
+        );
+        assert!(
+            !is_spac_name("Stillwater Mining Co") && !is_spac_name("Acquisitions Group Inc"),
+            "the whole word only"
+        );
         assert_eq!(
             name_key("P F Changs China Bistro Inc"),
             name_key("PF CHANG'S CHINA BISTRO INC")

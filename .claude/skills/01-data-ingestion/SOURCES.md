@@ -581,7 +581,9 @@ FIGI; otherwise a 13(f) CUSIP whose OpenFIGI name equals the code's EODHD name
 after `identity::normalize_name` (upper case, punctuation and legal-form and
 share-class words dropped), when exactly one FIGI has that name. Anything else
 is unresolved (`identity_unresolved` in `data_quality`, gate G5), never a
-guess.
+guess. A pre-merger SPAC shell is out of scope, not unresolved (D19,
+`UNIVERSE.md` §5a).
+
 
 **CIK.** `company_tickers_exchange.json` maps **current** tickers to CIKs; it
 has no history. Delisted issuers get their CIK from the submissions

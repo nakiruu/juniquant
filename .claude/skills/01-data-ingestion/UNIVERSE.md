@@ -192,6 +192,31 @@ change (constitution amendment 1.5).
 The panel's eligible set on `t` is `eligible = true` in `universe` for `t`;
 the vetoes come later (`07-fundamental-overlay`).
 
+## 5a. SPACs (DECISIONS D19)
+
+A SPAC (special purpose acquisition company, a blank-check company) trades near
+its trust value until its business combination. Its bars carry no information
+about an operating business, so:
+
+- **A pre-merger shell is out of scope.** It is never eligible, its rows never
+  reach training or calibration, and an unresolved shell is not counted as an
+  identity gap (`SOURCES.md` Identifiers). FTSE Russell's rules exclude
+  blank-check companies from the Russell indexes (verify against
+  `etf_holdings`), so a shell should not appear among IWF/IWP members either.
+- **A de-SPACed company is in scope from the combination date.** The listing
+  often continues through the merger, so its price series starts with shell
+  bars. `history_days` counts only valid days on or after the combination date,
+  and features are computed only from bars on or after it
+  (`02-panel-construction/FEATURES.md` §6).
+- **Recognition.** An issuer whose EDGAR SIC code is 6770 ("blank checks") is a
+  shell until its combination. The combination date is the effective date of the
+  EDGAR name change that ends the shell name (`formerNames`), or the filing date
+  of the 8-K with Item 2.01 (completion of acquisition) in `filing_events`,
+  whichever is earlier. Until the EDGAR worker (W6) provides SIC and filings, a
+  name rule marks shells for reporting only (`ACQUISITION` or `BLANK CHECK` in the
+  normalized name; `ingest::identity::is_spac_name`); training waits for the
+  EDGAR rule.
+
 ## 6. Sector and CIK
 
 - `sector` is the GICS sector in the latest snapshot usable at `t` (from
