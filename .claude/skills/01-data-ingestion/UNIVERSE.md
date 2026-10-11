@@ -84,7 +84,10 @@ letter after a dot. Grammar for tradable symbols:
 | iShares | as published; input only | verify |
 | Schwab | its own symbol format for class shares | verify in `10-execution-schwab` before use |
 
-**Superseded securities (symbol reuse).** If two different securities (two
+**Superseded securities (symbol reuse).** *Retired as a storage key by DECISIONS
+D17*: history is keyed by the US composite FIGI, so a reused ticker needs no
+distinct string (`docs/adr/0001-figi-security-key.md`). The rule below stays
+only for `is_tradable`. If two different securities (two
 CIKs) used the same canonical symbol at different times, the older one is
 stored as `SYMBOL~CIK10` (for example `ABC~0000012345`) in the lake's
 `ticker` columns, and the newer keeps the plain `SYMBOL`. The `~` form
@@ -122,7 +125,9 @@ shares until verified), `input_only` (iShares) or `not_canonical`.
 
 ## 4. The Identifier Master (`security_master`)
 
-One row per security (listed share class), keyed by the canonical ticker.
+One row per security (listed share class), keyed by the US composite FIGI
+(DECISIONS D17; `SCHEMAS.md` #31). J4a resolves EODHD codes to FIGIs
+(`SOURCES.md` Identifiers); the CIK rules below fill `cik` (W6).
 
 **Resolution of CIK, in order (first success wins; the method is recorded in
 `resolution`):**

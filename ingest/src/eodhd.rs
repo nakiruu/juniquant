@@ -20,7 +20,7 @@ pub const PARSE_VERSION: &str = "1";
 const EXCHANGES: &[&str] = &["NYSE", "NASDAQ", "AMEX", "NYSE MKT"];
 
 /// One code from `exchange-symbol-list/US`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Code {
     /// EODHD code without `.US` (`BRK-B`, `MON_old`).
     pub code: String,
@@ -28,6 +28,10 @@ pub struct Code {
     pub ticker: String,
     /// From the delisted list.
     pub delisted: bool,
+    /// `Name` in the symbol list.
+    pub name: String,
+    /// `Isin` in the symbol list, when it has one.
+    pub isin: Option<String>,
 }
 
 /// The canonical ticker of an EODHD code: the `_old`, `_old1`, ... suffix of an earlier
@@ -67,6 +71,16 @@ pub fn parse_symbols(body: &[u8], delisted: bool) -> (Vec<Code>, Vec<String>) {
                 code: code.to_owned(),
                 ticker,
                 delisted,
+                name: r
+                    .get("Name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                isin: r
+                    .get("Isin")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
             }),
             None => bad.push(code.to_owned()),
         }
@@ -411,6 +425,7 @@ mod tests {
                 code: "AAPL".into(),
                 ticker: "AAPL".into(),
                 delisted: false,
+                ..Code::default()
             }],
             ok,
         );

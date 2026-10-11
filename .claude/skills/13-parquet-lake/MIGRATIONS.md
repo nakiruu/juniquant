@@ -29,7 +29,7 @@ corrected to this.
 corrected in place (nothing exists yet that could break). Such corrections
 are listed in `migrations/2026-10-10-initial.md`, which is the only
 migration file that may describe several datasets. The 2026-10-10 rewrite of
-#1-#5 and #20 and the appended datasets #28-#35 are of this kind.
+#1-#5 and #20 and the appended datasets #28-#36 are of this kind.
 
 ## Adding a Column
 

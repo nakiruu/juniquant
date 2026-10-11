@@ -246,7 +246,15 @@ final state; a test does exactly that (§12).
 
 ### 5.5 Identifier master
 
-- **Inputs.** `company_tickers.json` and `company_tickers_exchange.json`
+- **J4a, identity (D17).** `quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]`:
+  the EODHD symbol lists, the 13(f) lists from the quarter before
+  `BACKFILL_START` (about 88 files), OpenFIGI for every EODHD ISIN and every
+  13(f) CUSIP no ISIN covers (about 600 requests with the key, a few minutes),
+  and the SEC `company_tickers_exchange.json` for current CIKs. Writes
+  `security_master` (#31) and `security_spells` (#36); unresolved codes go to
+  `data_quality`. Without `OPENFIGI_API_KEY` a mapping of more than 2,000
+  lookups is refused (it would take hours). Rules: `SOURCES.md` Identifiers.
+- **J4, EDGAR side. Inputs.** `company_tickers.json` and `company_tickers_exchange.json`
   (current), `cik-lookup-data.txt` (names), the submissions' `name`,
   `tickers`, `exchanges`, `formerNames`, the snapshots' tickers and names,
   and `config/identifier_overrides.csv`. About 5 requests plus the bulk
@@ -308,8 +316,9 @@ J0  calendar (module, static)                      no data dependency
 J1  probes P1-P8                                   -> config flags
 J2  sec_tickers + EDGAR bulk zips (submissions, companyfacts)
 J3  ishares holdings backfill (IWF, IWP)           -> etf_holdings
-J4  security_master                                needs J2, J3
-J5  eodhd prices/splits/dividends                  needs J3 (ticker list), J4 (vendor symbols)
+J4a identity: security_master, security_spells      needs EODHD symbol lists, 13(f) lists, OpenFIGI (D17)
+J4  security_master CIK, SIC (EDGAR side)          needs J2, J3, J4a
+J5  eodhd prices/splits/dividends                  needs J4a (code -> FIGI)
 J6  filing_events + delistings                     needs J2, J4
 J7  fundamentals                                   needs J2 (facts), J4 (cik -> ticker)
 J8  macro (ALFRED)                                 independent; run in parallel from the start

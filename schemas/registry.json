@@ -3324,9 +3324,14 @@
             "schemas_md": "#31",
             "fields": [
                 {
-                    "name": "ticker",
+                    "name": "figi",
                     "type": "utf8",
                     "nullable": false
+                },
+                {
+                    "name": "share_class_figi",
+                    "type": "utf8",
+                    "nullable": true
                 },
                 {
                     "name": "cik",
@@ -3334,17 +3339,17 @@
                     "nullable": true
                 },
                 {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
                     "name": "name",
                     "type": "utf8",
                     "nullable": false
                 },
                 {
-                    "name": "share_class",
-                    "type": "utf8",
-                    "nullable": true
-                },
-                {
-                    "name": "vendor_symbol",
+                    "name": "eodhd_code",
                     "type": "utf8",
                     "nullable": false
                 },
@@ -3354,17 +3359,17 @@
                     "nullable": true
                 },
                 {
-                    "name": "first_snapshot_date",
-                    "type": "date32",
+                    "name": "delisted",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "security_type",
+                    "type": "utf8",
                     "nullable": true
                 },
                 {
-                    "name": "last_snapshot_date",
-                    "type": "date32",
-                    "nullable": true
-                },
-                {
-                    "name": "prior_tickers",
+                    "name": "figi_name",
                     "type": "utf8",
                     "nullable": true
                 },
@@ -3400,22 +3405,23 @@
                 }
             ],
             "primary_key": [
-                "ticker"
+                "figi"
             ],
             "sort_key": [
-                "ticker"
+                "figi"
             ],
             "merge": "overwrite",
             "columns": [
-                "ticker:VARCHAR",
+                "figi:VARCHAR",
+                "share_class_figi:VARCHAR",
                 "cik:VARCHAR",
+                "ticker:VARCHAR",
                 "name:VARCHAR",
-                "share_class:VARCHAR",
-                "vendor_symbol:VARCHAR",
+                "eodhd_code:VARCHAR",
                 "exchange:VARCHAR",
-                "first_snapshot_date:DATE",
-                "last_snapshot_date:DATE",
-                "prior_tickers:VARCHAR",
+                "delisted:BOOLEAN",
+                "security_type:VARCHAR",
+                "figi_name:VARCHAR",
                 "resolution:VARCHAR",
                 "resolution_note:VARCHAR",
                 "updated_at:TIMESTAMP WITH TIME ZONE",
@@ -3423,7 +3429,7 @@
                 "sic_description:VARCHAR",
                 "sic_asof:DATE"
             ],
-            "hash": "d65c01ec31b6b9527b5398d4a62612a9c9276307956121ba843078a1c0956d72",
+            "hash": "39cdb6e62ea86798c1eadc34e3cb9db7ebc423c3b1c18e2829560408c89cbfda",
             "last_migration": "2026-10-10-initial"
         },
         "delistings": {
@@ -3827,6 +3833,68 @@
                 "raw_sha256:VARCHAR"
             ],
             "hash": "b591f47ebb4cbaefc84e8d64981c81f527c3da3913b93de7ee4062407b695166",
+            "last_migration": "2026-10-10-initial"
+        },
+        "security_spells": {
+            "number": 36,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#36",
+            "fields": [
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "id_type",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "value",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "valid_from",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "valid_to",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "figi",
+                "id_type",
+                "value"
+            ],
+            "sort_key": [
+                "figi",
+                "id_type",
+                "value"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "figi:VARCHAR",
+                "id_type:VARCHAR",
+                "value:VARCHAR",
+                "valid_from:DATE",
+                "valid_to:DATE",
+                "source:VARCHAR"
+            ],
+            "hash": "5d968c4ec19928601fab9af23e1659a330d58ae2008761501c14cda1714e1452",
             "last_migration": "2026-10-10-initial"
         }
     }

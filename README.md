@@ -62,7 +62,7 @@ bash .claude/skills/15-ai-dev-workflow/scripts/session-start.sh   # environment 
 | [`lake/`](lake/README.md) | Rust: the lake I/O contract (`write_partition` / `read_dataset`), `lake-io` (the Julia bridge) and `lake-schema-probe` |
 | [`ingest/`](ingest/README.md) | Rust: `quant-ingest`, the fetch / land / stage / compact infrastructure, the probes and the EODHD price worker (in progress) |
 | [`julia/`](julia/NYSECalendar/README.md) | Shared Julia packages: `NYSECalendar`, `LakeIO` (the lake from Julia, through `lake-io`) |
-| `schemas/` | Golden fixtures for shared contracts; `registry.json` (all 35 datasets), its generator and verifier |
+| `schemas/` | Golden fixtures for shared contracts; `registry.json` (all 36 datasets), its generator and verifier |
 | `tools/` | Julia repository checks (markdown, syntax) |
 | `outline.md`, `scaffold.md` | Functional outline and target directory layout (the target, not the current state) |
 | `DECISIONS.md` | The owner's decisions and their status |

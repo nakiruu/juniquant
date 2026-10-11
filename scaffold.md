@@ -363,7 +363,7 @@ The skill-local Julia oracles of the lock (`09-lock-state-machine/scripts/lock_r
 
 ```
 $QUANT_ROOT/                             # container /data, host /mnt/cache/quant
-├── lake/                                # the 35 datasets (13-parquet-lake SKILL §3), table below
+├── lake/                                # the 36 datasets (13-parquet-lake SKILL §3), table below
 ├── raw/                                 # immutable landing zone: every raw response, fetch timestamp + SHA-256 (01 BACKFILL.md)
 ├── stage/                               # parsed per-chunk intermediates, rebuildable
 ├── reports/                             # coverage / caveat / gate reports; backtest run artifacts (reports/backtest/<run_id>/cpcv/split=<k>/)

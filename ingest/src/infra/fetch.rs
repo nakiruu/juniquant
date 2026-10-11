@@ -79,6 +79,9 @@ pub enum Fatal {
     /// The HTTP client could not be built.
     #[error("client: {0}")]
     Client(#[from] reqwest::Error),
+    /// An invalid header value.
+    #[error("invalid value for header {0}")]
+    Header(&'static str),
     /// The bucket's semaphore was closed (never happens).
     #[error("bucket closed")]
     Bucket(#[from] tokio::sync::AcquireError),
@@ -135,6 +138,7 @@ pub struct Fetcher {
     /// The source's constants.
     pub spec: SourceSpec,
     client: reqwest::Client,
+    user_agent: String,
     bucket: Bucket,
     manifest: Arc<Manifest>,
     raw: PathBuf,
@@ -162,10 +166,41 @@ impl Fetcher {
             bucket: Bucket::new(&spec),
             spec,
             client,
+            user_agent: user_agent.to_owned(),
             manifest,
             raw,
             quality,
         })
+    }
+
+    /// The same fetcher sending `name: value` on every request (an API key header). The value
+    /// is never logged or landed: sidecars record the URL only.
+    ///
+    /// # Errors
+    ///
+    /// [`Fatal::Header`] for a value that is not a valid header; [`Fatal::Client`].
+    pub fn with_header(mut self, name: &'static str, value: &str) -> Result<Self, Fatal> {
+        let mut v =
+            reqwest::header::HeaderValue::from_str(value).map_err(|_| Fatal::Header(name))?;
+        v.set_sensitive(true);
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert(name, v);
+        self.client = reqwest::Client::builder()
+            .user_agent(&self.user_agent)
+            .timeout(self.spec.timeout)
+            .default_headers(h)
+            .build()?;
+        Ok(self)
+    }
+
+    /// POST `body` (JSON) to `r.url`, otherwise exactly as [`Fetcher::fetch`]. The chunk id
+    /// should identify the body (a hash of it), so a re-run skips a batch already answered.
+    ///
+    /// # Errors
+    ///
+    /// As [`Fetcher::fetch`].
+    pub async fn post(&self, r: &Request<'_>, body: &str) -> Result<Outcome, Fatal> {
+        self.send(r, Some(body)).await
     }
 
     /// Fetch `r` unless the manifest says it is done.
@@ -179,6 +214,10 @@ impl Fetcher {
     /// [`Fatal`] for anything that must stop the source for the run; an ordinary failure is
     /// [`Outcome::Failed`].
     pub async fn fetch(&self, r: &Request<'_>) -> Result<Outcome, Fatal> {
+        self.send(r, None).await
+    }
+
+    async fn send(&self, r: &Request<'_>, body: Option<&str>) -> Result<Outcome, Fatal> {
         let id = self.spec.id;
         let key = (id, r.entity, r.chunk);
         if self.manifest.status(key)?.is_some_and(Status::is_done) {
@@ -199,7 +238,15 @@ impl Fetcher {
             }
             let sent = {
                 let _permit = self.bucket.acquire().await?;
-                match self.client.get(r.url).send().await {
+                let req = match body {
+                    Some(b) => self
+                        .client
+                        .post(r.url)
+                        .header(reqwest::header::CONTENT_TYPE, "application/json")
+                        .body(b.to_owned()),
+                    None => self.client.get(r.url),
+                };
+                match req.send().await {
                     // without_url: a reqwest error displays the URL, and ours carry API keys.
                     Ok(resp) => {
                         let status = resp.status().as_u16();

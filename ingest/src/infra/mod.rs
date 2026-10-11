@@ -103,6 +103,40 @@ impl SourceSpec {
         daily_cap: None,
         timeout: Duration::from_secs(30),
     };
+    /// SEC 13(f) securities lists (`www.sec.gov/files/investment/...`), SEC fair-access pacing.
+    pub const SEC_13F: Self = Self {
+        id: "sec_13f_list",
+        label: "SEC",
+        burst: 10.0,
+        rate: 5.0,
+        concurrency: 2,
+        base_backoff: Duration::from_secs(1),
+        max_attempts: 5,
+        rate_limit_backoff: Duration::from_secs(60),
+        daily_cap: None,
+        timeout: Duration::from_secs(120),
+    };
+    /// OpenFIGI mapping with an API key: 25 requests per 6 s, 100 jobs each.
+    pub const OPENFIGI: Self = Self {
+        id: "openfigi",
+        label: "OpenFIGI",
+        burst: 5.0,
+        rate: 3.5,
+        concurrency: 2,
+        base_backoff: Duration::from_secs(2),
+        max_attempts: 5,
+        rate_limit_backoff: Duration::from_secs(10),
+        daily_cap: None,
+        timeout: Duration::from_secs(60),
+    };
+    /// OpenFIGI without a key: 25 requests per minute, 10 jobs each.
+    pub const OPENFIGI_KEYLESS: Self = Self {
+        rate: 0.38,
+        burst: 2.0,
+        concurrency: 1,
+        rate_limit_backoff: Duration::from_secs(60),
+        ..Self::OPENFIGI
+    };
     /// FRED / ALFRED.
     pub const FRED: Self = Self {
         id: "fred_alfred",

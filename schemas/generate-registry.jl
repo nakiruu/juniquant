@@ -55,6 +55,7 @@ const DATASETS = Dict(
     "filing_events" => (nothing, "rust-ingest", "overwrite"),
     "price_coverage" => (nothing, "julia-universe", "overwrite"),
     "listings" => ("date", "rust-ingest", "overwrite"),
+    "security_spells" => (nothing, "rust-ingest", "overwrite"),
 )
 
 # Keys SCHEMAS.md states in prose rather than in its "Primary key:" line.

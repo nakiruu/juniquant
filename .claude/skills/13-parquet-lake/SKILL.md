@@ -7,7 +7,7 @@ description: The data lake. Every Parquet dataset in the system, its schema,
 
 # Parquet Lake
 
-The lake is 35 datasets. Their schemas are frozen once written (constitution
+The lake is 36 datasets. Their schemas are frozen once written (constitution
 §5). This skill is the authoritative definition of each dataset's layout; the
 column lists are in `SCHEMAS.md`; the read/write semantics are in
 `IO-CONTRACT.md`.
@@ -50,7 +50,7 @@ migration file is a build failure.
 
 See `MIGRATIONS.md` for the additive change procedure.
 
-## 3. The 35 Datasets (layout, writer, cadence)
+## 3. The 36 Datasets (layout, writer, cadence)
 
 This is the single table of layouts. `SCHEMAS.md`, `UNRAID-STORAGE.md` and
 `schemas/generate-registry.jl` must agree with it; `verify-schemas.sh` fails
@@ -97,9 +97,10 @@ names only, never stored columns.
 | 33 | `filing_events` (8-K items, Form 25/15) | S | Rust (ingest) | Daily |
 | 34 | `price_coverage` (survivorship coverage, per ticker) | S | Julia (universe builder) | Daily, after the universe |
 | 35 | `listings` (listed securities per date, D12) | P(`year`) | Rust (ingest) | Daily |
+| 36 | `security_spells` (dated identifiers per FIGI, D17) | S | Rust (ingest) | Weekly + on new codes |
 
 Numbers #1-#27 are unchanged from the earlier inventory (other skills cite
-them). #28-#35 are appended. Never renumber.
+them). #28-#36 are appended. Never renumber.
 
 **Single-writer rule.** No dataset has more than one writer. If two modules
 need to write the same data, they write two datasets. This eliminates write

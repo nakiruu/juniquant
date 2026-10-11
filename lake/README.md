@@ -6,7 +6,7 @@ The one implementation of the Parquet lake I/O contract, shared by `ingest` and 
 [`IO-CONTRACT.md`](../.claude/skills/13-parquet-lake/IO-CONTRACT.md).
 
 Every dataset's columns, keys, layout and merge rule come from
-[`schemas/registry.json`](../schemas/registry.json) (35 datasets); nothing is hard-coded per
+[`schemas/registry.json`](../schemas/registry.json) (36 datasets); nothing is hard-coded per
 dataset. The library takes paths as arguments; only `Lake::from_env` and the binaries read
 `QUANT_ROOT`, `QUANT_STATE` and `QUANT_REGISTRY_PATH` (no silent default to a production path).
 

@@ -2,4 +2,5 @@
 //! (`01-data-ingestion/SKILL.md` §4, `BACKFILL.md` §3-§4, `RETRY-POLICY.md`).
 
 pub mod eodhd;
+pub mod identity;
 pub mod infra;

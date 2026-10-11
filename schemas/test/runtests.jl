@@ -37,8 +37,8 @@ $pk
     layouts = parse_layouts(read(joinpath(SKILL_DIR, "SKILL.md"), String))
     full = parse_schemas(read(joinpath(SKILL_DIR, "SCHEMAS.md"), String))
     entries = stage_entries(layouts, full)
-    @test length(entries) == 35 == length(DATASETS)
-    @test [e["number"] for (_, e) in entries] == 1:35
+    @test length(entries) == 36 == length(DATASETS)
+    @test [e["number"] for (_, e) in entries] == 1:36
     @test Dict(entries)["audit_log"]["sort_key"] == ["timestamp", "event_id"]
 
     # A type outside SKILL.md §6 fails.

@@ -34,7 +34,7 @@ no implementation (skill `scripts/` hold non-normative sketches).
 | Canonical tickers, symbol map, lock groups | [`symbols/`](../symbols/README.md) | **Done** | Fixtures are the authority; dated ticker holdings (DECISIONS B5) |
 | NYSE calendar (Rust) | [`calendar/`](../calendar/README.md) | **Done** | Reproduces the golden fixtures and the 1990-2100 holiday list |
 | NYSE calendar (Julia) | [`julia/NYSECalendar`](../julia/NYSECalendar/README.md) | **Done** | Twin of the Rust crate; read-only |
-| Lake I/O, schema registry | [`lake/`](../lake/README.md), [`schemas/`](../schemas/) | **Done** | 35 datasets registered; atomic writes, merge on primary key, date-filtered reads |
+| Lake I/O, schema registry | [`lake/`](../lake/README.md), [`schemas/`](../schemas/) | **Done** | 36 datasets registered; atomic writes, merge on primary key, date-filtered reads |
 | Julia lake access | [`julia/LakeIO`](../julia/LakeIO/src/LakeIO.jl) | **Done** | Goes through the Rust `lake-io` binary over Arrow IPC |
 | Probe harness, probes P1-P6 | [`ingest/src/probe/`](../ingest/src/probe/), [`probes/`](probes/README.md) | **Done** | Results recorded; open items below |
 | Common ingest infrastructure | [`ingest/src/infra/`](../ingest/README.md) | **Done** | Landing zone, manifest, rate buckets, retry, stage and compact, quality log |

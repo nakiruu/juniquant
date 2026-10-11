@@ -553,11 +553,40 @@ availability and format), or accepting a later first universe date.
 
 ## Identifiers
 
-`company_tickers.json` maps **current** tickers to CIKs; it has no history.
-Historical (delisted, renamed) names are resolved through the submissions
-`name`/`formerNames` and the name lookup file, with an owner-maintained
-override table `config/identifier_overrides.csv`. Rules and the unresolved
-share gate: `UNIVERSE.md` §4.
+The security key is the **US composite FIGI**, the issuer code the **CIK**
+(DECISIONS D17, `docs/adr/0001-figi-security-key.md`). The identity job J4a
+(`quant-ingest identity`, `BACKFILL.md` §5.5) resolves every EODHD code:
+
+**OpenFIGI** (`POST https://api.openfigi.com/v3/mapping`, free key in
+`OPENFIGI_API_KEY`, sent as the `X-OPENFIGI-APIKEY` header and never logged;
+with the key 25 requests per 6 s and 100 jobs each, without it 25 per minute
+and 10 jobs). Jobs `{idType: ID_ISIN | ID_CUSIP, idValue, includeUnlistedEquities: true}`;
+the answer kept is the single US composite (`exchCode = US`, `marketSector =
+Equity`, `securityType2 = Common Stock`); more than one is ambiguous. A ticker
+lookup reaches only the current holder, so tickers are never mapped. Each
+batch is landed under `raw/openfigi/{id_isin|id_cusip}/{hash of the batch}`.
+
+**SEC Official List of Section 13(f) Securities**, quarterly from 1996:
+`https://www.sec.gov/files/investment/13flist{Y}q{Q}.txt` from 2020, PDFs at
+`.../files/investment/...pdf` or `.../divisions/investment/13f/...pdf` before
+(text extracted with the `pdf_oxide` crate). A row counts only if its CUSIP's
+check digit is valid: the options listed under each optionable stock (`CALL`
+/ `PUT`) have pseudo-CUSIPs that fail it (2010 Q1: 16,787 lines, 7,806 stock
+CUSIPs). The lists carry a CUSIP Service Bureau copyright: kept in the local
+landing zone only, never redistributed. Their issuer names are cut at 28
+characters and abbreviated, so names are compared on OpenFIGI's side.
+
+**Resolution**, first that applies: an override row; the code's EODHD ISIN ->
+FIGI; otherwise a 13(f) CUSIP whose OpenFIGI name equals the code's EODHD name
+after `identity::normalize_name` (upper case, punctuation and legal-form and
+share-class words dropped), when exactly one FIGI has that name. Anything else
+is unresolved (`identity_unresolved` in `data_quality`, gate G5), never a
+guess.
+
+**CIK.** `company_tickers_exchange.json` maps **current** tickers to CIKs; it
+has no history. Delisted issuers get their CIK from the submissions
+`name`/`formerNames` and the name lookup file in the EDGAR worker (W6), with
+the override table `config/identifier_overrides.csv` (`UNIVERSE.md` §4).
 
 ---
 

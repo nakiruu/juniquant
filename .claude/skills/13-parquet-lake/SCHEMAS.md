@@ -921,30 +921,34 @@ ticker)` in a file are summed (weights, shares, market value) and counted in
 
 ## 31. `security_master`
 
-Rows: ~2,500 (estimate). Writer: Rust (ingest). Update: weekly, and whenever a new ticker appears in a snapshot. Partitioned: no.
+Rows: about 20,000 (one per resolved security of the D12 scope; estimate). Writer: Rust (ingest, identity job J4a). Update: weekly, and on new codes. Partitioned: no.
 
-The identifier master (`01-data-ingestion/UNIVERSE.md` §4). One row per
-security (listed share class), keyed by the canonical symbol.
+The identifier master, keyed by the **US composite FIGI** (DECISIONS D17,
+`docs/adr/0001-figi-security-key.md`). One row per security (a listed share
+class on US venues) over its whole life. Redefined before first write on
+2026-10-11 (was keyed by ticker; `migrations/2026-10-10-initial.md`).
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `ticker` | `utf8` | no | Canonical symbol; unique across all time. If a symbol string was reused by two securities the older one carries a suffix (`UNIVERSE.md` §3) |
-| `cik` | `utf8` | yes | 10-digit zero-padded; null if unresolved |
-| `name` | `utf8` | no | Latest known name |
-| `share_class` | `utf8` | yes | `A` / `B` / `C` ... or null |
-| `vendor_symbol` | `utf8` | no | The symbol to request from the price vendor (EODHD form without the `.US` suffix, `UNIVERSE.md` §3) |
-| `exchange` | `utf8` | yes | Latest known |
-| `first_snapshot_date` | `date32` | yes | First `etf_holdings` snapshot containing it |
-| `last_snapshot_date` | `date32` | yes | Last snapshot containing it |
-| `prior_tickers` | `utf8` | yes | JSON array of `{ticker, from, to}`, earlier symbols of the same security (renames) |
-| `resolution` | `utf8` | no | How `cik` was found: `exact` / `name` / `manual` / `unresolved` |
-| `resolution_note` | `utf8` | yes | Evidence (matched name, override row) |
+| `figi` | `utf8` | no | US composite FIGI (`BBG` + 9 characters), from OpenFIGI |
+| `share_class_figi` | `utf8` | yes | OpenFIGI share-class FIGI |
+| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK; null until resolved (SEC ticker files for current listings; EDGAR name match for the rest, W6) |
+| `ticker` | `utf8` | no | Canonical form of the latest ticker (from the latest EODHD code) |
+| `name` | `utf8` | no | EODHD `Name` of the latest code |
+| `eodhd_code` | `utf8` | no | The latest EODHD code without `.US` (`MON_old`, `BRK-B`) |
+| `exchange` | `utf8` | yes | EODHD `Exchange` of the latest code |
+| `delisted` | `bool` | no | True if every code of the security is in the delisted list |
+| `security_type` | `utf8` | yes | OpenFIGI `securityType` (`Common Stock`, `REIT`, ...) |
+| `figi_name` | `utf8` | yes | OpenFIGI `name` |
+| `resolution` | `utf8` | no | How the FIGI was found: `override` / `isin` / `cusip_13f` |
+| `resolution_note` | `utf8` | yes | Evidence: the ISIN or CUSIP used, the normalized names compared |
 | `updated_at` | `timestamp[ns, UTC]` | no | |
 | `sic` | `utf8` | yes | 4-digit SIC code of the issuer (CIK) from EDGAR submissions `sic`; null if unresolved or absent. Current value only (`UNIVERSE.md` §6) |
 | `sic_description` | `utf8` | yes | EDGAR `sicDescription` |
 | `sic_asof` | `date32` | yes | Date the `sic` value was fetched; a change is logged, never back-dated |
 
-Primary key: `ticker`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+Primary key: `figi`. An EODHD code that does not resolve has no row here: it
+is counted (gate G5, `identity_unresolved`) and its prices are not compacted.
 
 ---
 
@@ -1071,3 +1075,25 @@ item until checked against a sample.
 | `raw_sha256` | `utf8` | yes | SHA-256 of the raw file in the landing zone; null for reconstructed rows |
 
 Primary key: `(date, source, ticker)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+
+---
+
+## 36. `security_spells`
+
+Rows: about 60,000 (several identifiers per security; estimate). Writer: Rust (ingest, identity job J4a). Update: with `security_master`. Partitioned: no.
+
+Dated vendor identifiers of each security (DECISIONS D17): which EODHD code,
+ticker, ISIN or CUSIP pointed at a FIGI, and when. "Which security was `FB` on
+2015-06-30" and "which code serves this FIGI" are as-of lookups here. A
+lookup table of existing identifiers, not a new identifier.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `figi` | `utf8` | no | `security_master.figi` |
+| `id_type` | `utf8` | no | `eodhd_code` / `ticker` / `isin` / `cusip` |
+| `value` | `utf8` | no | The identifier (an EODHD code without `.US`; a canonical ticker) |
+| `valid_from` | `date32` | yes | First date it is known to apply; null when unknown (symbol lists are snapshots; W5 fills code and ticker spans from the price series) |
+| `valid_to` | `date32` | yes | Last such date; null when open or unknown |
+| `source` | `utf8` | no | `eodhd_symbols` / `openfigi` / `sec_13f` / `override` |
+
+Primary key: `(figi, id_type, value)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
