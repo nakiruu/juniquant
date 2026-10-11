@@ -91,8 +91,9 @@ the day at 90,000 calls (counted in the manifest) rather than run into the cap.
 job runs after EODHD publishes the day (time **verify**, P4) and drops a bar
 dated today if it is fetched before 16:05 ET.
 
-**Failure modes.** An unknown code returns `200` with `[]` (or `404`): the chunk
-is `gone` with reason `vendor_no_data`, as a Yahoo `Not Found` was. A code that
+**Failure modes.** An unknown code returns `200` with `[]` from `/api/eod` (or `404`):
+the chunk is `gone` with reason `vendor_no_data`. From `/api/splits` and `/api/div`, `[]`
+means "no events" and is stored as an answer (found on the first W5 run). A code that
 answers with another holder's series (a reused ticker) is caught by the
 holding-period check above and logged as `vendor_wrong_holder`. `401`
 or `403` (key, plan) stops the run: never retried. `429` follows
@@ -446,6 +447,11 @@ cannot be trusted, both in `POINT-IN-TIME.md`):
 observations to 2026-10-08, one vintage) whatever `observation_start` asks for. A 15-year
 history of the credit spreads is not available from FRED, so those two series are
 **deferred** for the backfill (the gate reports it; no panel feature uses them).
+**If a credit spread is ever needed, use `BAA10Y` instead** (Moody's seasoned Baa yield minus
+the 10-year Treasury, daily from 1986-01-02; `DECISIONS.md` D16). It is not in the series
+table and is not fetched now. When added: 2,979 vintage dates (first 2014-01-27) means two
+windows of at most 2,000, and observations before 2014-01-27 are late-captured, so they use
+the lag-rule buffer.
 
 **Endpoint and vintages (P6):**
 

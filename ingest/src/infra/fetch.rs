@@ -33,6 +33,9 @@ pub struct Request<'a> {
     pub cost: u64,
     /// Dataset the chunk feeds, for `data_quality`.
     pub dataset: &'a str,
+    /// An empty JSON array means "no data for this entity" (EODHD prices), not "no events"
+    /// (EODHD splits and dividends, where `[]` is an answer).
+    pub empty_is_gone: bool,
 }
 
 /// What happened to a chunk.
@@ -100,12 +103,10 @@ pub enum Verdict {
 
 /// Classify a response.
 #[must_use]
-pub fn classify(source: &str, status: u16, body: &[u8]) -> Verdict {
+pub fn classify(source: &str, status: u16, body: &[u8], empty_is_gone: bool) -> Verdict {
     match status {
         200..=299 if body.trim_ascii().is_empty() => Verdict::NoRetry,
-        200..=299 if source == "eodhd" && body.trim_ascii() == b"[]" => {
-            Verdict::Gone("vendor_no_data")
-        }
+        200..=299 if empty_is_gone && body.trim_ascii() == b"[]" => Verdict::Gone("vendor_no_data"),
         200..=299 => Verdict::Data,
         404 if matches!(source, "eodhd" | "yahoo_chart") => Verdict::Gone("vendor_no_data"),
         401 | 403 => Verdict::Refused,
@@ -238,7 +239,7 @@ impl Fetcher {
                 fetched_at: Utc::now(),
                 attempt,
             };
-            match classify(id, status, &body) {
+            match classify(id, status, &body, r.empty_is_gone) {
                 Verdict::Data => {
                     let m = meta();
                     let landed = landing::land(&self.raw, key, r.ext, &body, &m)?;
@@ -309,28 +310,34 @@ mod tests {
 
     #[test]
     fn classification_follows_the_retry_policy() {
-        assert_eq!(classify("eodhd", 200, b"[{\"date\":\"x\"}]"), Verdict::Data);
         assert_eq!(
-            classify("eodhd", 200, b" [] \n"),
+            classify("eodhd", 200, b"[{\"date\":\"x\"}]", true),
+            Verdict::Data
+        );
+        assert_eq!(
+            classify("eodhd", 200, b" [] \n", true),
             Verdict::Gone("vendor_no_data")
         );
         assert_eq!(
-            classify("fred_alfred", 200, b"[]"),
+            classify("eodhd", 200, b"[]", false),
             Verdict::Data,
-            "only EODHD's [] means no data"
+            "no splits is an answer, not missing data"
         );
-        assert_eq!(classify("eodhd", 200, b""), Verdict::NoRetry);
-        assert_eq!(classify("eodhd", 404, b""), Verdict::Gone("vendor_no_data"));
-        assert_eq!(classify("sec_api", 404, b""), Verdict::NoRetry);
-        assert_eq!(classify("eodhd", 401, b""), Verdict::Refused);
+        assert_eq!(classify("eodhd", 200, b"", true), Verdict::NoRetry);
         assert_eq!(
-            classify("sec_api", 429, b""),
+            classify("eodhd", 404, b"", true),
+            Verdict::Gone("vendor_no_data")
+        );
+        assert_eq!(classify("sec_api", 404, b"", true), Verdict::NoRetry);
+        assert_eq!(classify("eodhd", 401, b"", true), Verdict::Refused);
+        assert_eq!(
+            classify("sec_api", 429, b"", true),
             Verdict::Refused,
             "SEC 429 may be an IP block"
         );
-        assert_eq!(classify("eodhd", 429, b""), Verdict::RateLimited);
-        assert_eq!(classify("eodhd", 503, b""), Verdict::Retry);
-        assert_eq!(classify("eodhd", 400, b""), Verdict::NoRetry);
+        assert_eq!(classify("eodhd", 429, b"", true), Verdict::RateLimited);
+        assert_eq!(classify("eodhd", 503, b"", true), Verdict::Retry);
+        assert_eq!(classify("eodhd", 400, b"", true), Verdict::NoRetry);
     }
 
     #[test]

@@ -98,6 +98,7 @@ fn req<'a>(url: &'a str, entity: &'a str) -> Request<'a> {
         ext: "json",
         cost: 1,
         dataset: "prices",
+        empty_is_gone: true,
     }
 }
 
