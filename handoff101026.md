@@ -1,3 +1,5 @@
+> **Historical.** Written at the end of 2026-10-10; branch names and next steps below are superseded. Current state: [`docs/status.md`](docs/status.md).
+
 # Handoff 2026-10-10
 
 Session handoff for juniquant. Repository: `/home/nico/juniquant`, branch `main`, remote

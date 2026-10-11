@@ -7,8 +7,8 @@ How to work on this repository. Session conventions for AI-assisted work are in
 
 | Tool | Version | Notes |
 |---|---|---|
-| Julia | 1.12 | Workspace at the repository root; one committed `Manifest.toml` |
-| Rust | 1.98.1 | `rust-toolchain.toml` (honoured by rustup). On Fedora's system toolchain install `rustfmt` and `clippy`: `sudo dnf install rustfmt clippy` |
+| Julia | 1.12 | Workspace at the repository root; one committed `Manifest.toml`. Run `julia +1.12`: the juliaup default may be newer, and its `Pkg` rewrites the manifest to format 2.1 |
+| Rust | 1.98.1 | `rust-toolchain.toml` (honoured by rustup). With a distribution toolchain instead of rustup, install `rustfmt` and `clippy` separately; put the rustup `~/.cargo/bin` first on `PATH` |
 | GNU make | any | Single entry point for the gates |
 | DuckDB CLI | 1.5.6, pinned; CI installs it | Schema registry checks and ad-hoc queries |
 | Bun | later | Dashboard |
@@ -55,3 +55,31 @@ No Python, in any form (constitution §4; the pre-commit hook rejects `*.py`).
 - **The constitution:** only by an owner-approved amendment recorded in
   [`AMENDMENTS.md`](../.claude/skills/00-construction/AMENDMENTS.md).
 - **A decision not covered by the constitution:** a short record in [`adr/`](adr/README.md).
+
+## Environment
+
+Secrets and paths live in a gitignored `.env` at the repository root (`chmod 600`); never paste
+them in chat or commit them. Nothing in the repository sets a default for a production path.
+
+| Variable | Used by |
+|---|---|
+| `QUANT_ROOT`, `QUANT_STATE`, `QUANT_CONFIG` | Data root, mutable state, read-only config (`config/`) |
+| `QUANT_REGISTRY_PATH` | Registry file; default `schemas/registry.json` |
+| `EODHD_API_KEY`, `FRED_API_KEY`, `SEC_EDGAR_EMAIL` | `quant-ingest` (the email goes into the SEC User-Agent) |
+| `BACKFILL_START` | First backfill date; default `2005-01-01` |
+
+DuckDB and Bun may not be on a non-interactive shell's `PATH`:
+`export PATH="$HOME/.duckdb/cli/latest:$HOME/.bun/bin:$PATH"`.
+
+## Pitfalls
+
+- **Merging worker branches:** each adds its own `[workspace.dependencies]`; merge by hand,
+  keep the `[workspace.lints]` sections, and regenerate `Cargo.lock` with a build.
+- **Lints in integration tests:** the allow-unwrap-in-tests setting does not cover helper
+  functions; use a file-level `#![allow(clippy::unwrap_used, ..., reason = "...")]`.
+- **`lake/` is a crate:** never add `/lake/` to `.gitignore`; the data lake lives under
+  `$QUANT_ROOT`.
+- **CI:** `gh run watch` exiting 0 does not prove the run passed; check the conclusion in
+  `gh run list`.
+- **Documentation:** `make md-check` validates code fences, table columns and relative links;
+  update [`status.md`](status.md) when a component changes state.

@@ -5,6 +5,10 @@ Summary of what the system collects and how. Normative details:
 survivorship, universe, quality gates) and [`13-parquet-lake`](../.claude/skills/13-parquet-lake/SKILL.md)
 (datasets, schemas, I/O contract).
 
+Status: probes P1-P6 have settled the EODHD, EDGAR bulk and ALFRED behaviour ([`probes/`](probes/README.md));
+the EODHD price worker is in progress and no other source worker exists yet
+([`status.md`](status.md)).
+
 ## Sources (EODHD paid, the rest free)
 
 | Source | What | History |
