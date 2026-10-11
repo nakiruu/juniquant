@@ -101,7 +101,11 @@ impl LockMonitor {
                     RevalidationDecision::Release => {
                         // The generator recomputes quantity, runs the spread gate and ladder, takes
                         // the ticker gate and asks authorize_and_reserve again at placement.
-                        self.order_event_tx
+                        // Mark first, then send: a crash between the two loses a release (the row
+                        // is Fired with no order, which the owner sees) but can never repeat one.
+                        // The handler's dedup set is in memory and does not survive a restart.
+                        self.pending.mark_fired(&order.pending_id).await?; // = released
+                        if let Err(e) = self.order_event_tx
                             .send(OrderEvent::ReleaseIntent {
                                 pending_id: order.pending_id,
                                 ticker: order.ticker.clone(),
@@ -109,8 +113,11 @@ impl LockMonitor {
                                 // The generator derives a veto exit from portfolio_targets (veto_active && w_current > 0).
                                 // NO quantity field, NO permit field.
                             })
-                            .await?;
-                        self.pending.mark_fired(&order.pending_id).await?; // = released
+                            .await
+                        {
+                            self.pending.alert_unresolved(&order.pending_id).await?;
+                            return Err(e.into());
+                        }
                         released.insert(order.ticker.clone());
                     }
                     RevalidationDecision::Cancel(reason) => {
