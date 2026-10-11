@@ -146,7 +146,11 @@ const NAME_NOISE: &[&str] = &[
 /// spaces, legal-form and share-class words dropped.
 #[must_use]
 pub fn normalize_name(s: &str) -> String {
-    let up = s.to_ascii_uppercase().replace('&', " AND ");
+    // Periods and apostrophes vanish (`P.F. CHANG'S` -> `PF CHANGS`); other punctuation splits.
+    let up = s
+        .to_ascii_uppercase()
+        .replace('&', " AND ")
+        .replace(['.', '\''], "");
     let cleaned: String = up
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
@@ -158,7 +162,15 @@ pub fn normalize_name(s: &str) -> String {
         .join(" ")
 }
 
-/// One OpenFIGI answer kept: the US composite listing of a common stock.
+/// The comparison key of a name: [`normalize_name`] without spaces, so `P F CHANGS` and
+/// `PF CHANGS` are one name.
+#[must_use]
+pub fn name_key(s: &str) -> String {
+    normalize_name(s).replace(' ', "")
+}
+
+/// One OpenFIGI answer kept: the US composite listing of an equity (common stock or not;
+/// [`resolve`] keeps only common stock in scope).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Figi {
     /// US composite FIGI.
@@ -169,6 +181,8 @@ pub struct Figi {
     pub name: String,
     /// OpenFIGI `securityType`.
     pub security_type: Option<String>,
+    /// OpenFIGI `securityType2` (`Common Stock`, `Depositary Receipt`, `Mutual Fund`, ...).
+    pub security_type2: String,
 }
 
 /// The OpenFIGI mapping request body for `values` of `id_type` (`ID_ISIN`, `ID_CUSIP`).
@@ -176,12 +190,12 @@ pub struct Figi {
 pub fn jobs_json(id_type: &str, values: &[String]) -> String {
     let jobs: Vec<Value> = values
         .iter()
-        .map(|v| json!({"idType": id_type, "idValue": v, "includeUnlistedEquities": true}))
+        .map(|v| json!({"idType": id_type, "idValue": v, "exchCode": "US", "includeUnlistedEquities": true}))
         .collect();
     Value::Array(jobs).to_string()
 }
 
-/// One answer per job: the US composite common-stock listing, or `None` (no match, an error,
+/// One answer per job: the US composite equity listing, or `None` (no match, an error,
 /// or more than one US composite, which is ambiguous).
 #[must_use]
 pub fn parse_mapping(body: &[u8]) -> Vec<Option<Figi>> {
@@ -195,7 +209,8 @@ pub fn parse_mapping(body: &[u8]) -> Vec<Option<Figi>> {
                 .filter(|r| {
                     r.get("exchCode").and_then(Value::as_str) == Some("US")
                         && r.get("marketSector").and_then(Value::as_str) == Some("Equity")
-                        && r.get("securityType2").and_then(Value::as_str) == Some("Common Stock")
+                        // `SWC/WD`, `X/WI`: when-distributed and when-issued lines of the same stock.
+                        && !r.get("ticker").and_then(Value::as_str).unwrap_or_default().contains('/')
                 })
                 .collect();
             let composites: BTreeSet<&str> = us
@@ -221,6 +236,11 @@ pub fn parse_mapping(body: &[u8]) -> Vec<Option<Figi>> {
                     .get("securityType")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
+                security_type2: r
+                    .get("securityType2")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
             })
         })
         .collect()
@@ -253,7 +273,14 @@ pub enum Unresolved {
     NoMatch,
     /// More than one 13(f) FIGI with the same name (never a guess).
     Ambiguous(Vec<String>),
+    /// Found, but not a common stock (`securityType2`): outside the D12 scope (ADRs, funds,
+    /// rights, units). Not a gap.
+    OutOfScope(String),
 }
+
+/// OpenFIGI `securityType2` values in the D12 scope (a REIT is a common stock; ADRs, funds,
+/// units, warrants, rights and partnership units are not).
+const IN_SCOPE: &[&str] = &["Common Stock", "REIT"];
 
 /// Resolve every code (ADR 0001 decision 3): ISIN first, then a unique name match against the
 /// FIGIs reached from 13(f) CUSIPs.
@@ -264,15 +291,22 @@ pub fn resolve(
     by_cusip: &BTreeMap<String, Figi>,
 ) -> (Vec<Resolved>, Vec<(Code, Unresolved)>) {
     let mut by_name: BTreeMap<String, BTreeMap<String, (&Figi, &str)>> = BTreeMap::new();
-    for (cusip, f) in by_cusip {
+    for (cusip, f) in by_cusip
+        .iter()
+        .filter(|(_, f)| IN_SCOPE.contains(&f.security_type2.as_str()))
+    {
         by_name
-            .entry(normalize_name(&f.name))
+            .entry(name_key(&f.name))
             .or_default()
             .insert(f.figi.clone(), (f, cusip.as_str()));
     }
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for c in codes {
         if let Some((isin, f)) = c.isin.as_ref().and_then(|i| by_isin.get(i).map(|f| (i, f))) {
+            if !IN_SCOPE.contains(&f.security_type2.as_str()) {
+                bad.push((c.clone(), Unresolved::OutOfScope(f.security_type2.clone())));
+                continue;
+            }
             ok.push(Resolved {
                 code: c.clone(),
                 figi: f.clone(),
@@ -280,7 +314,7 @@ pub fn resolve(
             });
             continue;
         }
-        let name = normalize_name(&c.name);
+        let name = name_key(&c.name);
         match by_name.get(&name).filter(|_| !name.is_empty()) {
             Some(m) if m.len() == 1 => {
                 if let Some((f, cusip)) = m.values().next() {
@@ -534,6 +568,14 @@ mod tests {
     #[test]
     fn names_compare_without_legal_form_and_punctuation() {
         assert_eq!(
+            name_key("P F Changs China Bistro Inc"),
+            name_key("PF CHANG'S CHINA BISTRO INC")
+        );
+        assert_eq!(
+            name_key("P.F. Chang's China Bistro, Inc."),
+            "PFCHANGSCHINABISTRO"
+        );
+        assert_eq!(
             normalize_name("Lehman Brothers Holdings Inc"),
             normalize_name("LEHMAN BROTHERS HOLDINGS INC")
         );
@@ -554,6 +596,17 @@ mod tests {
 
     #[test]
     fn mapping_keeps_one_us_composite_common_stock() {
+        let wd = json!({"figi": "BBG_WD", "compositeFIGI": "BBG_WD", "ticker": "SWC/WD", "name": "STILLWATER MINING CO- W/D", "exchCode": "US", "marketSector": "Equity", "securityType2": "Common Stock"});
+        let only = parse_mapping(
+            json!([{"data": [figi("BBG000HYNVL9", "STILLWATER MINING CO"), wd]}])
+                .to_string()
+                .as_bytes(),
+        );
+        assert_eq!(
+            only[0].as_ref().map(|f| f.figi.as_str()),
+            Some("BBG000HYNVL9"),
+            "a /WD line is not a second security"
+        );
         let foreign = json!({"figi": "BBGX", "compositeFIGI": "BBGX", "exchCode": "GR", "marketSector": "Equity", "securityType2": "Common Stock"});
         let body = json!([
             {"data": [foreign, figi("BBG000BKRK35", "LEHMAN BROTHERS HOLDINGS INC")]},
@@ -585,9 +638,16 @@ mod tests {
             share_class: None,
             name: name.into(),
             security_type: None,
+            security_type2: "Common Stock".into(),
         };
-        let by_isin =
-            BTreeMap::from([("US61166W1018".to_owned(), f("BBG000BFWKC0", "MONSANTO CO"))]);
+        let adr = Figi {
+            security_type2: "Depositary Receipt".into(),
+            ..f("BBG_ADR", "SOME ADR")
+        };
+        let by_isin = BTreeMap::from([
+            ("US61166W1018".to_owned(), f("BBG000BFWKC0", "MONSANTO CO")),
+            ("US0000000001".to_owned(), adr),
+        ]);
         let by_cusip = BTreeMap::from([
             (
                 "524908100".to_owned(),
@@ -604,6 +664,7 @@ mod tests {
             code("LEH", "Lehman Brothers Holdings Inc", None),
             code("GM_old", "General Motors Corp", None),
             code("ZZZ", "Nobody Inc", None),
+            code("ADRX", "Some ADR", Some("US0000000001")),
         ];
         let (ok, bad) = resolve(&codes, &by_isin, &by_cusip);
         assert_eq!(ok.len(), 2);
@@ -617,6 +678,11 @@ mod tests {
             "old and new GM share a name"
         );
         assert_eq!(bad[1].1, Unresolved::NoMatch);
+        assert_eq!(
+            bad[2].1,
+            Unresolved::OutOfScope("Depositary Receipt".into()),
+            "found but not common stock"
+        );
         let now = Utc::now();
         let m = master_batch(&ok, &BTreeMap::new(), now).unwrap();
         assert_eq!(m.num_rows(), 2);
@@ -711,6 +777,8 @@ pub mod run {
         pub no_match: usize,
         /// Unresolved: ambiguous.
         pub ambiguous: usize,
+        /// Found, but not a common stock (outside D12).
+        pub out_of_scope: usize,
         /// Distinct FIGIs written.
         pub securities: usize,
         /// 13(f) quarters read.
@@ -935,13 +1003,22 @@ pub mod run {
                         f.join(" ")
                     )
                 }
+                Unresolved::OutOfScope(t) => {
+                    s.out_of_scope += 1;
+                    format!("out_of_scope: {t}")
+                }
+            };
+            let level = if matches!(why, Unresolved::OutOfScope(_)) {
+                Level::Ok
+            } else {
+                Level::Warn
             };
             job.quality.push(Row {
                 source: "OpenFIGI",
                 dataset: "security_master".into(),
                 entity: format!("{}.US", c.code),
                 chunk: "identity".into(),
-                level: Level::Warn,
+                level,
                 attempts: 1,
                 notes: Some(note),
             });
