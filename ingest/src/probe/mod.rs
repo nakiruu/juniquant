@@ -17,8 +17,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use ingest::infra::fetch::redact;
+use ingest::infra::landing::sha256_hex;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 /// Why a probe could not run or record its evidence. A probe whose *finding* is bad (a 404,
 /// a 429) is not an error: the finding is the result.
@@ -292,7 +293,7 @@ impl Probe {
             "status": status,
             "headers": kept,
             "bytes": body.len(),
-            "sha256": hex(&Sha256::digest(&body)),
+            "sha256": sha256_hex(&body),
             "fetched_at": fetched_at.to_rfc3339(),
             "elapsed_ms": started.elapsed().as_millis(),
             "raw": land.then(|| raw.strip_prefix(&self.dir).unwrap_or(&raw).display().to_string()),
@@ -356,42 +357,4 @@ pub fn run(name: &str) -> Result<PathBuf, ProbeError> {
     }
     let path = probe.finish()?;
     result.map(|()| path)
-}
-
-/// Replace the value of the `api_key=` (FRED) and `api_token=` (EODHD) query parameters.
-fn redact(url: &str) -> String {
-    let mut out = url.to_owned();
-    for param in ["api_key=", "api_token="] {
-        if let Some((head, rest)) = out.split_once(param) {
-            let tail = rest.find('&').and_then(|j| rest.get(j..)).unwrap_or("");
-            out = format!("{head}{param}REDACTED{tail}");
-        }
-    }
-    out
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::redact;
-
-    #[test]
-    fn api_key_is_redacted_anywhere_in_the_query() {
-        assert_eq!(
-            redact("https://x/s?api_key=SECRET&a=1"),
-            "https://x/s?api_key=REDACTED&a=1"
-        );
-        assert_eq!(
-            redact("https://x/s?a=1&api_key=SECRET"),
-            "https://x/s?a=1&api_key=REDACTED"
-        );
-        assert_eq!(redact("https://x/s?a=1"), "https://x/s?a=1");
-        assert_eq!(
-            redact("https://eodhd.com/api/eod/X.US?api_token=K&fmt=json"),
-            "https://eodhd.com/api/eod/X.US?api_token=REDACTED&fmt=json"
-        );
-    }
 }

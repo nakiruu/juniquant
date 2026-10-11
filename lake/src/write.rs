@@ -313,7 +313,7 @@ fn sort(spec: &DatasetSpec, batch: &RecordBatch) -> Result<RecordBatch, LakeErro
 
 /// Steps 4-6: temporary dot-file in the same directory, fsync, rename, fsync the directory;
 /// the temporary file is removed on failure.
-fn write_atomic(path: &Path, batch: &RecordBatch) -> Result<(), LakeError> {
+pub(crate) fn write_atomic(path: &Path, batch: &RecordBatch) -> Result<(), LakeError> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let created: Vec<PathBuf> = dir
         .ancestors()

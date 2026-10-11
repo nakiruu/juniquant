@@ -71,3 +71,22 @@ impl Lake {
         &self.registry
     }
 }
+
+/// Write `batch` to `path` as Parquet with the lake's settings (ZSTD-3, temporary dot-file,
+/// fsync, rename): for files outside the lake that feed it, such as ingest stage files.
+///
+/// # Errors
+///
+/// I/O and Parquet errors; on error `path` is unchanged.
+pub fn write_file(path: &Path, batch: &arrow::array::RecordBatch) -> Result<(), LakeError> {
+    write::write_atomic(path, batch)
+}
+
+/// Read a whole Parquet file into one batch.
+///
+/// # Errors
+///
+/// I/O and Parquet errors.
+pub fn read_file(path: &Path) -> Result<arrow::array::RecordBatch, LakeError> {
+    read::read_leaf(path, None, None)
+}

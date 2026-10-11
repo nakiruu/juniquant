@@ -7,16 +7,28 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "quant-ingest"
 path = "src/main.rs"
 
 [dependencies]
+arrow.workspace = true
 chrono = { workspace = true, features = ["clock"] }
+lake = { path = "../lake" }
 reqwest.workspace = true
+rusqlite.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "test-util"] }
 
 [lints]
 workspace = true
