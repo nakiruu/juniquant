@@ -538,3 +538,29 @@ fn date_filter_skips_leaves_and_filters_rows() {
         Err(LakeError::Schema { .. })
     ));
 }
+
+/// More leaves than cores, so the parallel leaf writers all take work: every leaf exists, no row
+/// is lost or doubled, and a second identical write changes nothing.
+#[test]
+fn write_dataset_with_many_leaves_writes_each_once() {
+    let (dir, lake) = lake();
+    let months = 40;
+    // 31 days always lands in the next calendar month, so each step is a new leaf.
+    let rows: Vec<(&'static str, i32, f64)> = (0..months)
+        .flat_map(|m| {
+            [
+                ("AAA", JAN2 + 31 * m, f64::from(m)),
+                ("BBB", JAN2 + 31 * m, 1.0),
+            ]
+        })
+        .collect();
+    let input = prices(&lake, &rows);
+    lake.write_dataset("prices", &input, Mode::Append).unwrap();
+    lake.write_dataset("prices", &input, Mode::Append).unwrap();
+    let leaves = fs::read_dir(dir.path().join("lake/prices"))
+        .unwrap()
+        .flat_map(|y| fs::read_dir(y.unwrap().path()).unwrap())
+        .count();
+    assert_eq!(leaves, months as usize);
+    assert_eq!(closes(&lake).len(), 2 * months as usize);
+}

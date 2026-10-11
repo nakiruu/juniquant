@@ -1,16 +1,18 @@
 //! `write_partition` / `write_dataset` (`IO-CONTRACT.md` §3): validate, merge on the primary
 //! key, sort, write a ZSTD-3 temporary file, fsync, rename, fsync the directory.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arrow::array::{Array, ArrayRef, AsArray, RecordBatch, UInt32Array};
 use arrow::compute::{concat_batches, take_record_batch};
 use arrow::datatypes::{DataType, Date32Type, SchemaRef, TimestampNanosecondType};
 use arrow::row::{RowConverter, Rows, SortField};
-use chrono::{DateTime, NaiveDate};
+use chrono::NaiveDate;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
@@ -18,6 +20,11 @@ use parquet::file::properties::WriterProperties;
 use crate::error::io_err;
 use crate::read::read_leaf;
 use crate::{DatasetSpec, Lake, LakeError, Layout, Merge};
+
+/// Days from 0001-01-01 (day 1 of the Common Era) to 1970-01-01.
+const UNIX_EPOCH_DAYS_FROM_CE: i32 = 719_163;
+
+const NANOS_PER_DAY: i64 = 86_400_000_000_000;
 
 /// Rows per row group, fixed so a re-run writes the same file layout (`IO-CONTRACT.md` §3).
 pub const ROW_GROUP_ROWS: usize = 1 << 20;
@@ -61,7 +68,9 @@ impl Lake {
     ///
     /// # Errors
     ///
-    /// As [`Lake::write_partition`]; groups written before the failing one stay written.
+    /// As [`Lake::write_partition`]; the leaves are written in parallel, so leaves written
+    /// before the failure was seen stay written (the error is that of the first failing leaf in
+    /// partition-value order).
     pub fn write_dataset(
         &self,
         name: &str,
@@ -76,20 +85,60 @@ impl Lake {
         // Conform first: partition_values reads the partition column by its registered type.
         let schema = spec.schema().map_err(|m| schema_err(name, m))?;
         let batch = &conform(name, &schema, batch)?;
-        let keys = partition_values(name, spec, batch)?;
-        let mut groups: BTreeMap<&[String], Vec<u32>> = BTreeMap::new();
-        for (row, key) in keys.iter().enumerate() {
-            groups
-                .entry(key)
-                .or_default()
-                .push(u32::try_from(row).map_err(|_| too_many(name))?);
+        let (keys, ids) = partition_ids(name, spec, batch)?;
+        let mut rows: Vec<Vec<u32>> = vec![Vec::new(); keys.len()];
+        for (row, &id) in ids.iter().enumerate() {
+            let row = u32::try_from(row).map_err(|_| too_many(name))?;
+            rows.get_mut(id as usize)
+                .into_iter()
+                .for_each(|r| r.push(row));
         }
-        for (key, rows) in groups {
-            let part = take_record_batch(batch, &UInt32Array::from(rows))?;
-            let values: Vec<&str> = key.iter().map(String::as_str).collect();
-            self.write_leaf(name, spec, &values, &part, mode)?;
+        // Leaves in partition-value order; each is an independent file, so they are written by
+        // as many threads as the machine has cores. The first failing leaf (in that order) is
+        // the error; leaves written by then stay written, as `write_dataset` says.
+        let mut order: Vec<usize> = (0..keys.len()).collect();
+        order.sort_by(|&a, &b| keys.get(a).cmp(&keys.get(b)));
+        let next = AtomicUsize::new(0);
+        let failed = AtomicBool::new(false);
+        let first_error: Mutex<Option<(usize, LakeError)>> = Mutex::new(None);
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZero::get)
+            .min(order.len());
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    loop {
+                        let job = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(&leaf) = order.get(job) else { break };
+                        if failed.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let result = (|| -> Result<(), LakeError> {
+                            let picked =
+                                UInt32Array::from(rows.get(leaf).cloned().unwrap_or_default());
+                            let part = take_record_batch(batch, &picked)?;
+                            let values: Vec<&str> = keys
+                                .get(leaf)
+                                .map(|k| k.iter().map(String::as_str).collect())
+                                .unwrap_or_default();
+                            self.write_leaf(name, spec, &values, &part, mode)
+                        })();
+                        if let Err(e) = result {
+                            failed.store(true, Ordering::Relaxed);
+                            if let Ok(mut slot) = first_error.lock()
+                                && slot.as_ref().is_none_or(|(j, _)| job < *j)
+                            {
+                                *slot = Some((job, e));
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        match first_error.into_inner().ok().flatten() {
+            Some((_, e)) => Err(e),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// Path of the leaf file for `partition` (validated values).
@@ -184,12 +233,19 @@ fn validate(
         }
     }
     if spec.layout == Layout::Partitioned {
-        for (row, key) in partition_values(name, spec, &batch)?.iter().enumerate() {
-            if !key.iter().map(String::as_str).eq(partition.iter().copied()) {
-                return Err(part_err(format!(
-                    "row {row} belongs to {key:?}, not {partition:?}"
-                )));
-            }
+        let (keys, ids) = partition_ids(name, spec, &batch)?;
+        let matches: Vec<bool> = keys
+            .iter()
+            .map(|k| k.iter().map(String::as_str).eq(partition.iter().copied()))
+            .collect();
+        let wrong = ids
+            .iter()
+            .position(|&id| !matches.get(id as usize).copied().unwrap_or(false));
+        if let Some(row) = wrong {
+            let key = ids.get(row).and_then(|&id| keys.get(id as usize));
+            return Err(part_err(format!(
+                "row {row} belongs to {key:?}, not {partition:?}"
+            )));
         }
     }
     // Without a primary key (audit_log) the whole row is the key.
@@ -387,12 +443,14 @@ fn remove_stale_temps(dir: &Path, prefix: &str, recurse: bool) -> Result<(), Lak
     Ok(())
 }
 
-/// Partition values of every row, from the partition column (`SKILL.md` §6).
-fn partition_values(
+/// The partition of every row, from the partition column (`SKILL.md` §6): the distinct
+/// partition values (`["2024", "01"]`, in first-seen order) and, per row, an index into them.
+/// The strings are built once per distinct day, not once per row.
+fn partition_ids(
     name: &str,
     spec: &DatasetSpec,
     batch: &RecordBatch,
-) -> Result<Vec<Vec<String>>, LakeError> {
+) -> Result<(Vec<Vec<String>>, Vec<u32>), LakeError> {
     let part_err = |message: String| LakeError::Partition {
         dataset: name.to_owned(),
         message,
@@ -402,16 +460,13 @@ fn partition_values(
         .column_index(col_name)
         .and_then(|i| batch.columns().get(i))
         .ok_or_else(|| part_err(format!("no partition column `{col_name}`")))?;
-    let dates: Vec<Option<NaiveDate>> = match col.data_type() {
-        DataType::Date32 => col
-            .as_primitive::<Date32Type>()
-            .iter()
-            .map(|d| d.and_then(|d| NaiveDate::from_num_days_from_ce_opt(d.checked_add(719_163)?)))
-            .collect(),
+    // Days since 1970-01-01 per row (a timestamp is cut at its UTC date).
+    let days: Vec<Option<i32>> = match col.data_type() {
+        DataType::Date32 => col.as_primitive::<Date32Type>().iter().collect(),
         DataType::Timestamp(..) => col
             .as_primitive::<TimestampNanosecondType>()
             .iter()
-            .map(|t| t.map(|t| DateTime::from_timestamp_nanos(t).date_naive()))
+            .map(|t| t.and_then(|t| i32::try_from(t.div_euclid(NANOS_PER_DAY)).ok()))
             .collect(),
         other => {
             return Err(part_err(format!(
@@ -419,23 +474,38 @@ fn partition_values(
             )));
         }
     };
-    dates
-        .into_iter()
-        .enumerate()
-        .map(|(row, d)| {
-            let d =
-                d.ok_or_else(|| part_err(format!("row {row}: null or out-of-range `{col_name}`")))?;
-            Ok(spec
-                .partition_keys
-                .iter()
-                .map(|k| match k.as_str() {
-                    "year" => d.format("%Y").to_string(),
-                    "month" => d.format("%m").to_string(),
-                    _ => d.format("%Y-%m-%d").to_string(),
-                })
-                .collect())
-        })
-        .collect()
+    let mut keys: Vec<Vec<String>> = Vec::new();
+    let mut ids = Vec::with_capacity(days.len());
+    let mut by_day: HashMap<i32, u32> = HashMap::new();
+    let mut by_key: HashMap<Vec<String>, u32> = HashMap::new();
+    for (row, day) in days.into_iter().enumerate() {
+        let bad = || part_err(format!("row {row}: null or out-of-range `{col_name}`"));
+        let day = day.ok_or_else(bad)?;
+        if let Some(&id) = by_day.get(&day) {
+            ids.push(id);
+            continue;
+        }
+        let d = day
+            .checked_add(UNIX_EPOCH_DAYS_FROM_CE)
+            .and_then(NaiveDate::from_num_days_from_ce_opt)
+            .ok_or_else(bad)?;
+        let key: Vec<String> = spec
+            .partition_keys
+            .iter()
+            .map(|k| match k.as_str() {
+                "year" => d.format("%Y").to_string(),
+                "month" => d.format("%m").to_string(),
+                _ => d.format("%Y-%m-%d").to_string(),
+            })
+            .collect();
+        let id = *by_key.entry(key.clone()).or_insert_with(|| {
+            keys.push(key);
+            u32::try_from(keys.len() - 1).unwrap_or(u32::MAX)
+        });
+        by_day.insert(day, id);
+        ids.push(id);
+    }
+    Ok((keys, ids))
 }
 
 /// Row-encoded key columns of `batch`.
