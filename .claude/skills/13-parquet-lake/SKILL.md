@@ -146,9 +146,9 @@ All writers and readers follow `IO-CONTRACT.md`. In short:
 - "Append" to a partition means rewrite that partition (read, merge on the
   primary key, write).
 
-**Julia:** read with `Parquet2` (or DuckDB.jl); write through the shared
-writer: `LakeIO` writes an Arrow IPC file and the Rust `lake-io` binary
-writes the Parquet, so Julia has no Parquet writer of its own. Never CSV as an
+**Julia:** read and write through `LakeIO`: it exchanges an Arrow IPC stream file
+with the Rust `lake-io` binary, which reads and writes the Parquet, so Julia
+has no Parquet writer of its own. Never CSV as an
 intermediate format. Arrow IPC or Parquet only.
 
 **Rust:** write with `parquet::arrow::ArrowWriter`, `Compression::ZSTD(3)`;

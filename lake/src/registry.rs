@@ -150,6 +150,9 @@ impl DatasetSpec {
         if self.sort_key.is_empty() {
             return Err("empty sort_key".into());
         }
+        if !self.primary_key.is_empty() && self.sort_key != self.primary_key {
+            return Err("sort_key must equal primary_key when there is one".into());
+        }
         for k in &self.partition_keys {
             if !matches!(k.as_str(), "year" | "month" | "date" | "session") {
                 return Err(format!("unknown partition key `{k}`"));

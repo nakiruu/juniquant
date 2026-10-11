@@ -73,6 +73,9 @@ impl Lake {
         if spec.layout == Layout::Single {
             return self.write_leaf(name, spec, &[], batch, mode);
         }
+        // Conform first: partition_values reads the partition column by its registered type.
+        let schema = spec.schema().map_err(|m| schema_err(name, m))?;
+        let batch = &conform(name, &schema, batch)?;
         let keys = partition_values(name, spec, batch)?;
         let mut groups: BTreeMap<&[String], Vec<u32>> = BTreeMap::new();
         for (row, key) in keys.iter().enumerate() {
@@ -189,8 +192,15 @@ fn validate(
             }
         }
     }
-    if !spec.primary_key.is_empty() {
-        let rows = key_rows(spec, &spec.primary_key, &batch)?;
+    // Without a primary key (audit_log) the whole row is the key.
+    let all: Vec<String> = spec.fields.iter().map(|f| f.name.clone()).collect();
+    let key = if spec.primary_key.is_empty() {
+        &all
+    } else {
+        &spec.primary_key
+    };
+    {
+        let rows = key_rows(spec, key, &batch)?;
         let mut seen = HashSet::with_capacity(rows.num_rows());
         for (row, r) in rows.iter().enumerate() {
             if !seen.insert(r) {

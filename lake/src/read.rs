@@ -66,9 +66,13 @@ impl Lake {
             }
         };
         let wanted: Vec<String> = partition.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let base = self.root.join(name);
         let mut batches = Vec::new();
         for leaf in leaves {
+            // Only the components below the dataset directory are partition keys.
             let dirs: Vec<_> = leaf
+                .strip_prefix(&base)
+                .unwrap_or(&leaf)
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect();

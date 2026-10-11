@@ -115,7 +115,7 @@ Rust and any future language it does exactly this:
    unique on `(eval_date, horizon)`). A dataset with no primary key
    (`audit_log`) is `append_only` over whole rows. The primary key, sort key
    and merge rule come from `schemas/registry.json` (`SKILL.md` §6).
-3. **Sort** by the primary key (deterministic row order).
+3. **Sort** by the registry `sort_key` (the primary key; `timestamp, event_id` for `audit_log`), a deterministic row order.
 4. **Write** to the temporary path in the same directory with ZSTD level 3 and
    a fixed row-group size; `fsync` the file.
 5. **Rename** the temporary file onto `data.parquet` (`rename(2)` within one
@@ -158,7 +158,8 @@ row counts.
 `read_dataset(name, columns, filters)` reads
 `$LAKE/<name>.parquet` or `$LAKE/<name>/**/data.parquet` with hive
 partitioning enabled, selecting columns and pushing down filters on the
-partition keys and on `date`.
+partition keys and on `date` (the Rust reader prunes on partition keys only so far;
+the `date` row-group filter is due before I2 readers need less than a partition).
 
 - Never read a leaf by hand-built path in production code; use the glob and
   let the reader prune.

@@ -2,7 +2,7 @@
     LakeIO
 
 Julia side of the lake I/O contract (`13-parquet-lake/IO-CONTRACT.md`). The write is done by
-the Rust writer: the table goes to the `lake-io` binary as an Arrow IPC file, so validation,
+the Rust writer: the table goes to the `lake-io` binary as an Arrow IPC stream file, so validation,
 merge, sort and the atomic rename exist once (`12-julia-rust-bridge` §0). Paths come from
 `QUANT_ROOT`, `QUANT_STATE` and `QUANT_REGISTRY_PATH`, read by the binary.
 

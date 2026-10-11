@@ -452,3 +452,39 @@ fn write_dataset_splits_by_partition_and_read_prunes() {
         "unwritten reads as empty"
     );
 }
+
+#[test]
+fn wrong_timestamp_unit_is_a_schema_error_not_a_panic() {
+    let (_dir, lake) = lake();
+    let ok = batch(&lake, "audit_log", 1, |c, _| {
+        (c == "ticker").then_some(V::Null)
+    });
+    let mut cols = ok.columns().to_vec();
+    cols[1] =
+        Arc::new(arrow::array::TimestampMicrosecondArray::from(vec![0_i64]).with_timezone("UTC"));
+    let fields: Vec<_> = ok
+        .schema()
+        .fields()
+        .iter()
+        .zip(&cols)
+        .map(|(f, c)| f.as_ref().clone().with_data_type(c.data_type().clone()))
+        .collect();
+    let micros =
+        RecordBatch::try_new(Arc::new(arrow::datatypes::Schema::new(fields)), cols).unwrap();
+    assert!(matches!(
+        lake.write_dataset("audit_log", &micros, Mode::Append),
+        Err(LakeError::Schema { .. })
+    ));
+}
+
+#[test]
+fn duplicate_whole_rows_in_one_input_are_rejected_without_a_primary_key() {
+    let (_dir, lake) = lake();
+    let twice = batch(&lake, "audit_log", 2, |c, _| {
+        (c == "ticker").then_some(V::Null)
+    });
+    assert!(matches!(
+        lake.write_dataset("audit_log", &twice, Mode::Replace),
+        Err(LakeError::DuplicateKey { row: 1, .. })
+    ));
+}
