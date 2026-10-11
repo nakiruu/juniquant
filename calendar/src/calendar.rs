@@ -2,9 +2,10 @@
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
+use std::ops::Bound;
 use std::path::{Path, PathBuf};
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Days, NaiveDate};
 
 use crate::error::{CalendarError, RefusalReason};
 use crate::overrides::{Closure, ClosureOrigin, NewClosure, load_overrides_file, parse_overrides};
@@ -263,13 +264,29 @@ impl Calendar {
         } else {
             (to, from, -1)
         };
-        let count = lo
-            .iter_days()
-            .skip(1)
-            .take_while(|d| *d <= hi)
-            .filter(|d| self.is_trading_day(*d))
+        // Weekdays in (lo, hi] from whole weeks plus the last `rest` days, minus the closures in
+        // the range: the work grows with the number of years, not days, so a wild range cannot
+        // stall a caller. Rule holidays and overrides are weekdays (both are validated), so
+        // each closure removes exactly one weekday; an override on a rule holiday counts once.
+        let days = (hi - lo).num_days();
+        let rest = u64::try_from(days % 7).unwrap_or(0);
+        let tail = (0..rest)
+            .filter_map(|k| hi.checked_sub_days(Days::new(k)))
+            .filter(|d| !is_weekend(*d))
             .count();
-        sign * i64::try_from(count).unwrap_or(i64::MAX)
+        let in_range = |d: NaiveDate| lo < d && d <= hi;
+        let rule = (lo.year()..=hi.year())
+            .flat_map(rule_holidays)
+            .filter(|h| in_range(h.date))
+            .count();
+        let overrides = self
+            .closed
+            .range((Bound::Excluded(lo), Bound::Included(hi)))
+            .filter(|d| !is_rule_holiday(**d))
+            .count();
+        let count = (days / 7) * 5 + i64::try_from(tail).unwrap_or(0)
+            - i64::try_from(rule + overrides).unwrap_or(0);
+        sign * count
     }
 
     /// Appends a closure to the runtime overrides file (`calendar-sync`, the owner's

@@ -329,8 +329,24 @@ struct Holding {
     owner: Canon,
     from: Option<NaiveDate>,
     until: Option<NaiveDate>,
-    /// `canonical` or `alias`, for error messages.
-    kind: &'static str,
+    kind: HoldingKind,
+}
+
+/// What a [`Holding`] is held as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldingKind {
+    Canonical,
+    Alias,
+}
+
+impl HoldingKind {
+    /// The spelling used in [`MapError::AliasCollision`].
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Canonical => "canonical",
+            Self::Alias => "alias",
+        }
+    }
 }
 
 impl Holding {
@@ -496,7 +512,7 @@ impl SymbolMap {
                     owner: canonical.clone(),
                     from,
                     until: None,
-                    kind: "canonical",
+                    kind: HoldingKind::Canonical,
                 });
             for alias in &aliases {
                 map.holders
@@ -506,7 +522,7 @@ impl SymbolMap {
                         owner: canonical.clone(),
                         from: alias.from,
                         until: Some(alias.until),
-                        kind: "alias",
+                        kind: HoldingKind::Alias,
                     });
             }
             map.groups
@@ -534,11 +550,15 @@ impl SymbolMap {
             for (i, a) in holdings.iter().enumerate() {
                 for b in holdings.iter().skip(i + 1) {
                     if a.overlaps(b) {
-                        let (alias, other) = if b.kind == "alias" { (b, a) } else { (a, b) };
+                        let (alias, other) = if b.kind == HoldingKind::Alias {
+                            (b, a)
+                        } else {
+                            (a, b)
+                        };
                         return Err(MapError::AliasCollision {
                             alias: symbol.clone(),
                             owner: alias.owner.clone(),
-                            conflict: other.kind,
+                            conflict: other.kind.as_str(),
                             other: other.owner.clone(),
                         });
                     }
@@ -725,7 +745,7 @@ impl SymbolMap {
         self.holders
             .get(&normalized)?
             .iter()
-            .find(|h| h.kind == "alias" && h.covers(on))
+            .find(|h| h.kind == HoldingKind::Alias && h.covers(on))
             .map(|h| &h.owner)
     }
 

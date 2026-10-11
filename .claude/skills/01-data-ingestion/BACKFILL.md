@@ -215,13 +215,14 @@ final state; a test does exactly that (§12).
 
 ### 5.3 FRED / ALFRED: macro with vintages
 
-- **Entities.** The 9 series of `SOURCES.md`; chunk `all_vintages`, full
-  real-time range, `observation_start=2004-01-01`, paged at 100,000 rows.
-  Estimated requests: 9 series, a few pages each, under 30; under 2 minutes.
+- **Entities.** The 9 series of `SOURCES.md`; one chunk per window of at most 2,000
+  vintage dates (the full real-time range is refused, P6), `observation_start=2004-01-01`,
+  paged at 100,000 rows, windows stitched as in `SOURCES.md`. Estimated requests: 9 series,
+  1 to 3 windows each plus one vintage-date call; under 40; about 40 seconds at 1 request/s.
 - **Result.** Rows into `macro` with `known_from` computed (`POINT-IN-TIME.md`).
-  The ICE BofA series may return only a recent window (verify, P6): the
+  The ICE BofA series return only about three years (P6: from 2023-10-10): the
   gate records the earliest observation and the series is marked `deferred`
-  if it does not reach 2004.
+  because it does not reach 2004.
 - **Daily hand-off.** `delta-YYYY-MM-DD` with `realtime_start` = the last run
   date (revisions arrive as new vintage rows); about 9 requests.
 

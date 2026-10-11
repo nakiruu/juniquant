@@ -277,3 +277,41 @@ fn date_range_end_is_an_error_not_a_panic() {
     assert!(cal.add_trading_days(NaiveDate::MAX, 1).is_err());
     assert!(cal.prev_trading_day(NaiveDate::MIN).is_err());
 }
+
+/// `trading_days_between` counts by weeks and closures; it must equal a day-by-day count, with
+/// an override on an ordinary day, an override on a rule holiday (Good Friday, counted once),
+/// ranges across years, reversed ranges and empty ones.
+#[test]
+fn trading_days_between_matches_a_day_by_day_count() {
+    let cal = Calendar::from_closures([
+        Closure::new(d(2024, 3, 20), "test closure"),
+        Closure::new(d(2024, 3, 29), "also a rule holiday"),
+    ])
+    .unwrap();
+    let ranges = [
+        (d(2024, 3, 1), d(2024, 4, 30)),
+        (d(2023, 12, 29), d(2025, 1, 3)),
+        (d(2024, 3, 20), d(2024, 3, 20)),
+        (d(2024, 5, 1), d(2024, 3, 1)),
+        (d(2024, 3, 16), d(2024, 3, 17)),
+        (d(2019, 6, 3), d(2031, 6, 9)),
+    ];
+    for (from, to) in ranges {
+        let (lo, hi, sign) = if from <= to {
+            (from, to, 1)
+        } else {
+            (to, from, -1)
+        };
+        let brute = lo
+            .iter_days()
+            .skip(1)
+            .take_while(|x| *x <= hi)
+            .filter(|x| cal.is_trading_day(*x))
+            .count();
+        assert_eq!(
+            cal.trading_days_between(from, to),
+            sign * i64::try_from(brute).unwrap(),
+            "{from} to {to}"
+        );
+    }
+}

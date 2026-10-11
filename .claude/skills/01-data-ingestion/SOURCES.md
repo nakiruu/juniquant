@@ -235,7 +235,8 @@ point-in-time source and is deferred; nothing in GSPQR needs it.
 Requests without it are blocked. Maximum 10 requests/s (verify); we run
 5/s (`SKILL.md` §5).
 
-**Endpoints (verify all):**
+**Endpoints** (P5, 2026-10-11: the two bulk URLs, `company_tickers.json`, `cik-lookup-data.txt` and
+the `data.sec.gov` per-filer URLs answered 200; `form.idx` was not probed):
 
 | Use | URL |
 |---|---|
@@ -247,15 +248,22 @@ Requests without it are blocked. Maximum 10 requests/s (verify); we run
 | Name -> CIK lookup (historical names) | `https://www.sec.gov/Archives/edgar/cik-lookup-data.txt` |
 | Quarterly filing index (cross-check only) | `https://www.sec.gov/Archives/edgar/full-index/YYYY/QTRn/form.idx` |
 
-The two zips are regenerated nightly (verify) and are the backfill source
-(`BACKFILL.md` §6). `CIK##########` is the 10-digit zero-padded CIK.
+The two zips are the backfill source (`BACKFILL.md` §6). P5: `submissions.zip` is
+1,568,623,659 bytes and `companyfacts.zip` 1,410,325,968; both send `Accept-Ranges: bytes`
+(a 206 range read works, so a zip's central directory can be listed without downloading it).
+Their `Last-Modified` was 2026-10-10 04:33 and 04:26 GMT when probed on 2026-10-11 14:05 UTC;
+nightly regeneration is plausible but seen once (verify with a `HEAD` on two consecutive
+days). Record `Last-Modified` in the sidecar of every download. `CIK##########` is the 10-digit zero-padded CIK.
 `filings.recent` in a submissions JSON holds the most recent filings; older
 filings are in the extra pages named in `filings.files[]`
-(`CIK##########-submissions-00N.json`); whether the bulk zip includes those
-pages is **verify**. Fields per filing used: `accessionNumber`,
+(`CIK##########-submissions-00N.json`). The bulk zip includes those pages (P5: 5,394
+page files for 4,169 filers, up to page 071, beside 988,520 `CIK##########.json`; both GOOGL
+and BRK have theirs), so no per-filer follow-up request is needed for older filings. Fields per filing used: `accessionNumber`,
 `filingDate`, `acceptanceDateTime`, `form`, `items` (8-K item numbers,
 comma-separated), `reportDate`. Top-level: `name`, `tickers[]`,
-`exchanges[]`, `formerNames[{name, from, to}]`.
+`exchanges[]`, `formerNames[{name, from, to}]`, `sic` and `sicDescription` (both strings,
+P5: GOOGL `"7370"`, BRK `"6331"`). `tickers[]` can hold tickers we do not trade (GOOGL lists
+`GOOGM` and `GOOGN`; BRK spells `BRK-B`): take only tickers the symbol map lists.
 
 **Point-in-time keys:** `filingDate` (-> `filing_date`) is the stamp.
 `reportDate` is the period end (-> `period_end`, metadata).
@@ -267,8 +275,17 @@ A `companyfacts` JSON has, per taxonomy (`us-gaap`, `dei`) and tag, the list
 of facts `{start?, end, val, accn, fy, fp, form, filed, frame?}` in USD (or
 shares). Each filing that repeats a figure (as a comparative column) repeats
 the fact with its own `accn` and `filed`. `fy` and `fp` describe the
-**filing**, not the individual fact (verify); never use them to date a fact.
-Dimensioned (segment) facts are not in `companyfacts` (verify).
+**filing**, not the individual fact (confirmed, P5: GOOGL's balance-sheet date 2025-12-31 is
+reported under `(2025, FY)`, `(2026, Q1)` and `(2026, Q2)`); never use them to date a fact.
+Dimensioned (segment) facts are not in `companyfacts` (confirmed, P5).
+
+**Multi-class issuers (P5).** Cover-page share counts are reported per class, hence
+dimensioned, so `dei:EntityCommonStockSharesOutstanding` is absent from `companyfacts` for
+GOOGL and stops in 2011 for BRK (CIK 1067983, classes A and B). GOOGL carries the total of all
+classes in `us-gaap:CommonStockSharesOutstanding` (12,230,000,000 at 2026-06-30); BRK carries
+neither tag. The fundamentals builder never reads `dei` shares for these names and never treats
+a missing value as zero; where shares outstanding come from for a BRK-style issuer is an
+owner decision (`DECISIONS.md`).
 
 Rows are built per accession of form `10-K`, `10-Q`, `10-K/A`, `10-Q/A`
 (and `10-KT`, treated as `10-K`; verify), from submissions and facts:
@@ -424,14 +441,13 @@ cannot be trusted, both in `POINT-IN-TIME.md`):
 | `UNRATE` | Unemployment rate | Monthly |
 | `VIXCLS` | CBOE VIX close | Daily |
 
-**Caveat (verify).** FRED has restricted the history it shows for the ICE
-BofA series (`BAMLH0A0HYM2`, `BAMLC0A0CM`) to a recent window (I recall about
-three years) because of the data licence. If so, a 15-year history of the
-credit spreads is not available from FRED and those two series are
-**deferred** for the backfill (the gate reports it; no panel feature uses
-them). The probe checks the earliest observation returned.
+**Caveat (confirmed, P6).** FRED shows only about three years of the ICE BofA series
+(`BAMLH0A0HYM2`, `BAMLC0A0CM`) because of the data licence: both start on 2023-10-10 (794
+observations to 2026-10-08, one vintage) whatever `observation_start` asks for. A 15-year
+history of the credit spreads is not available from FRED, so those two series are
+**deferred** for the backfill (the gate reports it; no panel feature uses them).
 
-**Endpoint and vintages (verify):**
+**Endpoint and vintages (P6):**
 
     GET /fred/series/observations?series_id={ID}&api_key={KEY}&file_type=json
         &observation_start=2004-01-01
@@ -445,10 +461,21 @@ row per (observation, vintage interval). That is the long form stored in
 `macro` (`obs_date` = `date`). Other `output_type` values (2 = one column per
 vintage date, wide; 3 = new and revised observations only; 4 = initial
 release only) are not used. The API limits the rows per request to 100,000
-(page with `offset`) and may limit the number of vintage dates per request
-for the wide outputs (verify). `fred/series/vintagedates` lists a series'
-vintage dates and is used by the gate to cross-check coverage. `value` is the
-string `.` for a missing observation -> null.
+(page with `offset`) and **the vintage dates per request to 2,000, for every
+`output_type` and for `json` and `xml` alike** (P6: `DGS3MO`, 5,127 vintage dates since
+2005-06-28, answers HTTP 400 "exceeds the maximum number of vintage dates allowed for this
+file type (2000)"; `CPIAUCSL`, 669, fits). `fred/series/vintagedates` lists a series'
+vintage dates (up to 10,000 per call) and drives the windowing below; the gate also uses it
+to cross-check coverage. `value` is the string `.` for a missing observation -> null.
+
+**Windowing and stitching (P6).** For each series: list the vintage dates, cut the list into
+runs of at most 2,000, and request each run with `realtime_start` = its first date and
+`realtime_end` = its last (`DGS3MO` takes three windows; a window of 2,000 vintages was 2,635
+rows, 250 KB). A window clips each interval's `realtime_end` to its own last date, so adjacent
+windows are stitched: an interval that ends at a window's last date joins the next window's
+interval with the same `(date, value)`. Without that the table gets a false revision at every
+window boundary. The one-request form above works only for a series with at most 2,000
+vintage dates (`CPIAUCSL`).
 
 **What `releases` does and does not give.** The `fred/release/dates` and
 `fred/series/release` endpoints give the dates on which a **release** was
@@ -458,14 +485,16 @@ date is ALFRED's `realtime_start` of the observation's first vintage. The
 earlier claim that the `releases` endpoint gives the release date of each
 observation was wrong.
 
-**Quirk: late-captured history.** For observations that predate ALFRED's
+**Quirk: late-captured history (confirmed, P6).** For observations that predate ALFRED's
 capture of the series, the first vintage's `realtime_start` is the capture
-date, not the publication date. Ingestion detects this (first vintage
+date, not the publication date. `DGS3MO`'s first vintage is 2005-06-28, and its 388
+observations dated 2004-01-01 to 2005-06-27 all carry that date; `CPIAUCSL` shows real
+publication dates (January 2004 CPI: 2004-02-20). Ingestion detects this (first vintage
 captured long after the period) and uses the conservative lag-rule buffer
 instead (`known_from_basis = lag_rule`; `POINT-IN-TIME.md`).
 
-**Rate limit:** `SKILL.md` §5. About 9 series x a few pages: tens of requests
-for the whole backfill.
+**Rate limit:** `SKILL.md` §5. About 9 series x 1 to 3 windows plus one vintage-date call
+per series: under 40 requests for the whole backfill.
 
 ---
 
