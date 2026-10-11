@@ -1,6 +1,6 @@
 # Infrastructure Plan
 
-Status: draft for the owner, 2026-10-10. Turns the skills (`.claude/skills/`) and
+Status: draft for the owner, 2026-10-10; the live state of each phase is in [`status.md`](status.md). Turns the skills (`.claude/skills/`) and
 `scaffold.md` into a working, high-quality codebase. The skills are the spec;
 this plan is the build order, the quality bar, and how the work is split across
 subagents.
@@ -35,7 +35,7 @@ backtest, ledger, frontend and execution come after (`scaffold.md`, Build Order)
 6. The constitution hook passes; no constitutional change without an owner-approved amendment.
 7. An independent reviewer (fresh subagent, given the code, not the author's conclusions) found no blocking issue.
 
-**Automated gates** (one command, `just check`, and the same in CI):
+**Automated gates** (one command, `make check`, and the same in CI; `just` is not used):
 
 | Gate | Tool |
 |---|---|
@@ -58,14 +58,14 @@ DuckDB CLI version recorded in `docs/development.md`.
 
 ### Phase I0 — Repository foundation (small, sequential, done by the coordinator)
 
-**Done 2026-10-10** (commit `5d10e20`): git, Cargo workspace with strict lints and four crate skeletons, Julia workspace (`tools`), Makefile gates (`make check`), hook installed, session-start rewritten, README and `docs/`. Remaining: `rustfmt` and `clippy` must be installed (`sudo dnf install rustfmt clippy`) before `make check` passes end to end; no remote, so no CI workflow yet. A `Makefile` is used because `just` is not installed.
+**Done 2026-10-10** (commit `5d10e20`): git, Cargo workspace with strict lints and four crate skeletons, Julia workspace (`tools`), Makefile gates (`make check`), hook installed, session-start rewritten, README and `docs/`. CI (`.github/workflows/ci.yml`) runs `make check` on a private GitHub remote. A `Makefile` is used because `just` is not installed.
 
 1. `git init`, `.gitignore` (data trees, `target/`, Julia depots), first commit of the specs as they are now. **Owner confirms** before the first commit, and whether a remote (GitHub or other) exists.
 2. Cargo workspace at the root: members `symbols/`, `calendar/` (new, see I1), `lake/` (new), `ingest/`; later `execution/`. Shared `[workspace.lints]`, `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`.
 3. Julia workspace: root `Project.toml` with `[workspace] projects = ["features", "models", "portfolio", "regime", "conviction", "ledger", "backtest", "schemas", "tools"]` (Julia 1.12 workspaces; verify) and one shared `Manifest.toml`.
 4. `justfile` with `check`, `test`, `fmt`, `fixtures`, `hook-install`, `docs` recipes (or a `Makefile` if `just` is not installed).
 5. Pre-commit hook installed from `00-construction/scripts/`; `session-start.sh` updated to the real layout.
-6. CI workflow (`.github/workflows/ci.yml`) that runs `just check` if a remote exists; otherwise `just check` is the local gate.
+6. CI workflow (`.github/workflows/ci.yml`) that runs `make check`.
 7. **Docs start here:** `README.md` and the `docs/` skeleton (section 6).
 
 ### Phase I1 — Shared contracts (test-first, parallel)
@@ -119,6 +119,8 @@ IWF/IWP. Consequences to settle in I2:
 - **ADRs and foreign filers stay out** (annual IFRS reporting); SIC is the only sector source
   for names outside the ETF holdings.
 
+**Status 2026-10-11:** probes P1-P6 run and recorded in [`probes/`](probes/README.md); EODHD became the primary price source (DECISIONS D15), so W5 is EODHD, not Yahoo. The common ingest infrastructure (step 2) is done and merged; W5 is written but not yet run live; W6-W9 have not started. P7 and P8 are still to run.
+
 4. Backfill run on the owner's machine (or Unraid), resumable; the coverage and survivorship reports (`price_coverage`, `survivorship_caveat.json`) are reviewed with the owner before Phase I3.
 
 ### Phase I3 — Universe and panel (Julia)
@@ -165,7 +167,7 @@ Docs start in Phase I0 and grow with every phase (part of the definition of done
 
 | File | Content |
 |---|---|
-| `README.md` | What the system is, current phase, quick start (toolchains, `just check`), repository layout, where the specs live, key rules (lock, ICE, no Python) |
+| `README.md` | What the system is, current phase, quick start (toolchains, `make check`), repository layout, where the specs live, key rules (lock, ICE, no Python) |
 | `docs/architecture.md` | Pipeline from data to orders, language boundaries, data lake, schedule; diagram |
 | `docs/data.md` | Sources, backfill, survivorship caveat, quality gates, lake datasets (generated table from `schemas/registry.json` later) |
 | `docs/compliance.md` | The 5-day lock in plain language with the owner's examples, ICE, how the audit works, how to read a compliance report |

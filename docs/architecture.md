@@ -3,6 +3,10 @@
 Overview of how the system fits together. Details live in the skills
 ([`../.claude/skills/`](../.claude/skills/)); this page links to them rather than repeating them.
 
+This page describes the target design. Which stages exist today (the lake, symbols, calendar
+and the ingest infrastructure; everything after ingestion is still a specification) is in
+[`status.md`](status.md).
+
 ## Pipeline
 
 ```

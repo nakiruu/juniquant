@@ -7,6 +7,7 @@
 | [compliance.md](compliance.md) | The 5-day lock and the restricted list in plain language |
 | [development.md](development.md) | Toolchains, commands, conventions, changing the rules |
 | [INFRASTRUCTURE-PLAN.md](INFRASTRUCTURE-PLAN.md) | Build phases, quality bar, subagent orchestration |
+| [status.md](status.md) | What is built, in progress and open; updated every session |
 | [probes/](probes/README.md) | Data-source probe results (phase I2) |
 | [adr/](adr/README.md) | Architecture decision records |
 

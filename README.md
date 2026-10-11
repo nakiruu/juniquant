@@ -5,9 +5,12 @@ probabilistic price ranges for US growth stocks over 3-12 month horizons, builds
 downside-risk-aware portfolio, and (in a later phase) places orders under a contractual
 5-day trading lock.
 
-> **Status: phase I0 (repository foundation).** The system is specified but not built.
-> The current goal is to collect 15+ years of data and train the forecasting models.
-> Live trading comes last. See [`docs/INFRASTRUCTURE-PLAN.md`](docs/INFRASTRUCTURE-PLAN.md).
+> **Status: phase I2 (data ingestion), in progress.** The foundation and the shared crates
+> (symbols, NYSE calendar, Parquet lake and its 35-dataset registry) are built and tested; the
+> data-source probes are run and the EODHD price worker is being finished. Forecasting,
+> portfolio and execution are specified but not yet implemented. The goal is to collect 15+ years
+> of data and train the forecasting models; live trading comes last. Details:
+> [`docs/status.md`](docs/status.md); plan: [`docs/INFRASTRUCTURE-PLAN.md`](docs/INFRASTRUCTURE-PLAN.md).
 
 ## What it does
 
@@ -38,7 +41,7 @@ which wins over every other document.
 
 ## Quick start
 
-Requirements: Julia 1.12, Rust 1.98 with `rustfmt` and `clippy`, GNU make. Later phases
+Requirements: Julia 1.12 (run it as `julia +1.12` if juliaup defaults to a newer one), Rust 1.98.1 with `rustfmt` and `clippy`, GNU make. Later phases
 also need the DuckDB CLI and Bun. Details in [`docs/development.md`](docs/development.md).
 
 ```bash
@@ -56,12 +59,12 @@ bash .claude/skills/15-ai-dev-workflow/scripts/session-start.sh   # environment 
 | `config/` | Restricted list, NYSE calendar overrides, quality gates, symbol map |
 | [`symbols/`](symbols/README.md) | Rust: canonical tickers, vendor spellings, the symbol map and lock groups |
 | [`calendar/`](calendar/README.md) | Rust: the NYSE trading calendar (rules + add-only overrides) |
-| `lake/` | Rust crate: the lake I/O contract (`write_partition` / `read_dataset`), `lake-io` (the Julia bridge) and `lake-schema-probe` |
-| `ingest/` | Rust crate (skeleton until phase I2) |
+| [`lake/`](lake/README.md) | Rust: the lake I/O contract (`write_partition` / `read_dataset`), `lake-io` (the Julia bridge) and `lake-schema-probe` |
+| [`ingest/`](ingest/README.md) | Rust: `quant-ingest`, the fetch / land / stage / compact infrastructure, the probes and the EODHD price worker (in progress) |
 | [`julia/`](julia/NYSECalendar/README.md) | Shared Julia packages: `NYSECalendar`, `LakeIO` (the lake from Julia, through `lake-io`) |
 | `schemas/` | Golden fixtures for shared contracts; `registry.json` (all 35 datasets), its generator and verifier |
 | `tools/` | Julia repository checks (markdown, syntax) |
-| `outline.md`, `scaffold.md` | Functional outline and target directory layout |
+| `outline.md`, `scaffold.md` | Functional outline and target directory layout (the target, not the current state) |
 | `DECISIONS.md` | The owner's decisions and their status |
 
 Data never lives in the repository: it goes under `$QUANT_ROOT` and `$QUANT_STATE`
@@ -71,6 +74,7 @@ Data never lives in the repository: it goes under `$QUANT_ROOT` and `$QUANT_STAT
 
 | Document | For |
 |---|---|
+| [`docs/status.md`](docs/status.md) | What is built, what is in progress, open items |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit together |
 | [`docs/data.md`](docs/data.md) | Sources, the backfill, survivorship, quality gates |
 | [`docs/compliance.md`](docs/compliance.md) | The lock and the restricted list in plain language |
