@@ -79,6 +79,7 @@ Each job writes only the datasets listed, through the lake writer
 | `ingest_macro` | `macro` #4 | Daily |
 | `ingest_holdings` | `etf_holdings` #30 | Monthly at minimum (daily check) |
 | `ingest_identifiers` | `security_master` #31 | Weekly and on new tickers |
+| `ingest_listings` | `listings` #35 | Daily |
 | `ingest_gates` | `data_quality` #20 | Every run |
 
 `universe` #1 and `price_coverage` #34 are **not** ingestion outputs: they are

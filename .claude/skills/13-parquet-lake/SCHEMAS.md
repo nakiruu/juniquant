@@ -7,13 +7,12 @@ Types use Arrow notation. `date32` = days since epoch. `timestamp[ns, UTC]`
 = nanosecond precision, UTC timezone. `utf8` = string. `bool` = boolean.
 
 **Registry type strings.** The schema registry hashes DuckDB's rendering of
-the column types (`13-parquet-lake/SKILL.md` §6). Expected mapping (verify
-against the first real file; the first generated registry is authoritative
-for the DuckDB side, the writer's schema test for the Arrow side):
+the column types (`13-parquet-lake/SKILL.md` §6). The mapping, confirmed
+with DuckDB 1.5.6 against the Rust writer (the generator fails if `DESCRIBE`
+disagrees):
 `utf8` -> `VARCHAR`, `date32` -> `DATE`, `float64` -> `DOUBLE`,
 `int64` -> `BIGINT`, `int32` -> `INTEGER`, `int16` -> `SMALLINT`,
-`bool` -> `BOOLEAN`, `timestamp[ns, UTC]` -> `TIMESTAMP WITH TIME ZONE`
-(DuckDB may report nanosecond Parquet timestamps differently; verify).
+`bool` -> `BOOLEAN`, `timestamp[ns, UTC]` -> `TIMESTAMP WITH TIME ZONE`.
 
 **Layout.** Single file or hive directory, per the table in `SKILL.md` §3.
 Headings below say "dataset" where the old text said "file".
@@ -614,7 +613,7 @@ Two tracks write here (`14-backtest-protocol/SKILL.md` §2a). Walk-forward rows 
 | `lock_binding_freq` | `float64` | yes | Appended. LBF (`METRICS.md` §7c) |
 | `shortfall_bps` | `float64` | yes | Appended. Implementation shortfall in bps of average NAV per year (`METRICS.md` §7a) |
 
-Primary key: `(eval_date, horizon)` for the legacy and walk-forward rows; for run rows the logical key is `(run_id, track, path_id, fold, eval_date, horizon, spread_source)` with nulls treated as distinct values (a uniqueness test, not a database constraint). Migration required (`MIGRATIONS.md`): additive, nullable.
+Primary key: `(eval_date, horizon)` for the legacy and walk-forward rows; for run rows the logical key is `(run_id, track, path_id, fold, eval_date, horizon, spread_source)` with nulls comparing equal (`IO-CONTRACT.md` §3), so legacy rows with null run columns stay unique on `(eval_date, horizon)` (a uniqueness test, not a database constraint). Migration required (`MIGRATIONS.md`): additive, nullable.
 
 ---
 
@@ -725,7 +724,7 @@ Primary key: `lot_id`.
 
 ## 24. `trade_summary.parquet`
 
-Rows: ~500/year. Writer: Julia (ledger). Update: event-driven (on close). Partitioned: `year`.
+Rows: ~500/year. Writer: Julia (ledger). Update: event-driven (on close). Partitioned: `year` (of `exit_date`).
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
@@ -1044,9 +1043,11 @@ Which securities were listed on each date, the data scope of DECISIONS D12
 Raw facts from the Nasdaq Trader symbol directories (`nasdaqlisted.txt`,
 `otherlisted.txt`) as archived each day, plus earlier history reconstructed
 from EDGAR (Form 25, submissions) and labelled as such (D13). Test issues and
-symbols that do not normalize (preferreds, warrants, rights, units) are
-dropped at parse time and counted in `data_quality`. ETFs are kept and
-flagged. The files have no security-type field, so `security_class` is a
+symbols that do not normalize (most preferred series, warrants, rights,
+units) are dropped at parse time and counted in `data_quality`. `listings` is
+a superset of the ingest scope: ETFs, ADRs, funds and preferreds whose symbol
+does normalize (`BAC-A` -> `BAC.A`) are kept and flagged by `is_etf` and
+`security_class`. The files have no security-type field, so `security_class` is a
 rule-based classification whose rule is recorded; every rule is a **verify**
 item until checked against a sample.
 

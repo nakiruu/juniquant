@@ -271,7 +271,7 @@ required:
 
 | Check | Frequency | Tool |
 |---|---|---|
-| Schema hash matches registry (repository `schemas/registry.json`) | Daily | `scripts/verify-schemas.sh` |
+| Schema hash matches registry (repository `schemas/registry.json`) | Daily | `schemas/verify-schemas.sh` |
 | Row count per Parquet file | Weekly | DuckDB `SELECT COUNT(*)` |
 | Null percentage per critical column | Weekly | DuckDB `SELECT AVG(...)` |
 | File size and mtime | Daily | `find` + comparison log |

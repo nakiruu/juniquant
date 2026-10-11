@@ -52,8 +52,8 @@ must be changed to `QUANT_ROOT/lake/prices`.
 
 The registry is the repository file `schemas/registry.json`. Scripts take its
 path from the script-specific variable `QUANT_REGISTRY_PATH`, defaulting to
-`schemas/registry.json` relative to the repository root, or to the bundled
-copy at `/app/schemas/registry.json` inside the image (deployment choice,
+the repository's `schemas/registry.json`. Inside the image the deployment sets
+it to the bundled copy (`/app/schemas/registry.json`, deployment choice,
 verify at image build time).
 
 **Script-specific overrides.** A script that needs an input or output path
@@ -64,12 +64,13 @@ takes its input path as an argument). Generic names such as `OUTPUT_PATH`, `INPU
 `LAKE_ROOT` are not used: they collide across scripts.
 
 Julia scripts run inside a committed environment: `julia --project=<dir>
---startup-file=no script.jl` where `<dir>` holds a pinned `Project.toml` and
+--startup-file=no script.jl` where `<dir>` holds a `Project.toml` that is a
+member of the root Julia workspace, pinned by the single root
 `Manifest.toml`. No script calls `Pkg.add` or `Pkg.activate(temp=true)` at
 run time (reproducibility). Validation and registry tooling run in
 `schemas/`; the panel validator runs in `features/` (both directories are
-named in `scaffold.md`; `schemas/Project.toml` and `schemas/Manifest.toml`
-are additions).
+named in `scaffold.md`; `schemas/Project.toml` is an addition, with no
+`Manifest.toml` of its own).
 
 ## 2. Layout
 
@@ -104,9 +105,10 @@ Rust and any future language it does exactly this:
    - *overwrite* datasets (derived or re-fetched data such as `prices`,
      `panel`, `universe`): the new row wins;
    - *append-only* datasets (`audit_log`, `order_history`, `execution_costs`,
-     `quote_spread_1m`, `portfolio_ledger` except its same-day idempotent
-     overwrite): a colliding row with different content is an error, an
-     identical row is dropped.
+     `quote_spread_1m`, `regime_states`, `gspqr_predictions`): a colliding
+     row with different content is an error, an identical row is dropped.
+     `portfolio_ledger` is *overwrite* on its key, so a same-day re-run
+     replaces that day's row (constitution §8).
    `mode = replace` skips the read and writes `df` alone (used for rebuilds).
    Key comparison treats a null as an ordinary value equal to another null
    (so `evaluation_metrics` legacy rows, whose run columns are null, stay

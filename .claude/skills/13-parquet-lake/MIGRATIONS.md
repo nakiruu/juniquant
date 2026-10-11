@@ -29,7 +29,7 @@ corrected to this.
 corrected in place (nothing exists yet that could break). Such corrections
 are listed in `migrations/2026-10-10-initial.md`, which is the only
 migration file that may describe several datasets. The 2026-10-10 rewrite of
-#1-#5 and #20 and the appended datasets #28-#34 are of this kind.
+#1-#5 and #20 and the appended datasets #28-#35 are of this kind.
 
 ## Adding a Column
 
@@ -77,12 +77,12 @@ marked "Appended".
 
 ```bash
 julia --project=schemas --startup-file=no \
-  .claude/skills/13-parquet-lake/scripts/generate-registry.jl --migration 2026-11-02-add-q60-to-gspqr-predictions
+  schemas/generate-registry.jl --migration 2026-11-02-add-q60-to-gspqr-predictions
 ```
 
-The generator reads the sample leaf of each dataset in the lake, so the new
-column must already exist in the written data (write one partition with the
-new writer first). It sets `last_migration` only for datasets whose hash
+The generator takes the columns from `SCHEMAS.md` and writes a probe leaf
+through the Rust writer (`SKILL.md` §6), so the new column must already be in
+`SCHEMAS.md` (step 3). It sets `last_migration` only for datasets whose hash
 changed.
 
 ## Adding a Dataset
@@ -145,7 +145,7 @@ else requires consumer updates in the same commit.
 
 After any migration:
 
-- [ ] `scripts/verify-schemas.sh` passes
+- [ ] `schemas/verify-schemas.sh` passes
 - [ ] `schemas/registry.json` is regenerated and in the same commit
 - [ ] The migration file exists and is complete
 - [ ] `SCHEMAS.md` matches the actual files

@@ -1,0 +1,3833 @@
+{
+    "format_version": 2,
+    "canonical_form": "DuckDB DESCRIBE: 'column_name:column_type' lines joined by '|', SHA-256 of the UTF-8 string",
+    "datasets": {
+        "universe": {
+            "number": 1,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "date",
+            "writer": "julia-universe",
+            "schemas_md": "#1",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "sector",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "sector_source",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "in_iwf",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "in_iwp",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "snapshot_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "snapshot_age_days",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "weight_iwf",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "weight_iwp",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "median_dollar_vol_60d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "history_days",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "eligible",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "exclusion_reason",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "date",
+                "ticker"
+            ],
+            "sort_key": [
+                "date",
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "date:DATE",
+                "ticker:VARCHAR",
+                "cik:VARCHAR",
+                "sector:VARCHAR",
+                "sector_source:VARCHAR",
+                "in_iwf:BOOLEAN",
+                "in_iwp:BOOLEAN",
+                "snapshot_date:DATE",
+                "snapshot_age_days:INTEGER",
+                "weight_iwf:DOUBLE",
+                "weight_iwp:DOUBLE",
+                "median_dollar_vol_60d:DOUBLE",
+                "history_days:INTEGER",
+                "eligible:BOOLEAN",
+                "exclusion_reason:VARCHAR"
+            ],
+            "hash": "24beb631fd8a8ec9b979bba451a11f47df096b9f63bcaab1a9745381323292e8",
+            "last_migration": "2026-10-10-initial"
+        },
+        "prices": {
+            "number": 2,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year",
+                "month"
+            ],
+            "partition_column": "date",
+            "writer": "rust-ingest",
+            "schemas_md": "#2",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "open",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "high",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "low",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "close",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "volume",
+                    "type": "int64",
+                    "nullable": false
+                },
+                {
+                    "name": "adj_close_vendor",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "raw_sha256",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "date"
+            ],
+            "sort_key": [
+                "ticker",
+                "date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "date:DATE",
+                "open:DOUBLE",
+                "high:DOUBLE",
+                "low:DOUBLE",
+                "close:DOUBLE",
+                "volume:BIGINT",
+                "adj_close_vendor:DOUBLE",
+                "source:VARCHAR",
+                "fetched_at:TIMESTAMP WITH TIME ZONE",
+                "raw_sha256:VARCHAR"
+            ],
+            "hash": "2e8eeba0fe031f26899b73d18371582c884f263df290910f45f796463bbcf5e6",
+            "last_migration": "2026-10-10-initial"
+        },
+        "fundamentals": {
+            "number": 3,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#3",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "filing_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "period_end",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "form_type",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "revenues",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "net_income",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "total_assets",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "total_liabilities",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "operating_cash_flow",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "gross_profit",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "assets_current",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "liabilities_current",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "long_term_debt",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "retained_earnings",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "ebit",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "shares_outstanding",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "accession",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "fiscal_year",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "fiscal_period",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "duration_days",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "acceptance_datetime",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": true
+                },
+                {
+                    "name": "amends_accession",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "tag_used",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "shares_asof_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "revenue_ttm",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "net_income_ttm",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "operating_cash_flow_ttm",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "gross_profit_ttm",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "ebit_ttm",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_roa",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_debt_ratio",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_current_ratio",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_gross_margin",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_asset_turnover",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_shares_outstanding",
+                    "type": "float64",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "accession"
+            ],
+            "sort_key": [
+                "ticker",
+                "accession"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "filing_date:DATE",
+                "period_end:DATE",
+                "form_type:VARCHAR",
+                "revenues:DOUBLE",
+                "net_income:DOUBLE",
+                "total_assets:DOUBLE",
+                "total_liabilities:DOUBLE",
+                "operating_cash_flow:DOUBLE",
+                "gross_profit:DOUBLE",
+                "assets_current:DOUBLE",
+                "liabilities_current:DOUBLE",
+                "long_term_debt:DOUBLE",
+                "retained_earnings:DOUBLE",
+                "ebit:DOUBLE",
+                "shares_outstanding:DOUBLE",
+                "accession:VARCHAR",
+                "cik:VARCHAR",
+                "fiscal_year:INTEGER",
+                "fiscal_period:VARCHAR",
+                "duration_days:INTEGER",
+                "acceptance_datetime:TIMESTAMP WITH TIME ZONE",
+                "amends_accession:VARCHAR",
+                "tag_used:VARCHAR",
+                "shares_asof_date:DATE",
+                "revenue_ttm:DOUBLE",
+                "net_income_ttm:DOUBLE",
+                "operating_cash_flow_ttm:DOUBLE",
+                "gross_profit_ttm:DOUBLE",
+                "ebit_ttm:DOUBLE",
+                "prior_roa:DOUBLE",
+                "prior_debt_ratio:DOUBLE",
+                "prior_current_ratio:DOUBLE",
+                "prior_gross_margin:DOUBLE",
+                "prior_asset_turnover:DOUBLE",
+                "prior_shares_outstanding:DOUBLE"
+            ],
+            "hash": "e1a11f399bf35637a6a6ece4b964ea8e094fae33b9caa485f46cb3f724aac237",
+            "last_migration": "2026-10-10-initial"
+        },
+        "macro": {
+            "number": 4,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#4",
+            "fields": [
+                {
+                    "name": "series_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "obs_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "realtime_start",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "realtime_end",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "value",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "known_from",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "known_from_basis",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "series_id",
+                "obs_date",
+                "realtime_start"
+            ],
+            "sort_key": [
+                "series_id",
+                "obs_date",
+                "realtime_start"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "series_id:VARCHAR",
+                "obs_date:DATE",
+                "realtime_start:DATE",
+                "realtime_end:DATE",
+                "value:DOUBLE",
+                "known_from:DATE",
+                "known_from_basis:VARCHAR",
+                "fetched_at:TIMESTAMP WITH TIME ZONE"
+            ],
+            "hash": "bad3163e7f952bdf504f30130e3ade128dbcaefeffab1058d5c67ede8da23f25",
+            "last_migration": "2026-10-10-initial"
+        },
+        "panel": {
+            "number": 5,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year",
+                "month"
+            ],
+            "partition_column": "date",
+            "writer": "julia-panel",
+            "schemas_md": "#5",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "split",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "y_fwd_63d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "y_fwd_126d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "y_fwd_252d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "mom_20d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "mom_60d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "mom_12m_1m",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "vol_60d_res",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "sp_ratio",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "turn_20d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_mom_20d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_mom_60d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_mom_12m_1m",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_vol_60d",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_sp",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "r_turn",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "label_flag_63d",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "label_flag_126d",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "label_flag_252d",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "date"
+            ],
+            "sort_key": [
+                "ticker",
+                "date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "date:DATE",
+                "split:VARCHAR",
+                "y_fwd_63d:DOUBLE",
+                "y_fwd_126d:DOUBLE",
+                "y_fwd_252d:DOUBLE",
+                "mom_20d:DOUBLE",
+                "mom_60d:DOUBLE",
+                "mom_12m_1m:DOUBLE",
+                "vol_60d_res:DOUBLE",
+                "sp_ratio:DOUBLE",
+                "turn_20d:DOUBLE",
+                "r_mom_20d:DOUBLE",
+                "r_mom_60d:DOUBLE",
+                "r_mom_12m_1m:DOUBLE",
+                "r_vol_60d:DOUBLE",
+                "r_sp:DOUBLE",
+                "r_turn:DOUBLE",
+                "label_flag_63d:VARCHAR",
+                "label_flag_126d:VARCHAR",
+                "label_flag_252d:VARCHAR"
+            ],
+            "hash": "94dc912a063fa2869f7038948919bd3513392677d27834198ec220ddf915cc8f",
+            "last_migration": "2026-10-10-initial"
+        },
+        "regime_states": {
+            "number": 6,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "julia-regime",
+            "schemas_md": "#6",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_low_vol_prob",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_high_vol_prob",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_crisis_prob",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "viterbi_state",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_factor",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "fit_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "confirmed_state",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "date"
+            ],
+            "sort_key": [
+                "date"
+            ],
+            "merge": "append_only",
+            "columns": [
+                "date:DATE",
+                "regime_low_vol_prob:DOUBLE",
+                "regime_high_vol_prob:DOUBLE",
+                "regime_crisis_prob:DOUBLE",
+                "viterbi_state:VARCHAR",
+                "regime_factor:DOUBLE",
+                "fit_date:DATE",
+                "confirmed_state:VARCHAR"
+            ],
+            "hash": "7ccd77a0156b3dcef43568b903e241ea28810ad8b107bab8feb82e256b046f25",
+            "last_migration": "2026-10-10-initial"
+        },
+        "gspqr_predictions": {
+            "number": 7,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year",
+                "month"
+            ],
+            "partition_column": "date",
+            "writer": "julia-gspqr",
+            "schemas_md": "#7",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "horizon",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "q_01",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_05",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_25",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_50",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_75",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_95",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_99",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "crossed",
+                    "type": "bool",
+                    "nullable": true
+                },
+                {
+                    "name": "generation",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "panel_version",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "date",
+                "horizon"
+            ],
+            "sort_key": [
+                "ticker",
+                "date",
+                "horizon"
+            ],
+            "merge": "append_only",
+            "columns": [
+                "ticker:VARCHAR",
+                "date:DATE",
+                "horizon:VARCHAR",
+                "q_01:DOUBLE",
+                "q_05:DOUBLE",
+                "q_25:DOUBLE",
+                "q_50:DOUBLE",
+                "q_75:DOUBLE",
+                "q_95:DOUBLE",
+                "q_99:DOUBLE",
+                "crossed:BOOLEAN",
+                "generation:VARCHAR",
+                "panel_version:VARCHAR"
+            ],
+            "hash": "9290600750aed81d2d25644d4d618e17a6792f87cec5e735201cf2d70a040afd",
+            "last_migration": "2026-10-10-initial"
+        },
+        "tcp_calibration": {
+            "number": 8,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year",
+                "month"
+            ],
+            "partition_column": "forecast_date",
+            "writer": "julia-tcp",
+            "schemas_md": "#8",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "forecast_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "horizon",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "alpha",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "m_cal",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "k_order_stat",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "q_hat_lower",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_hat_upper",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "rm_offset",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "calib_width",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "rm_n",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "calib_method",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "n_cal_scores",
+                    "type": "int32",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "forecast_date",
+                "horizon"
+            ],
+            "sort_key": [
+                "ticker",
+                "forecast_date",
+                "horizon"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "forecast_date:DATE",
+                "horizon:VARCHAR",
+                "alpha:DOUBLE",
+                "m_cal:INTEGER",
+                "k_order_stat:INTEGER",
+                "q_hat_lower:DOUBLE",
+                "q_hat_upper:DOUBLE",
+                "rm_offset:DOUBLE",
+                "calib_width:DOUBLE",
+                "rm_n:INTEGER",
+                "calib_method:VARCHAR",
+                "n_cal_scores:INTEGER"
+            ],
+            "hash": "0e05f61e5008ae20aa4aef00d3a4e6f7a80aa17ebbcf27222b3305f4cd618db5",
+            "last_migration": "2026-10-10-initial"
+        },
+        "evt_residuals": {
+            "number": 9,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year",
+                "month"
+            ],
+            "partition_column": "date",
+            "writer": "julia-evt",
+            "schemas_md": "#9",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "horizon",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "realized_return",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "calibrated_mid",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "residual",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "exceed_lower",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "exceed_upper",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "calibrated_halfwidth",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "std_residual",
+                    "type": "float64",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "date",
+                "horizon"
+            ],
+            "sort_key": [
+                "ticker",
+                "date",
+                "horizon"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "date:DATE",
+                "horizon:VARCHAR",
+                "realized_return:DOUBLE",
+                "calibrated_mid:DOUBLE",
+                "residual:DOUBLE",
+                "exceed_lower:BOOLEAN",
+                "exceed_upper:BOOLEAN",
+                "calibrated_halfwidth:DOUBLE",
+                "std_residual:DOUBLE"
+            ],
+            "hash": "f59ad5fcbac9c2bf8628681ca96966ab48d82681fb63d5d4c79403c7ff9c8a93",
+            "last_migration": "2026-10-10-initial"
+        },
+        "evt_tail_bounds": {
+            "number": 10,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "fit_date",
+            "writer": "julia-evt",
+            "schemas_md": "#10",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "fit_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "horizon",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "tail",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "threshold_u",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "n_exceedances",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "gpd_shape_xi",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "gpd_scale_sigma",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "q_extreme",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "n_pooled",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "n_exceed_raw",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "q_pooled",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "fit_method",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "n_episode_blocks",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "window_days",
+                    "type": "int32",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "fit_date",
+                "horizon",
+                "tail"
+            ],
+            "sort_key": [
+                "ticker",
+                "fit_date",
+                "horizon",
+                "tail"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "fit_date:DATE",
+                "horizon:VARCHAR",
+                "tail:VARCHAR",
+                "threshold_u:DOUBLE",
+                "n_exceedances:INTEGER",
+                "gpd_shape_xi:DOUBLE",
+                "gpd_scale_sigma:DOUBLE",
+                "q_extreme:DOUBLE",
+                "n_pooled:INTEGER",
+                "n_exceed_raw:INTEGER",
+                "q_pooled:DOUBLE",
+                "fit_method:VARCHAR",
+                "n_episode_blocks:INTEGER",
+                "window_days:INTEGER"
+            ],
+            "hash": "decf1e12be0f8b9a5ac4650401d1196836c78ded1ef518d4a29ad62e4d43dbaa",
+            "last_migration": "2026-10-10-initial"
+        },
+        "conviction_scores": {
+            "number": 11,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "julia-conviction",
+            "schemas_md": "#11",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "as_of_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "filing_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "f_score_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "roic_spread_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "accruals_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "gm_trend_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "rev_persist_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "revision_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "composite_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "conviction",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "components_used",
+                    "type": "int32",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "as_of_date"
+            ],
+            "sort_key": [
+                "ticker",
+                "as_of_date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "as_of_date:DATE",
+                "filing_date:DATE",
+                "f_score_z:DOUBLE",
+                "roic_spread_z:DOUBLE",
+                "accruals_z:DOUBLE",
+                "gm_trend_z:DOUBLE",
+                "rev_persist_z:DOUBLE",
+                "revision_z:DOUBLE",
+                "composite_z:DOUBLE",
+                "conviction:DOUBLE",
+                "components_used:INTEGER"
+            ],
+            "hash": "cd6d505e20f1deea33279f366884ede8bada3bf899f60f1884c1d061404306ea",
+            "last_migration": "2026-10-10-initial"
+        },
+        "veto_flags": {
+            "number": 12,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "julia-conviction",
+            "schemas_md": "#12",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "as_of_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "filing_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "altman_z",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "going_concern",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "neg_book_neg_ocf",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "delisting_notice",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "restatement_12m",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "auditor_resigned",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "covenant_breach",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "veto_active",
+                    "type": "bool",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "as_of_date"
+            ],
+            "sort_key": [
+                "ticker",
+                "as_of_date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "as_of_date:DATE",
+                "filing_date:DATE",
+                "altman_z:DOUBLE",
+                "going_concern:BOOLEAN",
+                "neg_book_neg_ocf:BOOLEAN",
+                "delisting_notice:BOOLEAN",
+                "restatement_12m:BOOLEAN",
+                "auditor_resigned:BOOLEAN",
+                "covenant_breach:BOOLEAN",
+                "veto_active:BOOLEAN"
+            ],
+            "hash": "1739b92f048917c3c194d2984d1e6cdfff3c644257fdd71430703059de180b5c",
+            "last_migration": "2026-10-10-initial"
+        },
+        "portfolio_targets": {
+            "number": 13,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "julia-portfolio",
+            "schemas_md": "#13",
+            "fields": [
+                {
+                    "name": "rebalance_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "expected_return",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "downside_risk",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "w_optimized",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "conviction",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "w_conviction",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "w_final",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "veto_active",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "cap_applied",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_factor",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "w_target",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "w_current",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "lock_status",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "lock_first_permitted",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "lock_binding",
+                    "type": "bool",
+                    "nullable": true
+                },
+                {
+                    "name": "band_skipped",
+                    "type": "bool",
+                    "nullable": true
+                },
+                {
+                    "name": "cost_buy_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "cost_sell_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "opt_status",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "rebalance_date",
+                "ticker"
+            ],
+            "sort_key": [
+                "rebalance_date",
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "rebalance_date:DATE",
+                "ticker:VARCHAR",
+                "expected_return:DOUBLE",
+                "downside_risk:DOUBLE",
+                "w_optimized:DOUBLE",
+                "conviction:DOUBLE",
+                "w_conviction:DOUBLE",
+                "w_final:DOUBLE",
+                "veto_active:BOOLEAN",
+                "cap_applied:BOOLEAN",
+                "regime_factor:DOUBLE",
+                "w_target:DOUBLE",
+                "w_current:DOUBLE",
+                "lock_status:VARCHAR",
+                "lock_first_permitted:DATE",
+                "lock_binding:BOOLEAN",
+                "band_skipped:BOOLEAN",
+                "cost_buy_bps:DOUBLE",
+                "cost_sell_bps:DOUBLE",
+                "opt_status:VARCHAR"
+            ],
+            "hash": "38c6c056661c09215926dc546e2c2431f1ccd05eddd39892db74e47173faad04",
+            "last_migration": "2026-10-10-initial"
+        },
+        "position_locks": {
+            "number": 14,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-lock",
+            "schemas_md": "#14",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "state",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "last_buy_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "last_sell_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "lock_expiry_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "shares_held",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "pending_side",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker"
+            ],
+            "sort_key": [
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "state:VARCHAR",
+                "last_buy_date:DATE",
+                "last_sell_date:DATE",
+                "lock_expiry_date:DATE",
+                "shares_held:DOUBLE",
+                "pending_side:VARCHAR"
+            ],
+            "hash": "391689a9d2a4b65ff0b35ec9cb14a5a76ed46fd6c8c31126b07ac643a5025079",
+            "last_migration": "2026-10-10-initial"
+        },
+        "pending_orders": {
+            "number": 15,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-order",
+            "schemas_md": "#15",
+            "fields": [
+                {
+                    "name": "pending_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "side",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "target_quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "earliest_execution",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "signal_snapshot",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "created_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "status",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cancelled_reason",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "pending_id"
+            ],
+            "sort_key": [
+                "pending_id"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "pending_id:VARCHAR",
+                "ticker:VARCHAR",
+                "side:VARCHAR",
+                "target_quantity:DOUBLE",
+                "earliest_execution:DATE",
+                "signal_snapshot:VARCHAR",
+                "created_at:TIMESTAMP WITH TIME ZONE",
+                "status:VARCHAR",
+                "cancelled_reason:VARCHAR"
+            ],
+            "hash": "623d7b33f7ea0ffe0950fa82804d650d4c55cb75728c129725dd367d9d20724e",
+            "last_migration": "2026-10-10-initial"
+        },
+        "orders": {
+            "number": 16,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-exec",
+            "schemas_md": "#16",
+            "fields": [
+                {
+                    "name": "order_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "schwab_order_id",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "side",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "order_type",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "limit_price",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "status",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "submitted_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "filled_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": true
+                },
+                {
+                    "name": "fill_price",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "fill_quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "slippage_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "tier",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "arrival_mid",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "spread_bps_at_submit",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "window_arm",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "ladder_arm",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "time_to_first_fill_s",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "time_to_complete_s",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "n_reprices",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "fill_rate",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "slippage_vs_arrival_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "slippage_vs_vwap_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "deferral_count",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "gate_reason",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "sequence_id",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "markout_5m_bps",
+                    "type": "float64",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "order_id"
+            ],
+            "sort_key": [
+                "order_id"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "order_id:VARCHAR",
+                "schwab_order_id:VARCHAR",
+                "ticker:VARCHAR",
+                "side:VARCHAR",
+                "quantity:DOUBLE",
+                "order_type:VARCHAR",
+                "limit_price:DOUBLE",
+                "status:VARCHAR",
+                "submitted_at:TIMESTAMP WITH TIME ZONE",
+                "filled_at:TIMESTAMP WITH TIME ZONE",
+                "fill_price:DOUBLE",
+                "fill_quantity:DOUBLE",
+                "slippage_bps:DOUBLE",
+                "tier:VARCHAR",
+                "arrival_mid:DOUBLE",
+                "spread_bps_at_submit:DOUBLE",
+                "window_arm:VARCHAR",
+                "ladder_arm:VARCHAR",
+                "time_to_first_fill_s:DOUBLE",
+                "time_to_complete_s:DOUBLE",
+                "n_reprices:INTEGER",
+                "fill_rate:DOUBLE",
+                "slippage_vs_arrival_bps:DOUBLE",
+                "slippage_vs_vwap_bps:DOUBLE",
+                "deferral_count:INTEGER",
+                "gate_reason:VARCHAR",
+                "sequence_id:VARCHAR",
+                "markout_5m_bps:DOUBLE"
+            ],
+            "hash": "519ddd71b8a06a2e6be03b0b027c4c48838e378aca60ff63ce8a8d3389acb26e",
+            "last_migration": "2026-10-10-initial"
+        },
+        "positions": {
+            "number": 17,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-exec",
+            "schemas_md": "#17",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "shares",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "avg_cost",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "current_price",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "market_value",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "unrealized_pnl",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "weight",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "entry_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "holding_days",
+                    "type": "int32",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker"
+            ],
+            "sort_key": [
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "shares:DOUBLE",
+                "avg_cost:DOUBLE",
+                "current_price:DOUBLE",
+                "market_value:DOUBLE",
+                "unrealized_pnl:DOUBLE",
+                "weight:DOUBLE",
+                "entry_date:DATE",
+                "holding_days:INTEGER"
+            ],
+            "hash": "c3239e9c6aa85c4d7b30e66650816b2034dd7e77c07698531f396b872b71df4f",
+            "last_migration": "2026-10-10-initial"
+        },
+        "fills": {
+            "number": 18,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-exec",
+            "schemas_md": "#18",
+            "fields": [
+                {
+                    "name": "fill_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "order_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "side",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "price",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "filled_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "venue",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "commission",
+                    "type": "float64",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "fill_id"
+            ],
+            "sort_key": [
+                "fill_id"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "fill_id:VARCHAR",
+                "order_id:VARCHAR",
+                "ticker:VARCHAR",
+                "side:VARCHAR",
+                "quantity:DOUBLE",
+                "price:DOUBLE",
+                "filled_at:TIMESTAMP WITH TIME ZONE",
+                "venue:VARCHAR",
+                "commission:DOUBLE"
+            ],
+            "hash": "0a5ea513d914f7d55aeffaf886b627a72856d371ef29cd48908927d73eb1a741",
+            "last_migration": "2026-10-10-initial"
+        },
+        "evaluation_metrics": {
+            "number": 19,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "julia-backtest",
+            "schemas_md": "#19",
+            "fields": [
+                {
+                    "name": "eval_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "horizon",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "coverage_95",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "coverage_90",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "avg_width",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "winkler_score",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "pinball_loss",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "crps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "rank_ic",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "n_obs",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "qhat_zero_frac",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "qhat_applied_nonpos_frac",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "run_id",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "track",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "path_id",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "fold",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "spread_source",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "sortino",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "sharpe",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "max_drawdown",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "turnover_ann",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "lock_binding_freq",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "shortfall_bps",
+                    "type": "float64",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "run_id",
+                "track",
+                "path_id",
+                "fold",
+                "eval_date",
+                "horizon",
+                "spread_source"
+            ],
+            "sort_key": [
+                "run_id",
+                "track",
+                "path_id",
+                "fold",
+                "eval_date",
+                "horizon",
+                "spread_source"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "eval_date:DATE",
+                "horizon:VARCHAR",
+                "coverage_95:DOUBLE",
+                "coverage_90:DOUBLE",
+                "avg_width:DOUBLE",
+                "winkler_score:DOUBLE",
+                "pinball_loss:DOUBLE",
+                "crps:DOUBLE",
+                "rank_ic:DOUBLE",
+                "n_obs:INTEGER",
+                "qhat_zero_frac:DOUBLE",
+                "qhat_applied_nonpos_frac:DOUBLE",
+                "run_id:VARCHAR",
+                "track:VARCHAR",
+                "path_id:INTEGER",
+                "fold:INTEGER",
+                "spread_source:VARCHAR",
+                "sortino:DOUBLE",
+                "sharpe:DOUBLE",
+                "max_drawdown:DOUBLE",
+                "turnover_ann:DOUBLE",
+                "lock_binding_freq:DOUBLE",
+                "shortfall_bps:DOUBLE"
+            ],
+            "hash": "7092fbc00fa7a8d2f9a933d5396df8936e9a409cf828f48f5b1acef1a6c4cbf2",
+            "last_migration": "2026-10-10-initial"
+        },
+        "data_quality": {
+            "number": 20,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#20",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "dataset",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "tickers_expected",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "tickers_received",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "missing_pct",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "latency_min",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "status",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "notes",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "entity",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "chunk",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "run_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "attempts",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "check_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "measured",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "threshold",
+                    "type": "float64",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "date",
+                "source",
+                "dataset",
+                "entity",
+                "chunk",
+                "check_id",
+                "run_id"
+            ],
+            "sort_key": [
+                "date",
+                "source",
+                "dataset",
+                "entity",
+                "chunk",
+                "check_id",
+                "run_id"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "date:DATE",
+                "source:VARCHAR",
+                "dataset:VARCHAR",
+                "tickers_expected:INTEGER",
+                "tickers_received:INTEGER",
+                "missing_pct:DOUBLE",
+                "latency_min:INTEGER",
+                "status:VARCHAR",
+                "notes:VARCHAR",
+                "entity:VARCHAR",
+                "chunk:VARCHAR",
+                "run_id:VARCHAR",
+                "attempts:INTEGER",
+                "check_id:VARCHAR",
+                "measured:DOUBLE",
+                "threshold:DOUBLE"
+            ],
+            "hash": "8e3e082c1c0d25fc356a1f5ee9ec817051e2338f08b74d356154e831cc1f5eef",
+            "last_migration": "2026-10-10-initial"
+        },
+        "audit_log": {
+            "number": 21,
+            "layout": "partitioned",
+            "partition_keys": [
+                "date"
+            ],
+            "partition_column": "timestamp",
+            "writer": "rust-eventbus",
+            "schemas_md": "#21",
+            "fields": [
+                {
+                    "name": "event_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "timestamp",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "event_type",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "actor",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "details",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "severity",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+            ],
+            "sort_key": [
+                "timestamp",
+                "event_id"
+            ],
+            "merge": "append_only",
+            "columns": [
+                "event_id:VARCHAR",
+                "timestamp:TIMESTAMP WITH TIME ZONE",
+                "event_type:VARCHAR",
+                "ticker:VARCHAR",
+                "actor:VARCHAR",
+                "details:VARCHAR",
+                "severity:VARCHAR"
+            ],
+            "hash": "63d9c5e4d51cfa31f49450d3ccd6cbcfe90bc47c31096bc279f68cad926e4075",
+            "last_migration": "2026-10-10-initial"
+        },
+        "portfolio_ledger": {
+            "number": 22,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "date",
+            "writer": "julia-ledger",
+            "schemas_md": "#22",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "cash",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "cash_pct",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "market_value",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "total_value",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "cost_basis",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "unrealized_pnl",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "realized_pnl_today",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "realized_pnl_ytd",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "n_positions",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "daily_return",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "cumulative_return",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "max_drawdown",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "sortino_252d",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_factor",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "reconciled",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "backfilled",
+                    "type": "bool",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "date"
+            ],
+            "sort_key": [
+                "date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "date:DATE",
+                "cash:DOUBLE",
+                "cash_pct:DOUBLE",
+                "market_value:DOUBLE",
+                "total_value:DOUBLE",
+                "cost_basis:DOUBLE",
+                "unrealized_pnl:DOUBLE",
+                "realized_pnl_today:DOUBLE",
+                "realized_pnl_ytd:DOUBLE",
+                "n_positions:INTEGER",
+                "daily_return:DOUBLE",
+                "cumulative_return:DOUBLE",
+                "max_drawdown:DOUBLE",
+                "sortino_252d:DOUBLE",
+                "regime_factor:DOUBLE",
+                "reconciled:BOOLEAN",
+                "backfilled:BOOLEAN"
+            ],
+            "hash": "ab4da30b4b09f56d8f590cf274f445768270ff3649a8117d807fb8951ed2f66b",
+            "last_migration": "2026-10-10-initial"
+        },
+        "tax_lots": {
+            "number": 23,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-exec",
+            "schemas_md": "#23",
+            "fields": [
+                {
+                    "name": "lot_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "open_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "open_price",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "open_quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "close_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "close_price",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "close_quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "realized_pnl",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "holding_days",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "order_id_open",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "order_id_close",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "lot_id"
+            ],
+            "sort_key": [
+                "lot_id"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "lot_id:VARCHAR",
+                "ticker:VARCHAR",
+                "open_date:DATE",
+                "open_price:DOUBLE",
+                "open_quantity:DOUBLE",
+                "close_date:DATE",
+                "close_price:DOUBLE",
+                "close_quantity:DOUBLE",
+                "realized_pnl:DOUBLE",
+                "holding_days:INTEGER",
+                "order_id_open:VARCHAR",
+                "order_id_close:VARCHAR"
+            ],
+            "hash": "0e9ad8f1b663e13532d5a045dd990c201790ecd26018fc1b190ff610033a56b1",
+            "last_migration": "2026-10-10-initial"
+        },
+        "trade_summary": {
+            "number": 24,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "exit_date",
+            "writer": "julia-ledger",
+            "schemas_md": "#24",
+            "fields": [
+                {
+                    "name": "trade_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "entry_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "exit_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "entry_price",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "exit_price",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "quantity",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "gross_return_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "slippage_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "net_return_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "benchmark_return_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "alpha_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "holding_days",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "return_per_day_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "downside_deviation_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "trade_sortino",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "regime_at_entry",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "regime_at_exit",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "conviction_at_entry",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "tier_at_entry",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "lock_overridden",
+                    "type": "bool",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "trade_id"
+            ],
+            "sort_key": [
+                "trade_id"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "trade_id:VARCHAR",
+                "ticker:VARCHAR",
+                "entry_date:DATE",
+                "exit_date:DATE",
+                "entry_price:DOUBLE",
+                "exit_price:DOUBLE",
+                "quantity:DOUBLE",
+                "gross_return_bps:DOUBLE",
+                "slippage_bps:DOUBLE",
+                "net_return_bps:DOUBLE",
+                "benchmark_return_bps:DOUBLE",
+                "alpha_bps:DOUBLE",
+                "holding_days:INTEGER",
+                "return_per_day_bps:DOUBLE",
+                "downside_deviation_bps:DOUBLE",
+                "trade_sortino:DOUBLE",
+                "regime_at_entry:VARCHAR",
+                "regime_at_exit:VARCHAR",
+                "conviction_at_entry:DOUBLE",
+                "tier_at_entry:VARCHAR",
+                "lock_overridden:BOOLEAN"
+            ],
+            "hash": "d7becb056142e332f806eb70f18d58120745a4139bb5d69921aac099e799f3df",
+            "last_migration": "2026-10-10-initial"
+        },
+        "order_history": {
+            "number": 25,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-audit",
+            "schemas_md": "#25",
+            "fields": [
+                {
+                    "name": "snapshot_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "account",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "schwab_order_id",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "side",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "entered_time_utc",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": true
+                },
+                {
+                    "name": "placed_date_et",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "d_effective",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "status",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "quantity",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "filled_qty",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "counted",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "last_fill_date_et",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "first_permitted",
+                    "type": "date32",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "snapshot_date",
+                "source",
+                "account",
+                "schwab_order_id",
+                "ticker",
+                "placed_date_et",
+                "side"
+            ],
+            "sort_key": [
+                "snapshot_date",
+                "source",
+                "account",
+                "schwab_order_id",
+                "ticker",
+                "placed_date_et",
+                "side"
+            ],
+            "merge": "append_only",
+            "columns": [
+                "snapshot_date:DATE",
+                "fetched_at:TIMESTAMP WITH TIME ZONE",
+                "source:VARCHAR",
+                "account:VARCHAR",
+                "schwab_order_id:VARCHAR",
+                "ticker:VARCHAR",
+                "side:VARCHAR",
+                "entered_time_utc:TIMESTAMP WITH TIME ZONE",
+                "placed_date_et:DATE",
+                "d_effective:DATE",
+                "status:VARCHAR",
+                "quantity:DOUBLE",
+                "filled_qty:DOUBLE",
+                "counted:BOOLEAN",
+                "last_fill_date_et:DATE",
+                "first_permitted:DATE"
+            ],
+            "hash": "d919fc8e23955b6b0c4c49c68b30eca2589bf02d3a30b73643685963e87e77a6",
+            "last_migration": "2026-10-10-initial"
+        },
+        "execution_costs": {
+            "number": 26,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "date",
+            "writer": "rust-exec",
+            "schemas_md": "#26",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "tier",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ladder_arm",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "spread_bucket",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "median_spread_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "ewma_slip_bps",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "n_fills",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "cost_buy_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "cost_sell_bps",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "cost_source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "sigma_daily",
+                    "type": "float64",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "date",
+                "ticker",
+                "tier",
+                "ladder_arm"
+            ],
+            "sort_key": [
+                "date",
+                "ticker",
+                "tier",
+                "ladder_arm"
+            ],
+            "merge": "append_only",
+            "columns": [
+                "date:DATE",
+                "ticker:VARCHAR",
+                "tier:VARCHAR",
+                "ladder_arm:VARCHAR",
+                "spread_bucket:INTEGER",
+                "median_spread_bps:DOUBLE",
+                "ewma_slip_bps:DOUBLE",
+                "n_fills:INTEGER",
+                "cost_buy_bps:DOUBLE",
+                "cost_sell_bps:DOUBLE",
+                "cost_source:VARCHAR",
+                "sigma_daily:DOUBLE"
+            ],
+            "hash": "93064642cf35ae73c6fac22350b3b3e12d17a209808e785fb9f1c245eab475de",
+            "last_migration": "2026-10-10-initial"
+        },
+        "quote_spread_1m": {
+            "number": 27,
+            "layout": "partitioned",
+            "partition_keys": [
+                "session"
+            ],
+            "partition_column": "date",
+            "writer": "rust-quotes",
+            "schemas_md": "#27",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "minute_et",
+                    "type": "int16",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "n_updates",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "bid_last",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "ask_last",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "spread_bps_median",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "spread_bps_p90",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "bid_size_last",
+                    "type": "int64",
+                    "nullable": true
+                },
+                {
+                    "name": "ask_size_last",
+                    "type": "int64",
+                    "nullable": true
+                },
+                {
+                    "name": "last_price",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "volume_delta",
+                    "type": "int64",
+                    "nullable": true
+                },
+                {
+                    "name": "status_flags",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "date",
+                "minute_et",
+                "ticker"
+            ],
+            "sort_key": [
+                "date",
+                "minute_et",
+                "ticker"
+            ],
+            "merge": "append_only",
+            "columns": [
+                "date:DATE",
+                "minute_et:SMALLINT",
+                "ticker:VARCHAR",
+                "n_updates:INTEGER",
+                "bid_last:DOUBLE",
+                "ask_last:DOUBLE",
+                "spread_bps_median:DOUBLE",
+                "spread_bps_p90:DOUBLE",
+                "bid_size_last:BIGINT",
+                "ask_size_last:BIGINT",
+                "last_price:DOUBLE",
+                "volume_delta:BIGINT",
+                "status_flags:INTEGER",
+                "source:VARCHAR"
+            ],
+            "hash": "0148924e723b5219dc30eebe23d4a03d7536eacaa182fc9ce2c9c9e04dee3512",
+            "last_migration": "2026-10-10-initial"
+        },
+        "splits": {
+            "number": 28,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#28",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ex_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "numerator",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "denominator",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "ratio",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "raw_sha256",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "ex_date"
+            ],
+            "sort_key": [
+                "ticker",
+                "ex_date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "ex_date:DATE",
+                "numerator:DOUBLE",
+                "denominator:DOUBLE",
+                "ratio:DOUBLE",
+                "source:VARCHAR",
+                "fetched_at:TIMESTAMP WITH TIME ZONE",
+                "raw_sha256:VARCHAR"
+            ],
+            "hash": "e37db07e6b8fee2b0e6ca494522c7d1c4ef5b96880dfb6f251b50d4ab541d643",
+            "last_migration": "2026-10-10-initial"
+        },
+        "dividends": {
+            "number": 29,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#29",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ex_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "amount",
+                    "type": "float64",
+                    "nullable": false
+                },
+                {
+                    "name": "currency",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "raw_sha256",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker",
+                "ex_date"
+            ],
+            "sort_key": [
+                "ticker",
+                "ex_date"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "ex_date:DATE",
+                "amount:DOUBLE",
+                "currency:VARCHAR",
+                "source:VARCHAR",
+                "fetched_at:TIMESTAMP WITH TIME ZONE",
+                "raw_sha256:VARCHAR"
+            ],
+            "hash": "87ad49252e18938026a8420ff776e3581b81b354e63f16dec26a06647607180f",
+            "last_migration": "2026-10-10-initial"
+        },
+        "etf_holdings": {
+            "number": 30,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "snapshot_date",
+            "writer": "rust-ingest",
+            "schemas_md": "#30",
+            "fields": [
+                {
+                    "name": "snapshot_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "etf",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "vendor_ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "name",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "sector",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "asset_class",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "weight",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "shares",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "price",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "market_value",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "exchange",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "location",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "available_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "raw_sha256",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "snapshot_date",
+                "etf",
+                "ticker"
+            ],
+            "sort_key": [
+                "snapshot_date",
+                "etf",
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "snapshot_date:DATE",
+                "etf:VARCHAR",
+                "ticker:VARCHAR",
+                "vendor_ticker:VARCHAR",
+                "name:VARCHAR",
+                "sector:VARCHAR",
+                "asset_class:VARCHAR",
+                "weight:DOUBLE",
+                "shares:DOUBLE",
+                "price:DOUBLE",
+                "market_value:DOUBLE",
+                "exchange:VARCHAR",
+                "location:VARCHAR",
+                "available_date:DATE",
+                "fetched_at:TIMESTAMP WITH TIME ZONE",
+                "raw_sha256:VARCHAR"
+            ],
+            "hash": "7b89d65fc25ac3eaf7c6d280714d4ce645901cd0b8b272c60b040d4484bb63cc",
+            "last_migration": "2026-10-10-initial"
+        },
+        "security_master": {
+            "number": 31,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#31",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "name",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "share_class",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "vendor_symbol",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "exchange",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "first_snapshot_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "last_snapshot_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "prior_tickers",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "resolution",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "resolution_note",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "updated_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                },
+                {
+                    "name": "sic",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "sic_description",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "sic_asof",
+                    "type": "date32",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "ticker"
+            ],
+            "sort_key": [
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "cik:VARCHAR",
+                "name:VARCHAR",
+                "share_class:VARCHAR",
+                "vendor_symbol:VARCHAR",
+                "exchange:VARCHAR",
+                "first_snapshot_date:DATE",
+                "last_snapshot_date:DATE",
+                "prior_tickers:VARCHAR",
+                "resolution:VARCHAR",
+                "resolution_note:VARCHAR",
+                "updated_at:TIMESTAMP WITH TIME ZONE",
+                "sic:VARCHAR",
+                "sic_description:VARCHAR",
+                "sic_asof:DATE"
+            ],
+            "hash": "d65c01ec31b6b9527b5398d4a62612a9c9276307956121ba843078a1c0956d72",
+            "last_migration": "2026-10-10-initial"
+        },
+        "delistings": {
+            "number": 32,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#32",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "delist_class",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "confidence",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "rule_id",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "form25_filing_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "est_last_trading_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "form15_filing_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "bankruptcy_filing_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "acquisition_filing_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "evidence_accessions",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "built_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker"
+            ],
+            "sort_key": [
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "cik:VARCHAR",
+                "delist_class:VARCHAR",
+                "confidence:VARCHAR",
+                "rule_id:VARCHAR",
+                "form25_filing_date:DATE",
+                "est_last_trading_date:DATE",
+                "form15_filing_date:DATE",
+                "bankruptcy_filing_date:DATE",
+                "acquisition_filing_date:DATE",
+                "evidence_accessions:VARCHAR",
+                "built_at:TIMESTAMP WITH TIME ZONE"
+            ],
+            "hash": "7e3fd4cdb48a291b1b859579e74d2ecbbfcfcd2df85e62d65334d78c2dad24ef",
+            "last_migration": "2026-10-10-initial"
+        },
+        "filing_events": {
+            "number": 33,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "rust-ingest",
+            "schemas_md": "#33",
+            "fields": [
+                {
+                    "name": "accession",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "item",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "form_type",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "filing_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "acceptance_datetime",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": true
+                },
+                {
+                    "name": "event_type",
+                    "type": "utf8",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "accession",
+                "item",
+                "ticker"
+            ],
+            "sort_key": [
+                "accession",
+                "item",
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "accession:VARCHAR",
+                "item:VARCHAR",
+                "ticker:VARCHAR",
+                "cik:VARCHAR",
+                "form_type:VARCHAR",
+                "filing_date:DATE",
+                "acceptance_datetime:TIMESTAMP WITH TIME ZONE",
+                "event_type:VARCHAR"
+            ],
+            "hash": "5449e3f665bd1f4fd9e9811422982f86a69f648b9ad1647517da3bf4f1955135",
+            "last_migration": "2026-10-10-initial"
+        },
+        "price_coverage": {
+            "number": 34,
+            "layout": "single",
+            "partition_keys": [
+            ],
+            "partition_column": null,
+            "writer": "julia-universe",
+            "schemas_md": "#34",
+            "fields": [
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "first_member_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "last_member_date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "first_price_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "last_price_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "n_member_days",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "n_member_days_priced",
+                    "type": "int32",
+                    "nullable": false
+                },
+                {
+                    "name": "delist_class",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "est_last_trading_date",
+                    "type": "date32",
+                    "nullable": true
+                },
+                {
+                    "name": "coverage_status",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "gap_reason",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "terminal_class",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "data_end",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "built_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": false
+                }
+            ],
+            "primary_key": [
+                "ticker"
+            ],
+            "sort_key": [
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "ticker:VARCHAR",
+                "cik:VARCHAR",
+                "first_member_date:DATE",
+                "last_member_date:DATE",
+                "first_price_date:DATE",
+                "last_price_date:DATE",
+                "n_member_days:INTEGER",
+                "n_member_days_priced:INTEGER",
+                "delist_class:VARCHAR",
+                "est_last_trading_date:DATE",
+                "coverage_status:VARCHAR",
+                "gap_reason:VARCHAR",
+                "terminal_class:VARCHAR",
+                "data_end:DATE",
+                "built_at:TIMESTAMP WITH TIME ZONE"
+            ],
+            "hash": "9412033242cbfae0bb483112541769eb4988fcc6c495da1b736d5e37320029d8",
+            "last_migration": "2026-10-10-initial"
+        },
+        "listings": {
+            "number": 35,
+            "layout": "partitioned",
+            "partition_keys": [
+                "year"
+            ],
+            "partition_column": "date",
+            "writer": "rust-ingest",
+            "schemas_md": "#35",
+            "fields": [
+                {
+                    "name": "date",
+                    "type": "date32",
+                    "nullable": false
+                },
+                {
+                    "name": "ticker",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "vendor_symbol",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "exchange",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "security_name",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "is_etf",
+                    "type": "bool",
+                    "nullable": false
+                },
+                {
+                    "name": "market_category",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "financial_status",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "round_lot",
+                    "type": "int32",
+                    "nullable": true
+                },
+                {
+                    "name": "security_class",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "class_rule",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "cik",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "source",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
+                    "name": "file_created_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": true
+                },
+                {
+                    "name": "fetched_at",
+                    "type": "timestamp[ns, UTC]",
+                    "nullable": true
+                },
+                {
+                    "name": "raw_sha256",
+                    "type": "utf8",
+                    "nullable": true
+                }
+            ],
+            "primary_key": [
+                "date",
+                "source",
+                "ticker"
+            ],
+            "sort_key": [
+                "date",
+                "source",
+                "ticker"
+            ],
+            "merge": "overwrite",
+            "columns": [
+                "date:DATE",
+                "ticker:VARCHAR",
+                "vendor_symbol:VARCHAR",
+                "exchange:VARCHAR",
+                "security_name:VARCHAR",
+                "is_etf:BOOLEAN",
+                "market_category:VARCHAR",
+                "financial_status:VARCHAR",
+                "round_lot:INTEGER",
+                "security_class:VARCHAR",
+                "class_rule:VARCHAR",
+                "cik:VARCHAR",
+                "source:VARCHAR",
+                "file_created_at:TIMESTAMP WITH TIME ZONE",
+                "fetched_at:TIMESTAMP WITH TIME ZONE",
+                "raw_sha256:VARCHAR"
+            ],
+            "hash": "b591f47ebb4cbaefc84e8d64981c81f527c3da3913b93de7ee4062407b695166",
+            "last_migration": "2026-10-10-initial"
+        }
+    }
+}

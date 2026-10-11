@@ -53,7 +53,7 @@ See `MIGRATIONS.md` for the additive change procedure.
 ## 3. The 35 Datasets (layout, writer, cadence)
 
 This is the single table of layouts. `SCHEMAS.md`, `UNRAID-STORAGE.md` and
-`scripts/generate-registry.jl` must agree with it; `verify-schemas.sh` fails
+`schemas/generate-registry.jl` must agree with it; `verify-schemas.sh` fails
 if the registry and this table disagree on a name.
 
 Legend. Layout `S` = single file `lake/<name>.parquet`. `P(keys)` = hive
@@ -147,7 +147,8 @@ All writers and readers follow `IO-CONTRACT.md`. In short:
   primary key, write).
 
 **Julia:** read with `Parquet2` (or DuckDB.jl); write through the shared
-writer, which uses `Parquet2`/`Arrow` (API names: verify). Never CSV as an
+writer: `LakeIO` writes an Arrow IPC file and the Rust `lake-io` binary
+writes the Parquet, so Julia has no Parquet writer of its own. Never CSV as an
 intermediate format. Arrow IPC or Parquet only.
 
 **Rust:** write with `parquet::arrow::ArrowWriter`, `Compression::ZSTD(3)`;
@@ -216,6 +217,8 @@ before its first real write (the hash comes from a probe leaf, below).
 
 `fields` is what writers validate against (`IO-CONTRACT.md` §3 step 1);
 `columns`/`hash` are what the verifier compares lake files against. The
+hash does not cover nullability (`DESCRIBE` does not report it); the writer
+enforces nullability from `fields`. The
 generator derives `fields`, `primary_key` and `schemas_md` by parsing
 `SCHEMAS.md` (the four-column `Column | Type | Nullable | Notes` tables and the
 `Primary key:` lines), so the registry cannot drift from this skill. It then
@@ -223,11 +226,11 @@ writes one empty leaf per dataset through the Rust writer
 (`lake-schema-probe`) into a temporary lake and takes `columns`/`hash` from
 DuckDB `DESCRIBE` of those leaves. A type in `SCHEMAS.md` outside the list
 above, a section without a primary-key line (other than a documented
-exception), or a `DESCRIBE` type that disagrees with the expected mapping in
+exception), or a `DESCRIBE` type that disagrees with the mapping in
 `SCHEMAS.md` fails the generator.
 
-**One canonical form.** The generator (`scripts/generate-registry.jl`) and
-the verifier (`scripts/verify-schemas.sh`) both compute the hash from the
+**One canonical form.** The generator (`schemas/generate-registry.jl`) and
+the verifier (`schemas/verify-schemas.sh`) both compute the hash from the
 same string: DuckDB's `DESCRIBE SELECT * FROM read_parquet('<one leaf file>',
 hive_partitioning = false)`, each row rendered `column_name:column_type`, the
 rows joined by `|` in column order, SHA-256 of that UTF-8 string. Partition
@@ -280,7 +283,7 @@ debugging and dashboard.
 
 Before committing any change to a Parquet writer:
 
-- [ ] Run `scripts/verify-schemas.sh` and it passes
+- [ ] Run `schemas/verify-schemas.sh` and it passes
 - [ ] If schema changed, `schemas/registry.json` is regenerated
 - [ ] If schema changed, a migration file exists in `migrations/`
 - [ ] The writer calls `write_partition`/`write_dataset` of the shared

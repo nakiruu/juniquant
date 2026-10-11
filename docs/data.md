@@ -57,6 +57,6 @@ and sanity, survivorship coverage, universe vs holdings, FRED completeness, fili
 
 ## The lake
 
-34 Parquet datasets under `$QUANT_ROOT/lake`, each with exactly one writer, schemas frozen
+35 Parquet datasets under `$QUANT_ROOT/lake`, each with exactly one writer, schemas frozen
 once written and verified against `schemas/registry.json`. Large daily datasets are
 partitioned by time. The list is in [`13-parquet-lake/SKILL.md`](../.claude/skills/13-parquet-lake/SKILL.md).
