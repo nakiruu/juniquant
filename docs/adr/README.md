@@ -7,4 +7,4 @@ Consequences.
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](0001-permanent-security-id.md) | A permanent security id instead of the ticker as the key of history | Proposed |
+| [0001](0001-figi-security-key.md) | Key history by the US composite FIGI, with CIK as the issuer code | Accepted (D17) |
