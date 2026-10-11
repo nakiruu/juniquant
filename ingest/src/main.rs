@@ -6,6 +6,7 @@
 //! quant-ingest probe <p1..p6|y1..y4>                      BACKFILL.md §2
 //! quant-ingest eodhd backfill [--codes A,B] [--limit N]   W5, BACKFILL.md §5.1
 //! quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]   J4a, ADR 0001
+//! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
             .map_err(|e| e.to_string()),
         ["eodhd", "backfill", rest @ ..] => backfill(rest),
         ["identity", rest @ ..] => identity(rest),
+        ["ishares", "snapshot"] => ishares_snapshot(),
         _ => {
             eprintln!(
                 "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]"
@@ -407,4 +409,101 @@ fn load_figis(lake: &lake::Lake) -> Result<std::collections::BTreeMap<String, St
         .filter(|&i| t.value(i) == "eodhd_code")
         .map(|i| (v.value(i).to_owned(), f.value(i).to_owned()))
         .collect())
+}
+
+/// W8: land today's IWF and IWP holdings files, stage them, compact `etf_holdings`.
+fn ishares_snapshot() -> Result<(), String> {
+    use ingest::ishares;
+    let Setup {
+        paths,
+        lake,
+        manifest,
+        today,
+        quality,
+        ..
+    } = setup("ishares")?;
+    let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
+    // Ticker -> FIGI of the security that holds it today (not delisted).
+    let figis: std::collections::BTreeMap<String, String> = {
+        use arrow::array::AsArray;
+        let b = lake
+            .read_dataset(
+                "security_master",
+                Some(&["figi", "ticker", "delisted"]),
+                &[],
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+        let (f, t, d) = (
+            b.column(0).as_string::<i32>(),
+            b.column(1).as_string::<i32>(),
+            b.column(2).as_boolean(),
+        );
+        (0..b.num_rows())
+            .filter(|&i| !d.value(i))
+            .map(|i| (t.value(i).to_owned(), f.value(i).to_owned()))
+            .collect()
+    };
+    let fetcher = Fetcher::new(SourceSpec::ISHARES, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36", manifest.clone(), paths.raw.clone(), quality.clone())
+        .map_err(|e| e.to_string())?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let chunk = format!("latest-{today}");
+    for (etf, id, slug) in ishares::FUNDS {
+        let url = ishares::url(*id, slug);
+        let r = ingest::infra::fetch::Request {
+            entity: etf,
+            chunk: &chunk,
+            url: &url,
+            ext: "csv",
+            cost: 1,
+            dataset: "etf_holdings",
+            empty_is_gone: false,
+        };
+        rt.block_on(fetcher.fetch(&r)).map_err(|e| e.to_string())?;
+        let key = ("ishares", *etf, chunk.as_str());
+        let Some((path, sha, at)) = manifest.landed(key).map_err(|e| e.to_string())? else {
+            println!("ishares: {etf}: not fetched (see data_quality)");
+            continue;
+        };
+        let body =
+            ingest::infra::landing::read(std::path::Path::new(&path)).map_err(|e| e.to_string())?;
+        let snap = ishares::parse(&body).map_err(|e| format!("{etf}: {e}"))?;
+        let available_date = cal
+            .next_trading_day(snap.snapshot_date)
+            .map_err(|e| e.to_string())?;
+        let cx = ishares::Context {
+            etf,
+            available_date,
+            fetched_at: at,
+            raw_sha256: &sha,
+            figis: &figis,
+        };
+        let batch = ishares::batch(&snap, &cx).map_err(|e| e.to_string())?;
+        let unresolved = batch.column(16).null_count();
+        ingest::infra::stage::write_stage(
+            &paths.stage,
+            &manifest,
+            "etf_holdings",
+            key,
+            ishares::PARSE_VERSION,
+            &batch,
+        )
+        .map_err(|e| e.to_string())?;
+        println!(
+            "ishares: {etf} as of {} (usable {available_date}): {} holdings, {unresolved} without FIGI, dropped {:?}",
+            snap.snapshot_date,
+            batch.num_rows(),
+            snap.dropped
+        );
+    }
+    let c =
+        ingest::infra::stage::compact(&lake, &manifest, &paths.stage, "ishares", "etf_holdings")
+            .map_err(|e| e.to_string())?;
+    manifest.compacted("ishares").map_err(|e| e.to_string())?;
+    quality.write(&lake).map_err(|e| e.to_string())?;
+    println!("ishares: compaction {c:?}");
+    Ok(())
 }

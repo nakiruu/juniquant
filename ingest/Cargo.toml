@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 arrow.workspace = true
+calendar = { path = "../calendar" }
+csv.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 lake = { path = "../lake" }
 pdf_oxide.workspace = true

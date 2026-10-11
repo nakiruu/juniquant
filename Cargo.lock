@@ -1406,7 +1406,9 @@ name = "ingest"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "calendar",
  "chrono",
+ "csv",
  "lake",
  "pdf_oxide",
  "reqwest",

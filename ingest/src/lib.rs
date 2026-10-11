@@ -4,3 +4,4 @@
 pub mod eodhd;
 pub mod identity;
 pub mod infra;
+pub mod ishares;

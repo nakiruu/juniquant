@@ -918,6 +918,7 @@ count is logged).
 | `available_date` | `date32` | no | First trading day the snapshot may be used: the next trading day after `snapshot_date` (conservative; verify the publication time) |
 | `fetched_at` | `timestamp[ns, UTC]` | no | |
 | `raw_sha256` | `utf8` | no | |
+| `figi` | `utf8` | yes | Appended 2026-10-11 before first write (DECISIONS D17): US composite FIGI of the active security that held `ticker` on `snapshot_date` (`security_master`); null if unresolved (gate G5) |
 
 Primary key: `(snapshot_date, etf, ticker)`. A ticker held by both ETFs has two
 rows (the key includes `etf`). Duplicate lines for one `(snapshot_date, etf,

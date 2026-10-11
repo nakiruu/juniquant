@@ -3322,6 +3322,11 @@
                     "name": "raw_sha256",
                     "type": "utf8",
                     "nullable": false
+                },
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": true
                 }
             ],
             "primary_key": [
@@ -3351,9 +3356,10 @@
                 "location:VARCHAR",
                 "available_date:DATE",
                 "fetched_at:TIMESTAMP WITH TIME ZONE",
-                "raw_sha256:VARCHAR"
+                "raw_sha256:VARCHAR",
+                "figi:VARCHAR"
             ],
-            "hash": "7b89d65fc25ac3eaf7c6d280714d4ce645901cd0b8b272c60b040d4484bb63cc",
+            "hash": "0c497f26b39f677c9b04fa95ca5a729cc04211a3ef28db66a509aec5ac6c93e7",
             "last_migration": "2026-10-10-initial"
         },
         "security_master": {
