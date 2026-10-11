@@ -215,6 +215,33 @@ impl Manifest {
         Ok(true)
     }
 
+    /// The landed body of a fetched (or later) chunk: `(raw_path, sha256, fetched_at)`.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn landed(
+        &self,
+        (s, e, c): Key<'_>,
+    ) -> Result<Option<(String, String, DateTime<Utc>)>, rusqlite::Error> {
+        let row: Option<(Option<String>, Option<String>, Option<String>)> = self
+            .db()
+            .query_row(
+                "SELECT raw_path, sha256, fetched_at FROM chunks WHERE source=?1 AND entity=?2 AND chunk=?3
+                 AND status IN ('fetched','parsed','compacted')",
+                params![s, e, c],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(p, h, t)| {
+            Some((
+                p?,
+                h?,
+                DateTime::parse_from_rfc3339(&t?).ok()?.with_timezone(&Utc),
+            ))
+        }))
+    }
+
     /// The source has no data for the chunk; it is never fetched again.
     ///
     /// # Errors

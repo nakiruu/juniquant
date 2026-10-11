@@ -91,8 +91,9 @@ the day at 90,000 calls (counted in the manifest) rather than run into the cap.
 job runs after EODHD publishes the day (time **verify**, P4) and drops a bar
 dated today if it is fetched before 16:05 ET.
 
-**Failure modes.** An unknown code returns `200` with `[]` (or `404`): the chunk
-is `gone` with reason `vendor_no_data`, as a Yahoo `Not Found` was. A code that
+**Failure modes.** An unknown code returns `200` with `[]` from `/api/eod` (or `404`):
+the chunk is `gone` with reason `vendor_no_data`. From `/api/splits` and `/api/div`, `[]`
+means "no events" and is stored as an answer (found on the first W5 run). A code that
 answers with another holder's series (a reused ticker) is caught by the
 holding-period check above and logged as `vendor_wrong_holder`. `401`
 or `403` (key, plan) stops the run: never retried. `429` follows
