@@ -30,9 +30,12 @@ Rust probe `quant-ingest probe p6` repeats these calls and writes the evidence J
    `(date, value)`. Otherwise the `macro` table gets fake revisions at the boundaries.
 3. **`.` values.** `value = "."` appears as a real row (the first `DGS3MO` row, 2004-01-01, a
    holiday). They become null, as `SOURCES.md` says.
-4. **Credit spreads are deferred.** Nothing before 2023-10-10 exists on FRED for either
-   series. This is the decision the probe was meant to settle; the owner confirms it in
-   `config/macro_series.toml`.
+4. **Credit spreads are deferred, and `BAA10Y` replaces them if they are ever needed.**
+   Nothing before 2023-10-10 exists on FRED for either ICE BofA series. The owner confirmed
+   the deferral on 2026-10-11 and named FRED `BAA10Y` as the substitute (`DECISIONS.md` D16).
+   Checked that day: `BAA10Y` is daily from 1986-01-02, 5,941 observations from 2004, 2,979
+   vintage dates from 2014-01-27 (two windows; pre-2014 observations are late-captured). It is
+   not fetched now.
 5. **Request budget.** About 9 series x 1 to 3 windows plus 9 vintage-date calls: under 40
    requests, about 40 seconds at the Fred bucket (1 request/s).
 

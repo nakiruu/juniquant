@@ -447,6 +447,11 @@ cannot be trusted, both in `POINT-IN-TIME.md`):
 observations to 2026-10-08, one vintage) whatever `observation_start` asks for. A 15-year
 history of the credit spreads is not available from FRED, so those two series are
 **deferred** for the backfill (the gate reports it; no panel feature uses them).
+**If a credit spread is ever needed, use `BAA10Y` instead** (Moody's seasoned Baa yield minus
+the 10-year Treasury, daily from 1986-01-02; `DECISIONS.md` D16). It is not in the series
+table and is not fetched now. When added: 2,979 vintage dates (first 2014-01-27) means two
+windows of at most 2,000, and observations before 2014-01-27 are late-captured, so they use
+the lag-rule buffer.
 
 **Endpoint and vintages (P6):**
 
