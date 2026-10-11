@@ -510,24 +510,23 @@ per series: under 40 requests for the whole backfill.
 (iShares Russell 1000 Growth) and IWP (iShares Russell Mid-Cap Growth). IJT
 is not ingested in this phase (`UNIVERSE.md` §7).
 
-**URL pattern (verify):**
+**URL (probe P7, 2026-10-11):**
 
-    https://www.ishares.com/us/products/{PRODUCT_ID}/{slug}/1467271812596.ajax
-        ?fileType=csv&fileName={ETF}_holdings&dataType=fund&asOfDate={YYYYMMDD}
+    https://www.ishares.com/us/products/{PRODUCT_ID}/{slug}/latest-holdings.csv
 
-The `asOfDate` parameter selects a historical holdings date; without it the
-file is the latest. **Both the parameter name and how far back it works are
-unverified**; the probe requests month-ends back to 2005 and records the
-earliest date that returns data (`BACKFILL.md` §2). The product ids and slugs
-must be taken from the product page. The id that earlier text gave for IWF
-(`239714`) is unverified and may be wrong.
+IWF is `239706` (`ishares-russell-1000-growth-etf`); IWP's id is to be confirmed (P7). The
+file is **the latest only**: `asOfDate` is ignored and the old `.ajax?...&asOfDate=` endpoints
+now return HTML, so historical holdings are not available over plain HTTP
+(`docs/probes/p7-ishares.md`; the history source is decided in `BACKFILL.md` §7). The file
+has **no ISIN or CUSIP**: holdings resolve to a FIGI by ticker and date.
 
 **Parse rules (verify the layout):**
 - The CSV has a header block before the table (fund name, "Fund Holdings as
   of", a date such as `Oct 10, 2026`). The date in that block is the
   `snapshot_date`. Never use the fetch date.
 - Skip to the row that starts the column header (`Ticker,Name,Sector,Asset
-  Class,Market Value,Weight (%),Notional Value,Shares/Quantity,Price,...`).
+  Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,Exchange,Currency,FX
+  Rate,Market Currency,Accrual Date`, P7).
 - Numbers can carry thousands separators and be quoted; strip them. A UTF-8
   byte-order mark and a trailing disclaimer block can occur.
 - Keep only equity lines: drop cash, futures, money-market lines (`-` or a

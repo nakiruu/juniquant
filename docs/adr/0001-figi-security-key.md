@@ -105,8 +105,9 @@ CUSIP, ISIN and FIGI per code; HTTP 403 on the current plan; option A, kept for 
 - **An internal permanent id with a ledger** (the earlier draft): complete coverage, but its own
   identifier infrastructure; declined by the owner.
 - **EODHD Fundamentals** (option A): CIK, CUSIP, ISIN and FIGI per code without matching; paid
-  (about $60/month) and its delisted coverage is unverified. Kept as the upgrade path for the
-  unresolved remainder.
+  (about $60/month) and its delisted coverage is unverified. **Declined by the owner
+  (2026-10-11): no further EODHD spend.** The unresolved remainder is measured against IWF/IWP
+  membership (gate G5) and closed with overrides.
 - **Ticker with `~CIK10`** (the current spec): a key that changes.
 - **CIK + share class as the key:** issuer-level; a new class or a reorganization breaks it.
 
