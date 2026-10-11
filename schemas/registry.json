@@ -18,6 +18,11 @@
                     "nullable": false
                 },
                 {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
+                },
+                {
                     "name": "ticker",
                     "type": "utf8",
                     "nullable": false
@@ -50,12 +55,12 @@
                 {
                     "name": "snapshot_date",
                     "type": "date32",
-                    "nullable": false
+                    "nullable": true
                 },
                 {
                     "name": "snapshot_age_days",
                     "type": "int32",
-                    "nullable": false
+                    "nullable": true
                 },
                 {
                     "name": "weight_iwf",
@@ -90,15 +95,16 @@
             ],
             "primary_key": [
                 "date",
-                "ticker"
+                "figi"
             ],
             "sort_key": [
                 "date",
-                "ticker"
+                "figi"
             ],
             "merge": "overwrite",
             "columns": [
                 "date:DATE",
+                "figi:VARCHAR",
                 "ticker:VARCHAR",
                 "cik:VARCHAR",
                 "sector:VARCHAR",
@@ -114,7 +120,7 @@
                 "eligible:BOOLEAN",
                 "exclusion_reason:VARCHAR"
             ],
-            "hash": "24beb631fd8a8ec9b979bba451a11f47df096b9f63bcaab1a9745381323292e8",
+            "hash": "0009bcb634bd78fa1c17e9b7914311efc4395503001167d3b497a171dce5bb74",
             "last_migration": "2026-10-10-initial"
         },
         "prices": {
@@ -664,14 +670,19 @@
                     "name": "r_amihud",
                     "type": "float64",
                     "nullable": true
+                },
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
                 }
             ],
             "primary_key": [
-                "ticker",
+                "figi",
                 "date"
             ],
             "sort_key": [
-                "ticker",
+                "figi",
                 "date"
             ],
             "merge": "overwrite",
@@ -700,9 +711,10 @@
                 "log_mcap:DOUBLE",
                 "r_size:DOUBLE",
                 "amihud_60d:DOUBLE",
-                "r_amihud:DOUBLE"
+                "r_amihud:DOUBLE",
+                "figi:VARCHAR"
             ],
-            "hash": "478c7021064e03a234acaa260aee7b743fe4c43ef8ac626b70fa03b6c033c2d2",
+            "hash": "227bddf70b2a93149ec632ebbb5024781e1beacccbd8d7c2e4b1c938e9087feb",
             "last_migration": "2026-10-10-initial"
         },
         "regime_states": {

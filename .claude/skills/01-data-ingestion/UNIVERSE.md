@@ -157,8 +157,8 @@ One row per security (listed share class), keyed by the US composite FIGI
    removed) equals exactly one submissions `name` or `formerNames` entry whose
    date window contains the snapshot dates in which the ticker appears. More
    than one match is `unresolved`, never a guess.
-4. `unresolved`: `cik` null. The row stays; `universe.exclusion_reason` is
-   `identity_unresolved` for the dates concerned.
+4. `unresolved`: `cik` null. The row stays and can be eligible (the key is the FIGI,
+   D20); only `sp_ratio` is NaN.
 
 **Renames.** The same CIK appears under ticker X before a date and ticker Y
 after (a `formerNames` entry bridges them, or a manual row). It is one
@@ -194,7 +194,7 @@ date `t` uses data through `t` only:
 | `median_dollar_vol_60d` | Median over the 60 trading days ending `t` of `close x volume` (as traded). Null with fewer than 40 valid days |
 | `history_days` | Count of valid price days on or before `t` (0 without prices). "Clean" means the row passed the per-row price checks (G2) |
 | `eligible` | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` (3 years of 252 days; the outline's "fewer than 3 years of clean data"; from the business combination for a de-SPACed company, §5a) and a FIGI (every security in `prices` has one) and a price on `t`. A missing CIK does not exclude a security; its `sp_ratio` is NaN |
-| `exclusion_reason` | Null if eligible, else the first of `no_price_data`, `identity_unresolved`, `data_quality` (a failed-G2 price on `t`), `history`, `liquidity` |
+| `exclusion_reason` | Null if eligible, else the first of `data_quality` (a failed-G2 price on `t`), `history`, `liquidity`. A security without a FIGI or a price on `t` has no row (`SCHEMAS.md` #1) |
 
 The earlier `data_years` (years of history available, computed over the whole
 file) and the single current `eligible` flag looked into the future; they are
@@ -270,12 +270,13 @@ many of them. Owner decision, recorded as OPEN in the accompanying report.
 ## 8. Build Order (Julia, daily)
 
 1. Read `etf_holdings`, `security_master`, `prices` (columns needed only).
-2. Expand snapshots onto the trading calendar (`as of` join on
-   `available_date`), per ETF, union.
-3. Join prices for `history_days` (running count) and the 60-day median of
+2. One row per `(date, figi)` in `prices` for a FIGI in `security_master`.
+3. Join the latest snapshot per ETF on `figi` (`as of` join on `available_date`; no
+   snapshot before 2026-10-09: `in_iwf = in_iwp = false`, `snapshot_date` null).
+4. Compute `history_days` (running count) and the 60-day median of
    dollar volume.
-4. Set `eligible` / `exclusion_reason` by the precedence above.
-5. Write `universe` partitions (`replace` per year touched) through the lake
+5. Set `eligible` / `exclusion_reason` by the precedence above.
+6. Write `universe` partitions (`replace` per year touched) through the lake
    writer; then derive and write `price_coverage` (`SURVIVORSHIP.md` §4).
 
 ## 9. Verification
@@ -284,7 +285,8 @@ many of them. Owner decision, recorded as OPEN in the accompanying report.
       `in_iwf = in_iwp = true` and both weights
 - [ ] A test asserts no field of `universe` at `t` changes when data after
       `t` is altered (the shuffle/truncation test)
-- [ ] A member without prices appears with `exclusion_reason = no_price_data`
+- [ ] A security outside IWF/IWP with enough history and liquidity is `eligible` (D20)
+- [ ] Rows before the first snapshot have `snapshot_date` null and `in_iwf = in_iwp = false`
 - [ ] The symbol fixture file passes in the Rust crate
 - [ ] No Julia code implements symbol normalization
 - [ ] `universe` has no `effective_date`, `end_date`, `data_years`

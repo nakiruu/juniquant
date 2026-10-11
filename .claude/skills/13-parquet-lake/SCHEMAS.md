@@ -32,36 +32,39 @@ from the first write they are frozen like the rest.
 
 ## 1. `universe` (derived daily membership and eligibility)
 
-Rows: ~3M (one row per snapshot member per trading day, eligible or not).
+Rows: ~25M (one row per in-scope security per trading day with a price, eligible or not; estimate).
 Writer: Julia (universe builder). Update: daily, after prices and the identifier master.
 Partitioned: `year`. Spec: `01-data-ingestion/UNIVERSE.md`.
 
-One row per `(date, ticker)` for **every** ticker that is a member of IWF or
-IWP on `date`, whether or not it is eligible or has prices. Rows for members
-without prices (`exclusion_reason = no_price_data`) are what make the
-survivorship gap measurable (`01-data-ingestion/SURVIVORSHIP.md`). Every
-column at `date` uses only information available at `date`: the latest
-holdings snapshot with `available_date <= date`, and prices through `date`.
+One row per `(date, figi)` for **every** in-scope security (a FIGI in `security_master`)
+with a `prices` row on `date`, whether or not it is eligible or held by IWF/IWP
+(DECISIONS D20). This is the training population; `in_iwf` / `in_iwp` are the buy filter
+and exist only from the first archived snapshot (2026-10-09). Securities without a FIGI
+or without prices have no row; their gap is reported by the identity job (`data_quality`)
+and the survivorship report (`01-data-ingestion/SURVIVORSHIP.md`). Every column at `date`
+uses only information available at `date`: the latest holdings snapshot with
+`available_date <= date`, and prices through `date`.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `date` | `date32` | no | Trading day (NYSE calendar rules, not the dates present in `prices`) |
-| `ticker` | `utf8` | no | Canonical symbol (`UNIVERSE.md` §3) |
+| `figi` | `utf8` | no | US composite FIGI (`security_master` #31, D17) |
+| `ticker` | `utf8` | no | Canonical symbol on `date` (`UNIVERSE.md` §3), from `prices` |
 | `cik` | `utf8` | yes | 10-digit zero-padded; null if unresolved |
-| `sector` | `utf8` | yes | GICS sector from the snapshot used; needed for the 25% sector cap. When the snapshot has none, the SIC fallback (`UNIVERSE.md` §6) |
+| `sector` | `utf8` | yes | GICS sector from the snapshot used; needed for the 25% sector cap. When there is no snapshot or it has none, the SIC fallback (`UNIVERSE.md` §6) |
 | `sector_source` | `utf8` | yes | `gics_snapshot` / `sic_fallback`; null when `sector` is null |
-| `in_iwf` | `bool` | no | Member of IWF in the snapshot used |
+| `in_iwf` | `bool` | no | Member of IWF in the snapshot used; false when no snapshot is available at `date` |
 | `in_iwp` | `bool` | no | Member of IWP in the snapshot used. A ticker can be in both |
-| `snapshot_date` | `date32` | no | `snapshot_date` of the `etf_holdings` snapshot used |
-| `snapshot_age_days` | `int32` | no | `date - snapshot_date` in calendar days |
+| `snapshot_date` | `date32` | yes | `snapshot_date` of the `etf_holdings` snapshot used; null before the first snapshot |
+| `snapshot_age_days` | `int32` | yes | `date - snapshot_date` in calendar days; null with `snapshot_date` |
 | `weight_iwf` | `float64` | yes | Percent, from the snapshot; null if not a member |
 | `weight_iwp` | `float64` | yes | Percent, from the snapshot; null if not a member |
 | `median_dollar_vol_60d` | `float64` | yes | Median of `close x volume` (as traded) over the 60 trading days ending `date`; null with fewer than 40 valid days |
-| `history_days` | `int32` | no | Count of valid price days on or before `date` (0 without prices) |
-| `eligible` | `bool` | no | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` and a resolved identifier and prices on `date` |
-| `exclusion_reason` | `utf8` | yes | Null if eligible, else the first failing of `no_price_data` / `identity_unresolved` / `data_quality` / `history` / `liquidity` |
+| `history_days` | `int32` | no | Count of valid price days on or before `date` |
+| `eligible` | `bool` | no | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` and no `data_quality` FAIL for the security at `date`. IWF/IWP membership is not a condition (D20) |
+| `exclusion_reason` | `utf8` | yes | Null if eligible, else the first failing of `data_quality` / `history` / `liquidity` |
 
-Primary key: `(date, ticker)`.
+Primary key: `(date, figi)`.
 
 Removed from the earlier layout: `etf_source` (replaced by `in_iwf`/`in_iwp`;
 the old single value could not represent a ticker held by both ETFs),
@@ -206,7 +209,7 @@ the risk-free rate in the targets, `series_id = DGS3MO`
 
 ## 5. `panel`
 
-Rows: ~2.3M (about 600 eligible names x about 3,800 days; estimate). Writer: Julia (feature engine). Update: daily. Partitioned: `year/month`.
+Rows: ~20M (every in-scope security with a price from about 2008, D20; estimate). Writer: Julia (feature engine). Update: daily. Partitioned: `year/month`.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
@@ -235,10 +238,11 @@ Rows: ~2.3M (about 600 eligible names x about 3,800 days; estimate). Writer: Jul
 | `r_size` | `float64` | yes | Appended (D18). Candidate: cross-sectional rank of `market_cap` (`CROSS-SECTIONAL.md`); the stationary form a model would use |
 | `amihud_60d` | `float64` | yes | Appended (D18). Candidate: mean over the last 60 bars of `abs(ret[s]) / dollar_vol[s]`, per USD million (`FEATURES.md` §7a); NaN below 40 valid days |
 | `r_amihud` | `float64` | yes | Appended (D18). Candidate: cross-sectional rank of `amihud_60d` (higher = less liquid) |
+| `figi` | `utf8` | no | Appended (2026-10-11, before first write; D20). US composite FIGI, the security key (D17); joins `universe` on `(date, figi)` |
 
-Primary key: `(ticker, date)`. Feature column order is frozen. The 18 earlier
-columns are unchanged; the three flags and the four candidate columns (D18) are appended (25 columns). Models read
-the 12 features by name and ignore the flags and the candidates; the flags exist so calibration
+Primary key: `(figi, date)`. Feature column order is frozen. The 18 earlier
+columns are unchanged; the three flags, the four candidate columns (D18) and `figi` (D20) are appended (26 columns). Models read
+the 12 features by name and ignore the flags, the candidates and the identifiers; the flags exist so calibration
 and evaluation can exclude `survivorship_gap` rows and report their count.
 
 ---

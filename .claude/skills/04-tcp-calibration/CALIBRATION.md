@@ -15,7 +15,7 @@ that ticker. `t - H` is the date `H` entries before `t` on that index.
 
 
 **Eligible names only (owner decision C3).** Conformity scores, the pooled
-order statistic and the Robbins-Monro updates use only `(date, ticker)` rows that
+order statistic and the Robbins-Monro updates use only `(date, figi)` rows that
 are point-in-time `eligible` in `universe` at the calibration date and are not
 flagged `survivorship_gap`: calibrate on what you would trade.
 

@@ -12,9 +12,10 @@ description: Building the 12-feature panel that feeds GSPQR. Load when
 The panel is the training and inference matrix. One row per in-scope security
 (a FIGI in `security_master`) with prices per trading day, from the first trading day with at least 50
 eligible names; training and calibration use only the rows that are
-point-in-time eligible (§2, decisions C3, D20). Twenty-five columns: three identifiers, three forward-return
+point-in-time eligible (§2, decisions C3, D20). Twenty-six columns: three identifiers, three forward-return
 targets, six raw features, six cross-sectional rank features, three
-appended label-flag columns and four appended candidate columns (not features, D18).
+appended label-flag columns, four appended candidate columns (not features, D18) and the
+appended security key `figi` (D20).
 
 ## 0. Preconditions
 
@@ -36,9 +37,10 @@ The exact schema is in `13-parquet-lake/SCHEMAS.md` §5. The breakdown:
 | Rank features | `r_mom_20d`, `r_mom_60d`, `r_mom_12m_1m`, `r_vol_60d`, `r_sp`, `r_turn` | 6 |
 | Label flags (appended) | `label_flag_63d`, `label_flag_126d`, `label_flag_252d` | 3 |
 | Candidates (appended, not features; `FEATURES.md` §7a) | `log_mcap`, `r_size`, `amihud_60d`, `r_amihud` | 4 |
+| Security key (appended, D20) | `figi` | 1 |
 
-Total: 25 columns (the first 18 are the frozen model-facing schema; the
-three flags and the four candidates are appended and are not features). Feature column order is
+Total: 26 columns (the first 18 are the frozen model-facing schema; the
+three flags, the four candidates and `figi` are appended and are not features). Feature column order is
 frozen (constitution §5).
 
 ## 2. Non-Negotiables
@@ -71,7 +73,7 @@ Inherited from the constitution (§2, §3):
   from the first archived snapshot (2026-10-09). The schema has no eligibility column: every consumer that
   fits or calibrates (GSPQR generations and the research model, CPCV, TCP
   conformity scores, EVT residuals, the evaluation metrics) joins `universe`
-  on `(date, ticker)` and keeps only rows with `eligible = true` at `t`.
+  on `(date, figi)` and keeps only rows with `eligible = true` at `t`.
   Predictions are made for eligible names only. Ineligible rows (history
   under 756 days, liquidity, data quality) stay in the panel for diagnostics
   only, with NaN rank columns (`CROSS-SECTIONAL.md` §4); their labels are

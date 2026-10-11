@@ -59,7 +59,7 @@ timeline sections is arithmetic or an estimate, labelled as such.
 For cutoff `m` and each horizon `H` with `m >= m_cand(H)`:
 
 1. **As-of panel.** Take `panel.parquet` rows with `date <= m` and keep only
-   rows whose `(date, ticker)` is `eligible = true` in `universe`
+   rows whose `(date, figi)` is `eligible = true` in `universe`
    (`13-parquet-lake/SCHEMAS.md` #1) at that date: train on what you would
    trade (owner decision C3). Ineligible panel rows stay in the panel for
    diagnostics only and never enter a fit, a validation set or a baseline.

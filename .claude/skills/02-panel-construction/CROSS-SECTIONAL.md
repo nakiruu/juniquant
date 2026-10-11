@@ -140,7 +140,7 @@ end
 the tests run.) The six calls produce the six rank columns in the order of
 `FEATURES.md` §8. The panel also holds ineligible member rows, kept for
 diagnostics only (`SKILL.md` §2, decision C3); `eligible_col` (joined from
-`universe` on `(date, ticker)`) keeps them out of the distribution, and their
+`universe` on `(date, figi)`) keeps them out of the distribution, and their
 rank columns stay NaN.
 
 ## 7. Verification
