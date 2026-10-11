@@ -1,7 +1,7 @@
 //! `quant-ingest`: data ingestion and the 15+ year backfill.
 //!
 //! Specification: `.claude/skills/01-data-ingestion/` (SKILL.md, BACKFILL.md, SOURCES.md).
-//! Phase I2. Implemented so far: `quant-ingest probe <p1..p6>` (BACKFILL.md §2).
+//! Phase I2. Implemented so far: `quant-ingest probe <p1..p6|y1..y4>` (BACKFILL.md §2).
 
 mod probe;
 
@@ -21,7 +21,7 @@ fn main() -> ExitCode {
             }
         },
         _ => {
-            eprintln!("usage: quant-ingest probe <p1..p6>");
+            eprintln!("usage: quant-ingest probe <p1..p6|y1..y4>");
             ExitCode::from(2)
         }
     }

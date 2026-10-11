@@ -204,12 +204,12 @@ that was delisted in 2022 has rows through its last trading day, then no
 more; the panel does NOT retroactively remove it from 2021. Do **not**
 rebuild the panel using only currently-listed tickers.
 
-That is the intent. Its fidelity depends on whether the free vendor served
+That is the intent. Its fidelity depends on whether the price vendor (EODHD, `DECISIONS.md` D15) served
 the delisted name's prices at all. Members with no prices are not in the
 panel (they cannot have features); they are counted as missing in the
 coverage report, which is attached to the panel and to every artifact trained
 or evaluated on it (`01-data-ingestion/SURVIVORSHIP.md` §4). The labels of
-names that stop trading follow §3. What free data cannot fix is listed in
+names that stop trading follow §3. What the data cannot fix is listed in
 `SURVIVORSHIP.md` §6.
 
 ## 7. What Not to Do

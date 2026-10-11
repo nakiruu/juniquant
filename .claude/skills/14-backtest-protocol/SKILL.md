@@ -507,10 +507,11 @@ configuration ($100,000, §6b) is not affected by the filter.
 Every metric report (CPCV tables, WF tables, any figure derived from them)
 opens with a header that cannot be omitted:
 
-1. **Survivorship caveat (free data).** The data are from free sources and
-   the panel is a point-in-time rebuild from holdings snapshots, so names that
-   were delisted, acquired or otherwise dropped, and whose prices free sources
-   do not provide, are missing. Survivorship bias is **documented, not
+1. **Survivorship caveat (measured EODHD coverage gaps).** Prices are from
+   EODHD, which keeps delisted tickers' history but not every old delisting
+   (`DECISIONS.md` D15), and the panel is a point-in-time rebuild from
+   holdings snapshots, so names that were delisted, acquired or otherwise
+   dropped, and whose prices EODHD does not provide, are missing. Survivorship bias is **documented, not
    fixed**: returns, volatility, interval coverage and Sortino are measured on a
    survivor-tilted universe, usually optimistically, by an amount that is not
    known. The header quotes the measured size of the gap from the data

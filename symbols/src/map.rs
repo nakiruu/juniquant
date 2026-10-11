@@ -36,6 +36,7 @@ struct RawEntry {
     canonical: String,
     from: Option<String>,
     yahoo: Option<String>,
+    eodhd: Option<String>,
     ishares: Option<String>,
     schwab: Option<String>,
     lock_group: String,
@@ -87,6 +88,7 @@ pub struct SymbolEntry {
     canonical: Canon,
     from: Option<NaiveDate>,
     yahoo: Option<String>,
+    eodhd: Option<String>,
     ishares: Option<String>,
     schwab: Option<String>,
     lock_group: String,
@@ -114,6 +116,7 @@ impl SymbolEntry {
     pub fn spelling(&self, vendor: Vendor) -> Option<&str> {
         match vendor {
             Vendor::Yahoo => self.yahoo.as_deref(),
+            Vendor::Eodhd => self.eodhd.as_deref(),
             Vendor::IShares => self.ishares.as_deref(),
             Vendor::Schwab => self.schwab.as_deref(),
             Vendor::Sec => None,
@@ -170,7 +173,7 @@ pub enum MapError {
     InvalidSpelling {
         /// The entry it belongs to.
         canonical: Canon,
-        /// `yahoo`, `ishares`, `schwab` or `alias`.
+        /// `eodhd`, `yahoo`, `ishares`, `schwab` or `alias`.
         field: &'static str,
         /// The normalization failure.
         source: SymbolError,
@@ -447,6 +450,7 @@ impl SymbolMap {
                 return Err(MapError::EmptyLockGroup { canonical });
             }
             for (vendor, spelling) in [
+                (Vendor::Eodhd, &raw_entry.eodhd),
                 (Vendor::Yahoo, &raw_entry.yahoo),
                 (Vendor::IShares, &raw_entry.ishares),
                 (Vendor::Schwab, &raw_entry.schwab),
@@ -514,6 +518,7 @@ impl SymbolMap {
                 SymbolEntry {
                     canonical,
                     from,
+                    eodhd: raw_entry.eodhd,
                     yahoo: raw_entry.yahoo,
                     ishares: raw_entry.ishares,
                     schwab: raw_entry.schwab,
@@ -706,7 +711,7 @@ impl SymbolMap {
         let normalized = normalize(spelling).ok()?;
         match vendor {
             Vendor::Sec => self.entries.get(&normalized).map(|e| &e.canonical),
-            Vendor::Yahoo | Vendor::IShares | Vendor::Schwab => {
+            Vendor::Eodhd | Vendor::Yahoo | Vendor::IShares | Vendor::Schwab => {
                 self.spellings.get(&(vendor, normalized))
             }
         }
@@ -789,7 +794,7 @@ impl SymbolMap {
     fn vendor_column(&self, normalized: Canon, vendor: Vendor) -> Option<&Canon> {
         match vendor {
             Vendor::Sec => None,
-            Vendor::Yahoo | Vendor::IShares | Vendor::Schwab => {
+            Vendor::Eodhd | Vendor::Yahoo | Vendor::IShares | Vendor::Schwab => {
                 self.spellings.get(&(vendor, normalized))
             }
         }

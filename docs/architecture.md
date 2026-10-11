@@ -6,7 +6,7 @@ Overview of how the system fits together. Details live in the skills
 ## Pipeline
 
 ```
- Yahoo / EDGAR / FRED+ALFRED / iShares
+ EODHD / EDGAR / FRED+ALFRED / iShares
         │  Rust ingest (direct HTTP, raw landing zone, resumable manifest)      01
         ▼
  Parquet lake ($QUANT_ROOT/lake, 35 datasets, schema registry)                13

@@ -5,17 +5,19 @@ Summary of what the system collects and how. Normative details:
 survivorship, universe, quality gates) and [`13-parquet-lake`](../.claude/skills/13-parquet-lake/SKILL.md)
 (datasets, schemas, I/O contract).
 
-## Sources (free only)
+## Sources (EODHD paid, the rest free)
 
 | Source | What | History |
 |---|---|---|
-| Yahoo chart API | Raw as-traded daily OHLCV, split and dividend events | From 2005-01-01 |
+| EODHD (paid, `DECISIONS.md` D15) | Raw as-traded daily OHLCV, split and dividend events, including delisted US tickers | From 2005-01-01 |
+| Yahoo chart API (optional, secondary) | The same, for active symbols | From 2005-01-01 |
 | SEC EDGAR | XBRL fundamentals (bulk), 8-K events, delistings, company identifiers and SIC industry codes | XBRL from about 2009 |
 | FRED / ALFRED | Treasury yields, credit spreads, CPI, VIX, with publication vintages | From 2004-01-01 |
 | iShares | IWF and IWP holdings by as-of date (point-in-time universe) | As far back as iShares serves (probe P7 decides) |
 
 Every value is used only from the date it became public (filing date, release vintage,
-holdings as-of date). Requires a FRED API key and a contact email for the SEC User-Agent.
+holdings as-of date). Requires an EODHD API key, a FRED API key and a contact email for the
+SEC User-Agent.
 
 ## Sectors
 
@@ -34,9 +36,10 @@ assumption about the sources ([`BACKFILL.md`](../.claude/skills/01-data-ingestio
 
 ## Survivorship bias
 
-Free price sources generally do not serve stocks that were delisted or acquired. Those are
-often the biggest losers, so missing them makes results look better than they were.
-The system cannot fix this with free data, so it measures it:
+Stocks that were delisted or acquired are often the biggest losers, so missing them makes
+results look better than they were. EODHD keeps the history of delisted tickers, but its
+coverage of old delistings is not complete (probes P1-P4 measure it; a renamed ticker's old
+symbol returns nothing), so the system measures the gap:
 
 - A coverage report lists every stock that was ever in IWF/IWP and whether its prices exist
   through its delisting.

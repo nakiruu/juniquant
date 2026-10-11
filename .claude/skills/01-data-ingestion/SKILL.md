@@ -1,6 +1,6 @@
 ---
 name: data-ingestion
-description: Fetching raw data from Yahoo Finance (chart API), SEC EDGAR, FRED/ALFRED
+description: Fetching raw data from EODHD (prices), SEC EDGAR, FRED/ALFRED
   and iShares, in Rust over direct HTTP, for both the 15+ year backfill and the
   daily update. Load when touching ingest/src/ (backfill, parse/, holdings,
   identifiers, filing_events, delistings, ...), the shared symbols/ crate, the
@@ -10,8 +10,9 @@ description: Fetching raw data from Yahoo Finance (chart API), SEC EDGAR, FRED/A
 
 # Data Ingestion
 
-Four free sources feed this system: Yahoo Finance, SEC EDGAR, FRED (with its
-archival twin ALFRED) and iShares. There is **no paid data and no Python**:
+Four sources feed this system: EODHD for prices (paid, DECISIONS D15), and SEC
+EDGAR, FRED (with its archival twin ALFRED) and iShares, which are free. EODHD
+is the only paid source, and there is **no Python**:
 ingestion is Rust over direct HTTP (`ingest/`), analytics are Julia, checks
 are Julia, Rust, SQL (DuckDB) and bash. Each source has different rate
 limits, reliability and point-in-time semantics. This skill documents how to
@@ -29,15 +30,15 @@ GSPQR + TCP + EVT. So this skill has two modes:
 | **daily** | Incremental update after the close | this file, `SOURCES.md` |
 
 The panel is not built until the quality gates (`QUALITY-GATES.md`) pass on
-the backfilled data. The free-price decision has a known cost, survivorship
-bias, which is documented and quantified rather than hidden
+the backfilled data. Survivorship bias is measured, not assumed away: EODHD
+keeps delisted tickers, and its coverage of past delistings is quantified
 (`SURVIVORSHIP.md`).
 
 ## 1. The Sources
 
 | Source | Provides | Cadence | Auth |
 |---|---|---|---|
-| Yahoo Finance (chart API) | Raw daily OHLCV, split and dividend events | Daily after close | None |
+| EODHD (REST API, D15) | Raw daily OHLCV, split and dividend events, delisted tickers included | Daily after close | `EODHD_API_KEY` (paid plan) |
 | SEC EDGAR | Filings, XBRL facts, 8-K items, Form 25/15, identifiers | Event (filing) | `User-Agent` with a real email |
 | FRED / ALFRED | Macro series with vintages | Daily / on release | Free API key |
 | iShares | ETF holdings (IWF, IWP) by as-of date | Monthly at minimum | None |
@@ -118,13 +119,13 @@ There is no partial-state window: a chunk is either `compacted` or it is not.
 
 Every source has a token bucket. The numbers below are the **only** rate
 table; `SOURCES.md` and `RETRY-POLICY.md` refer here. They are starting
-points, deliberately below known or suspected limits. Yahoo publishes no
-limit; adapt from observed 429s (log them, halve the refill rate for 10
-minutes after one).
+points, deliberately below known or suspected limits. On any 429, log it and
+halve the refill rate for 10 minutes.
 
 | Source | Burst | Sustained | Concurrency | Basis |
 |---|---|---|---|---|
-| Yahoo (chart API) | 5 | 1 request / 2 s (0.5/s, 1,800/h) | 2 | Undocumented; conservative start (verify by observation) |
+| EODHD | 20 | 8 requests / s, and at most 90,000 calls per day | 4 | Plan limit 1,000 requests/min and 100,000 calls/day (pricing page, 2026-10-11); about half the rate, 90% of the day. A bulk request counts 100 calls |
+| Yahoo (secondary, only if registered) | 5 | 1 request / 2 s | 2 | Undocumented; conservative |
 | SEC EDGAR | 10 | 5 requests / s | 4 | SEC fair-access maximum is 10 requests/s (verify); half of it for margin |
 | FRED / ALFRED | 20 | 1 request / s | 2 | Documented limit 120 requests/min (verify); half of it |
 | iShares | 2 | 1 request / 5 s | 1 | Polite scraping of a public web endpoint; no published limit |
@@ -137,7 +138,8 @@ concurrency cap. Do not sleep manually.
 
 SEC EDGAR requires a `User-Agent` header with a real contact email; requests
 without it are rejected. Set `SEC_EDGAR_EMAIL` in the environment. FRED needs
-`FRED_API_KEY`. Neither is ever logged or written to a sidecar.
+`FRED_API_KEY`, EODHD `EODHD_API_KEY` (sent as `api_token=`). None is ever
+logged or written to a sidecar.
 
 ## 6. Point-in-Time Rules
 
@@ -146,7 +148,7 @@ See `POINT-IN-TIME.md`. In one paragraph:
 SEC data is usable from `filing_date` (the date the filing became public),
 never from `period_end`. FRED data is usable from `known_from`, derived from
 the ALFRED vintage (`realtime_start`) with a conservative lag floor, never
-from the observation date. A Yahoo close on date `t` is usable after 16:00 ET
+from the observation date. A close on date `t` is usable after 16:00 ET
 on `t`; stored prices are as traded, adjusted series are computed in Julia
 from the event tables. An iShares snapshot is usable from the trading day
 after its "as of" date.
@@ -157,7 +159,8 @@ after its "as of" date.
 |---|---|
 | HTTP timeout | Retry up to 3 times with exponential backoff |
 | HTTP 429 (rate limit) | Back off 60 s, halve the refill rate for 10 min, retry |
-| HTTP 404 on a Yahoo symbol | Not a retryable failure: mark the chunk `gone` with reason `vendor_no_data` (this is the survivorship signal, `SURVIVORSHIP.md`) |
+| EODHD `200` with `[]` (unknown or renamed code) | Not a retryable failure: mark the chunk `gone` with reason `vendor_no_data` (this is the survivorship signal, `SURVIVORSHIP.md`) |
+| HTTP 401 / 403 from EODHD (key or plan) | Stop the run; never retry. Log FAIL |
 | HTTP 4xx (other) | Do not retry. Log FAIL |
 | HTTP 5xx | Retry up to 5 times with backoff |
 | Schema mismatch | Do not retry. Keep the raw file. Log FAIL. Alert |
@@ -176,12 +179,13 @@ non-zero. The scheduler is responsible for alerting.
 - Do not write in place. Every write is temp + rename.
 - Do not skip the `data_quality` log. Silent failures are the worst kind.
 - Do not store vendor-adjusted prices as if they were raw. Do not store
-  auto-adjusted prices at all (`SOURCES.md` Yahoo).
+  vendor-adjusted prices at all (`adjusted_close` is kept only as the
+  diagnostic `adj_close_vendor`, `SOURCES.md` EODHD).
 - Do not parse HTML to extract SEC data. Use the XBRL facts (bulk
   `companyfacts` and the `submissions` JSON). Text of filings (going-concern
   language, covenant breaches) is not parsed: those veto inputs are deferred
   (`SOURCES.md` "Deferred inputs").
-- Do not trust vendor snapshots (Yahoo `quoteSummary` / `Ticker.info`) as
+- Do not trust vendor snapshots (Yahoo `quoteSummary`, EODHD `filter=extended` fields) as
   time series. They are not ingested; if one is ever added it is an
   append-only dataset stamped with its fetch time and used only forward.
 - Do not add a Python dependency, script or reference (no `yfinance`,

@@ -1,8 +1,10 @@
 # Survivorship Bias: What It Is Here, How It Is Measured, What It Cannot Fix
 
-The owner's decision is to use free price data only (Yahoo for prices, EDGAR
-for filings). Free price data is biased toward survivors. The bias is not
-hidden or argued away: it is **measured on every build, reported on every
+Prices come from EODHD (paid, DECISIONS D15), which keeps the history of
+delisted tickers; filings come from EDGAR. Before D15 the price source was free
+Yahoo, which drops most delisted names. EODHD narrows the gap but does not
+close it by assumption: whatever it does not serve still biases the history
+toward survivors. The bias is not hidden or argued away: it is **measured on every build, reported on every
 training and evaluation artifact, and reduced where EDGAR allows**. This file
 is the specification. The label rules that depend on it are normative in
 `02-panel-construction/TARGETS.md` §3.
@@ -12,12 +14,13 @@ is the specification. The label rules that depend on it are normative in
 - The universe is defined by historical IWF and IWP holdings (`UNIVERSE.md`),
   which include companies that were later acquired, went bankrupt or were
   delisted.
-- Yahoo's chart endpoint, to the best of my knowledge, does not generally
-  serve history for delisted or acquired symbols (it answers `Not Found`, or
-  returns a truncated series), and it **reuses symbols**: a ticker that was
-  recycled returns the new holder's history under the old holder's name
-  (**verify** with probe P2/P3, `BACKFILL.md` §2). The first backfill records
-  what it actually does for a fixed list of known delisted names.
+- EODHD keeps a delisted ticker's history (`TWTR.US` returns Twitter until
+  2022-10, its documentation says), but its coverage of older and smaller
+  delistings is not known, a **renamed** company's old code returns nothing
+  (`FB.US`), and a **reused** ticker may return the new holder's history under
+  the old holder's code (**verify** with probes P2/P3, `BACKFILL.md` §2). The
+  first backfill records what it actually does for a fixed list of known
+  delisted, renamed and reused names.
 - If the missing names were a random sample, this would only cost data. They
   are not random: delisted names include bankruptcies (large losses) and
   acquisitions (usually a premium at the end). The effect on a long-only
@@ -35,8 +38,8 @@ know which source a row came from except through `prices.source`.
 ```rust
 // Sketch (not normative, not compiled).
 pub struct SourceCaps {
-    pub id: &'static str,              // "yahoo"
-    pub split_adjusted_ohlcv: bool,    // vendor adjusts OHLCV for splits as of the fetch date (set by probe P1)
+    pub id: &'static str,              // "eodhd" (primary, D15); "yahoo" if registered as secondary
+    pub split_adjusted_ohlcv: bool,    // EODHD: false for prices, true for volume (probe P1)
     pub serves_delisted: Coverage,     // None | Partial | Full
     pub history_start_hint: Option<NaiveDate>,
     pub max_window_years: Option<u32>,
@@ -52,8 +55,8 @@ pub trait PriceSource {
 }
 ```
 
-Rules for adding a second source (for example a paid survivor-bias-free
-vendor):
+Rules for adding a second source (for example Yahoo as a secondary source, or
+a survivor-bias-free vendor):
 
 1. It gets its own `id` and lands raw files under its own `source` directory.
 2. `config/price_sources.toml` lists sources by priority per ticker and date
@@ -155,7 +158,7 @@ The panel build writes `reports/survivorship_caveat.json`:
   "caveat_version": 1,
   "generated_at": "2026-11-01T12:00:00Z",
   "data_end": "2026-10-30",
-  "price_source": "yahoo",
+  "price_source": "eodhd",
   "other_price_sources": [],
   "gates_passed": ["G0", "G1", "..."],
   "years": [
@@ -191,19 +194,20 @@ missing (`03-gspqr-model`, `14-backtest-protocol`; they implement the check).
 | Series ends before `t + H`, anything else | **Censored**: `y` NaN, flag `survivorship_gap`; excluded from training and calibration; counted in the report |
 | `t + H` is after the data end | NaN, flag `immature` (not a survivorship issue) |
 
-## 6. What Free Data Cannot Fix
+## 6. What the Data Cannot Fix
 
 Said plainly, because the machinery above only reduces and measures the
 problem:
 
-1. **Delisted names that Yahoo does not serve have no prices.** No rule
+1. **Delisted names that EODHD does not serve have no prices.** No rule
    creates history. Their member days are missing from `prices`, and
    everything trained on `prices` sees only the survivors of those names,
    except where EDGAR gives a terminal value for a name whose earlier prices
-   Yahoo does serve.
+   EODHD does serve.
 2. **Symbol reuse** makes some names unrecoverable and, if not caught,
    dangerous (a different company's prices attached to the old name). The
-   guard (`firstTradeDate`, series-start vs first-member-day checks) catches
+   guard (series-start vs first-member-day and EDGAR listing-date checks; Yahoo's
+   `firstTradeDate` if Yahoo is a secondary source) catches
    the obvious cases, not necessarily all.
 3. **Terminal values are assumptions.** Bankruptcy at -100% ignores
    post-delisting trading and recoveries; an acquisition at the last price

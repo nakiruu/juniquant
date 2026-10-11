@@ -78,7 +78,8 @@ letter after a dot. Grammar for tradable symbols:
 
 | Vendor | `BRK.B` renders as | Status |
 |---|---|---|
-| Yahoo | `BRK-B` (dot -> hyphen) | verify |
+| EODHD (prices, D15) | `BRK-B`, sent as `BRK-B.US` | verify (P3) |
+| Yahoo (optional secondary) | `BRK-B` (dot -> hyphen) | verify |
 | SEC `company_tickers` | `BRK-B` | verify |
 | iShares | as published; input only | verify |
 | Schwab | its own symbol format for class shares | verify in `10-execution-schwab` before use |
@@ -216,7 +217,7 @@ expansion. In this phase it is **not ingested**: the config list is
 `etfs = ["IWF", "IWP"]`, the `etf` column accepts `IJT` for later, and
 `universe` has no `in_ijt`. Adding it later means a new column appended to
 `universe` (migration) and about 600 more symbols to backfill (an extra half
-hour of Yahoo requests, estimate); the $5M dollar-volume floor would remove
+minutes of EODHD calls, estimate); the $5M dollar-volume floor would remove
 many of them. Owner decision, recorded as OPEN in the accompanying report.
 
 ## 8. Build Order (Julia, daily)

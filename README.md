@@ -11,11 +11,11 @@ downside-risk-aware portfolio, and (in a later phase) places orders under a cont
 
 ## What it does
 
-1. **Data:** daily prices and corporate actions (Yahoo), fundamentals and filing events
+1. **Data:** daily prices and corporate actions (EODHD, paid), fundamentals and filing events
    (SEC EDGAR), macro series with vintages (FRED/ALFRED) and historical index holdings
    (iShares IWF/IWP); data is collected for every NYSE, NYSE American and Nasdaq common stock
-   (DECISIONS D12). Free sources only; the survivorship bias this causes is measured and
-   reported with every result.
+   (DECISIONS D12). Everything but prices is from free sources (DECISIONS D15); the survivorship bias left by
+   gaps in EODHD's coverage of delisted stocks is measured and reported with every result.
 2. **Forecasts:** GSPQR (21 LightGBM quantile models), calibrated by TCP (conformal
    prediction) and extended into the tails by EVT.
 3. **Portfolio:** a regime gate, a fundamental veto and conviction overlay, and a

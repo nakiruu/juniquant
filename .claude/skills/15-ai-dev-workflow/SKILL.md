@@ -17,8 +17,8 @@ Every session begins with the same steps.
 
 0. **Identify the current project phase first.** Read "Project phase and
    build order" in `outline.md` and the Build Order table in `scaffold.md`.
-   Current phase: data collection (15+ years of every dataset, free sources,
-   survivorship bias documented and quantified), then
+   Current phase: data collection (15+ years of every dataset, prices from
+   EODHD and the rest from free sources per `DECISIONS.md` D15, survivorship bias documented and quantified), then
    GSPQR + TCP + EVT training; execution and live trading come last. Do not
    spend effort on later-phase details (Schwab, lock enforcement code, live
    tests, frontend) unless the user asks; do not delete those documents.

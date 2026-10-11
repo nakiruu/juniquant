@@ -34,14 +34,14 @@ backfill for that source until the owner decides.
 
 | Probe | Question | Sets / decides |
 |---|---|---|
-| P1 | Is the Yahoo OHLCV/volume/dividend split-adjusted as of the fetch date? Fetch a known split (AAPL 4-for-1 on 2020-08-31; the as-traded close on 2020-08-28 was about $499 and a split-adjusted value is about $125; NVDA 10-for-1 on 2024-06-10; one reverse split) | `yahoo_ohlcv_split_adjusted`, the rounding rule |
-| P2 | What does Yahoo return for delisted, acquired and renamed symbols? Candidates (acquired or delisted; the outcome is the point): TWX, MON, CELG, RHT, LLTC, SHLD, LEH, TWTR | The survivorship expectation; recorded per symbol in `reports/probes/yahoo_delisted.json` |
-| P3 | How far back does Yahoo go (SPY, a 2005-listed name)? Does `meta.firstTradeDate` detect symbol reuse (a recycled ticker)? | History depth; the reuse guard |
-| P4 | Rate behaviour: ramp the request rate in steps from 0.5/s, stop at the first 429, record the ceiling and the recovery time | Yahoo bucket (`SKILL.md` §5) |
+| P1 | EODHD adjustment: are `open`-`close` raw and `volume` split-adjusted, and is dividend `unadjustedValue` the amount paid? Known splits: AAPL 4-for-1 on 2020-08-31 (as-traded close on 2020-08-28 about $499, split-adjusted about $125), NVDA 10-for-1 on 2024-06-10, GE 1-for-8 reverse on 2021-08-02; AAPL dividend 2020-08-07 ($0.82 as paid) | `SOURCES.md` EODHD normalization, the rounding rule |
+| P2 | What does EODHD return for delisted, acquired and renamed codes? TWX, MON, CELG, RHT, LLTC, SHLD, LEH, TWTR (delisted, acquired), FB and META (rename: which code holds the pre-2022 bars). How large is `exchange-symbol-list/US?delisted=1`? | The survivorship expectation; recorded per code in `reports/probes/p2.json` |
+| P3 | History depth (SPY, a 2005 listing), ticker reuse (GM: old GM to 2009, new GM from 2010-11-18; does `GM.US` mix them?) and the share-class code (`BRK-B.US`) | History depth; the reuse guard; `symbols` vendor form |
+| P4 | Plan and usage: `/api/user` counters, the call cost of an eod, a splits and a bulk request (counter deltas), and when the previous trading day appears in `eod-bulk-last-day` | EODHD bucket and daily cap (`SKILL.md` §5), daily job time |
 | P5 | EDGAR bulk files: URLs, `Last-Modified`, size, whether `filings.files[]` pages are in the submissions zip, a multi-class company's dei shares facts (GOOGL, BRK), the `fy`/`fp` quirk, the `sic` and `sicDescription` fields | SOURCES.md EDGAR items |
 | P6 | ALFRED: full-vintage fetch of `DGS3MO` and `CPIAUCSL`; the earliest `realtime_start`; vintage-count limits; the earliest observation of the ICE BofA series | `config/macro_series.toml` lags, deferral of the credit spreads |
 | P7 | iShares: is `asOfDate` valid, the earliest date served for IWF and IWP, whether non-month-end dates work, the CSV layout and sector labels, publication time of the latest file | Snapshot grid; §7 OPEN |
-| P8 | EDGAR Form 25 timing: for 3 known delistings, the Form 25 filing date vs the last Yahoo bar | The "+10 days" rule in `SURVIVORSHIP.md` |
+| P8 | EDGAR Form 25 timing: for 3 known delistings, the Form 25 filing date vs the last EODHD bar | The "+10 days" rule in `SURVIVORSHIP.md` |
 
 Probe output contains the evidence (response status, headers, first and last
 dates, a few values). Nothing in the probe output is a secret.
@@ -54,7 +54,7 @@ bytes, so a parser bug is fixed and replayed, never "re-fetched and hoped".
     $QUANT_ROOT/raw/{source}/{entity}/{chunk}/{fetched_at_utc}__{sha8}.{ext}.zst
     $QUANT_ROOT/raw/{source}/{entity}/{chunk}/{fetched_at_utc}__{sha8}.{ext}.meta.json
 
-- `source`: `yahoo_chart`, `sec_bulk`, `sec_api`, `fred_alfred`, `ishares`,
+- `source`: `eodhd`, `yahoo_chart` (secondary, if registered), `sec_bulk`, `sec_api`, `fred_alfred`, `ishares`,
   `sec_tickers`.
 - `fetched_at_utc`: compact UTC timestamp `20261011T143502Z`.
 - `sha8`: first 8 hex characters of the SHA-256 of the **uncompressed** body.
@@ -104,13 +104,14 @@ CREATE TABLE probes (probe TEXT PRIMARY KEY, ran_at TEXT, result_json TEXT);
 
 States: `pending -> fetching -> fetched -> parsed -> compacted`. A chunk
 that fails goes to `failed` with `attempts` and `last_error` (retryable on
-the next run). A permanent "no data" answer (Yahoo `Not Found`) goes to
+the next run). A permanent "no data" answer (EODHD `[]`, Yahoo `Not Found`) goes to
 `gone` with `reason` (`vendor_no_data`), which is a result, not a failure.
 
 **Chunk keys by source**
 
 | Source | entity | chunk |
 |---|---|---|
+| `eodhd` | vendor code (`BRK-B.US`) | `eod-full`, `splits-full`, `div-full` (history to the fetch date) or `bulk-YYYY-MM-DD[-splits|-div]` (daily, entity `US`) |
 | `yahoo_chart` | vendor symbol (`BRK-B`) | `full` (history to the fetch date) or `incr-YYYY-MM-DD` |
 | `sec_bulk` | `submissions_zip` / `companyfacts_zip` | `YYYY-MM-DD` (publication date of the zip) |
 | `sec_api` | `CIK##########` | `submissions-YYYY-MM-DD` / `facts-YYYY-MM-DD` |
@@ -149,30 +150,31 @@ final state; a test does exactly that (§12).
 
 ## 5. Per-Source Plans
 
-### 5.1 Yahoo Finance: raw OHLCV, splits, dividends
+### 5.1 EODHD: raw OHLCV, splits, dividends (D15)
 
-- **Entities.** Every vendor symbol of every ticker that appears in any
-  holdings snapshot (from `etf_holdings` and `security_master`, so this job
-  runs after J4 in §8), plus reference symbols `SPY`, `IWF`, `IWP`, `^VIX`
-  (calendar and gate checks). Estimated 2,500 + 4 entities.
-- **Chunks.** One `full` chunk per entity: `period1` = `BACKFILL_START`
-  (earlier is harmless), `period2` = the fetch time. One request returns the
-  whole history, so no date-range chunking is needed, and none is allowed:
-  a window that does not end at the fetch time cannot be normalized
-  (`SOURCES.md`). If P3 shows the vendor truncating long histories, the
-  truncated part is a logged gap (`vendor_truncated`), not something to
-  stitch from old-window requests.
-- **Rate.** `SKILL.md` §5: 1 request / 2 s, burst 5, concurrency 2.
-  Estimated requests: about 2,500 + 4 + 10% retries + probes = about 2,900.
-  Estimated wall clock at 0.5/s: about 1.6 hours; plan for 2-3 hours with
-  429 pauses.
-- **Result per chunk.** Rows into `prices` (partitions `year`/`month`), split
-  rows into `splits`, dividend rows into `dividends`. `Not Found` -> `gone`
+- **Entities.** The vendor code of every ticker in the D12 scope: US common
+  stocks from `exchange-symbol-list/US?type=common_stock`, active and
+  `delisted=1` (both snapshots landed as raw files), restricted to NYSE, NYSE
+  American and Nasdaq, plus every ticker in any holdings snapshot (from
+  `etf_holdings` and `security_master`, so this job runs after J4 in §8), plus
+  the reference codes `SPY`, `IWF`, `IWP` and `VIX.INDX` (calendar and gate
+  checks). Estimated 5,500 active plus the delisted set (size from P2).
+- **Chunks.** Three per code: `eod-full`, `splits-full`, `div-full`, each
+  `from` = `BACKFILL_START` (earlier is harmless) to the fetch date, fetched
+  together in that order (the volume normalization needs the splits up to the
+  eod fetch, `SOURCES.md` EODHD). One request returns the whole range, so no
+  date-range chunking. The daily update is three `bulk-YYYY-MM-DD` chunks for
+  the whole exchange.
+- **Rate.** `SKILL.md` §5: 8 requests/s, burst 20, concurrency 4, and at most
+  90,000 calls per day. Estimated calls: 3 x (5,500 + delisted) + 10% retries
+  + probes; about 17,000 before the delisted set, so the backfill fits in one
+  day's allowance.
+- **Result per chunk.** Rows into `prices` (partitions `year`/`month`),
+  `splits` and `dividends` (`source = eodhd`). An empty array -> `gone`
   (`vendor_no_data`); a series that starts after the first holdings date, or
   ends before the EDGAR delisting estimate, is logged and classified by the
   coverage job (`SURVIVORSHIP.md`).
-- **Resume.** By chunk; a `full` fetch is not partially resumable (it is one
-  request).
+- **Resume.** By chunk; each chunk is one request.
 - **Raw volume (estimate).** About 0.3 MB uncompressed per symbol, about 0.75
   GB uncompressed, 0.15-0.2 GB ZSTD.
 - **Daily hand-off.** After the backfill the daily job fetches
@@ -271,7 +273,7 @@ rebuilt from prices).
 `backfill` runs the DAG of §8 with these pipeline stages per dataset:
 fetch -> parse -> compact. Stages are separate commands too
 (`quant-ingest fetch|parse|compact`), so a parser fix is replayed with
-`quant-ingest parse --source yahoo_chart --since-parse-version N` over the
+`quant-ingest parse --source eodhd --since-parse-version N` over the
 landing zone without any network.
 
 ## 7. iShares History Depth and Cadence (decided: D1, D2)
@@ -306,7 +308,7 @@ J1  probes P1-P8                                   -> config flags
 J2  sec_tickers + EDGAR bulk zips (submissions, companyfacts)
 J3  ishares holdings backfill (IWF, IWP)           -> etf_holdings
 J4  security_master                                needs J2, J3
-J5  yahoo prices/splits/dividends                  needs J3 (ticker list), J4 (vendor symbols)
+J5  eodhd prices/splits/dividends                  needs J3 (ticker list), J4 (vendor symbols)
 J6  filing_events + delistings                     needs J2, J4
 J7  fundamentals                                   needs J2 (facts), J4 (cik -> ticker)
 J8  macro (ALFRED)                                 independent; run in parallel from the start
@@ -324,15 +326,15 @@ date is joined in `price_coverage`, which removes the J5 -> J6 cycle.
 | Item | Estimate | Basis |
 |---|---|---|
 | Distinct tickers ever in IWF/IWP, 2008-2026 | about 2,500 (range 2,000-3,000) | about 600 members now, roughly 15% annual replacement over 17 years |
-| Yahoo requests | about 2,900 | tickers + retries + probes |
+| EODHD calls | about 17,000 for 5,500 codes (3 each), plus 3 per delisted code | eod + splits + dividends per code; under the 90,000-call daily cap, so one day |
 | EDGAR requests | under 100 | bulk + index + maps |
 | FRED requests | under 30 | 9 series, paged |
 | iShares requests | about 500 (month-end) | 2 ETFs x about 225 months + probes |
-| Wall clock, backfill fetching | about 3-4 hours if no throttling; plan for a day or two | dominated by Yahoo at 0.5/s |
-| Raw landing zone | about 3-6 GB | Yahoo 0.2 GB, SEC zips 2-4 GB, rest small |
+| Wall clock, backfill fetching | about 1 hour of EODHD at 8/s; EDGAR bulk downloads dominate | EODHD 17,000 calls / 8 per s is about 35 minutes |
+| Raw landing zone | about 3-6 GB | EODHD about 0.5 GB, SEC zips 2-4 GB, rest small |
 | Stage | about 0.5 GB | rebuildable; may be deleted after compaction |
 | Lake after backfill | about 0.6-0.8 GB | `prices` about 9M rows x about 40 B; `universe` about 3M rows; fundamentals about 150K rows; events about 300K rows |
-| Daily steady state | about 700 Yahoo + about 700 EDGAR + 9 FRED requests, about 30 minutes | current members only |
+| Daily steady state | 3 EODHD bulk requests (300 calls) + about 700 EDGAR + 9 FRED requests, a few minutes | the whole US exchange per day |
 
 ## 10. Quality Gates Are Preconditions to the Panel
 
@@ -349,7 +351,7 @@ report to the panel. No flag skips them; a threshold change is a commit to
 - Do not delete or edit raw files; fix the parser and replay.
 - Do not widen the rate limits to finish sooner. A 429 spiral costs more
   than the hours it saves.
-- Do not fetch an old Yahoo window that does not end at the fetch time.
+- Do not fetch an old window that does not end at the fetch time (the splits that undo a split-adjusted field must be known up to the fetch).
 - Do not fabricate rows for symbols the vendor does not serve.
 
 ## 12. Verification

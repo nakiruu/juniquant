@@ -224,12 +224,14 @@ quant/
 │   │   ├── backfill.rs                  # 15+ year resumable backfill driver (01 BACKFILL.md)
 │   │   ├── manifest.rs                  # $QUANT_STATE/ingest/manifest.db (SQLite)
 │   │   ├── landing.rs                   # immutable raw landing zone $QUANT_ROOT/raw/ (fetch timestamp + SHA-256)
-│   │   ├── yahoo.rs                     # chart API: raw as-traded OHLCV, split and dividend events
+│   │   ├── eodhd.rs                     # primary price source (DECISIONS D15): raw as-traded OHLCV, split and dividend events
+│   │   ├── yahoo.rs                     # optional secondary price source: chart API, same datasets
 │   │   ├── edgar.rs                     # bulk XBRL fundamentals, submissions
 │   │   ├── fred.rs                      # FRED + ALFRED vintages
 │   │   ├── ishares.rs                   # holdings by as-of date
 │   │   ├── parse/
 │   │   │   ├── mod.rs
+│   │   │   ├── eodhd.rs
 │   │   │   ├── yahoo.rs
 │   │   │   ├── edgar.rs
 │   │   │   ├── fred.rs
@@ -244,6 +246,7 @@ quant/
 │   │   ├── atomic_write.rs
 │   │   └── quality_log.rs
 │   └── tests/
+│       ├── test_eodhd.rs
 │       ├── test_yahoo.rs
 │       ├── test_edgar.rs
 │       └── test_atomic.rs
@@ -463,7 +466,7 @@ The `ledger/` module is Julia because it computes metrics (drawdown, Sortino, cu
 
 ## Build Order (Updated)
 
-**Current phase: data collection** (Ingestion: 15+ years of every dataset from free sources, survivorship bias documented and quantified), then training GSPQR + TCP + EVT (Prediction). Execution and live trading come last and are out of scope for now (`outline.md`, "Project phase and build order"). The table below was reordered on 2026-10-10: the earlier version put Bridge and Execution before Portfolio, which contradicted the owner's stated order (portfolio/regime/conviction, ledger, frontend, then execution and live). The phases themselves are unchanged.
+**Current phase: data collection** (Ingestion: 15+ years of every dataset, prices from EODHD and the rest from free sources (DECISIONS D15), survivorship bias documented and quantified), then training GSPQR + TCP + EVT (Prediction). Execution and live trading come last and are out of scope for now (`outline.md`, "Project phase and build order"). The table below was reordered on 2026-10-10: the earlier version put Bridge and Execution before Portfolio, which contradicted the owner's stated order (portfolio/regime/conviction, ledger, frontend, then execution and live). The phases themselves are unchanged.
 
 | Phase | Directories Created | Skills Implemented |
 |---|---|---|

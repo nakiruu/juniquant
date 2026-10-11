@@ -79,10 +79,10 @@ Rows: ~8-10M (about 2,500 tickers, each from its first available day to its last
 
 **Raw, not adjusted.** `open`/`high`/`low`/`close` are the prices as they
 traded on `date`, and `volume` is the shares traded on `date`, neither
-adjusted for later splits nor dividends. The vendor returns split-adjusted
-values as of the fetch date (**verify**); ingestion undoes that adjustment
-with the split events of the same response, so a stored row does not depend
-on when it was fetched (`01-data-ingestion/SOURCES.md` Yahoo). Adjusted series
+adjusted for later splits nor dividends. EODHD returns raw OHLC and a
+split-adjusted volume (confirmed by probe P1); ingestion undoes the volume
+adjustment with the splits fetched in the same run, so a stored row does not
+depend on when it was fetched (`01-data-ingestion/SOURCES.md` EODHD). Adjusted series
 are computed in Julia from `splits` (#28) and `dividends` (#29)
 (`02-panel-construction/FEATURES.md` §0). Nothing reads `adj_close_vendor`
 except the reconciliation gate.
@@ -97,7 +97,7 @@ except the reconciliation gate.
 | `close` | `float64` | no | As traded |
 | `volume` | `int64` | no | Shares traded on `date`, as traded (not split-adjusted) |
 | `adj_close_vendor` | `float64` | yes | The vendor's own adjusted close as of `fetched_at`. Diagnostic only (reconciliation gate); never a feature, never a label input. Replaces the earlier `adj_close` |
-| `source` | `utf8` | no | Appended. Price source id (`yahoo`); a second source would use its own id |
+| `source` | `utf8` | no | Appended. Price source id (`eodhd`, DECISIONS D15); a second source uses its own id (`yahoo`) |
 | `fetched_at` | `timestamp[ns, UTC]` | no | Appended. When the raw response was fetched |
 | `raw_sha256` | `utf8` | no | Appended. SHA-256 of the raw response body in the landing zone; links the row to its replayable source |
 
@@ -624,7 +624,7 @@ Rows: ~5K/year in steady state, plus about 5K from the backfill (one aggregate r
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `date` | `date32` | no | Run date (ET) |
-| `source` | `utf8` | no | `Yahoo` / `SEC` / `FRED` / `Schwab` / `iShares` / `Gate` (rows written by the quality-gate run, `01-data-ingestion/QUALITY-GATES.md`) |
+| `source` | `utf8` | no | `EODHD` / `Yahoo` / `SEC` / `FRED` / `Schwab` / `iShares` / `Gate` (rows written by the quality-gate run, `01-data-ingestion/QUALITY-GATES.md`) |
 | `dataset` | `utf8` | no | |
 | `tickers_expected` | `int32` | no | Entities expected in this row's scope (1 for a per-entity row) |
 | `tickers_received` | `int32` | no | |
@@ -856,7 +856,7 @@ Split events from the price vendor's `events=split` (`01-data-ingestion/SOURCES.
 | `numerator` | `float64` | no | New shares (4 in a 4-for-1) |
 | `denominator` | `float64` | no | Old shares (1 in a 4-for-1; 8 in a 1-for-8 reverse split) |
 | `ratio` | `float64` | no | `numerator / denominator`: new shares per old share. A price before `ex_date` is divided by it |
-| `source` | `utf8` | no | `yahoo` |
+| `source` | `utf8` | no | `eodhd` (or a secondary source id) |
 | `fetched_at` | `timestamp[ns, UTC]` | no | |
 | `raw_sha256` | `utf8` | no | Landing-zone body this row came from |
 
@@ -873,10 +873,10 @@ Cash dividends from the vendor's `events=div`. Used for the dividend-adjusted (t
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `ticker` | `utf8` | no | Canonical symbol |
-| `ex_date` | `date32` | no | Ex-dividend date (verify the vendor's date is the ex-date) |
-| `amount` | `float64` | no | USD per share **as paid** (not split-adjusted): ingestion undoes the vendor's split adjustment like it does for prices |
+| `ex_date` | `date32` | no | Ex-dividend date (EODHD `date`, documented as the ex-date) |
+| `amount` | `float64` | no | USD per share **as paid** (not split-adjusted): EODHD `unadjustedValue` |
 | `currency` | `utf8` | yes | From the response metadata, normally `USD` |
-| `source` | `utf8` | no | `yahoo` |
+| `source` | `utf8` | no | `eodhd` (or a secondary source id) |
 | `fetched_at` | `timestamp[ns, UTC]` | no | |
 | `raw_sha256` | `utf8` | no | |
 
@@ -932,7 +932,7 @@ security (listed share class), keyed by the canonical symbol.
 | `cik` | `utf8` | yes | 10-digit zero-padded; null if unresolved |
 | `name` | `utf8` | no | Latest known name |
 | `share_class` | `utf8` | yes | `A` / `B` / `C` ... or null |
-| `vendor_symbol` | `utf8` | no | The symbol to request from the price vendor (Yahoo form) |
+| `vendor_symbol` | `utf8` | no | The symbol to request from the price vendor (EODHD form without the `.US` suffix, `UNIVERSE.md` §3) |
 | `exchange` | `utf8` | yes | Latest known |
 | `first_snapshot_date` | `date32` | yes | First `etf_holdings` snapshot containing it |
 | `last_snapshot_date` | `date32` | yes | Last snapshot containing it |

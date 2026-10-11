@@ -13,6 +13,9 @@ constants.
         response = fetch()
         if response.ok:
             return response
+        if response.empty_series and source == EODHD:      # 200 with []
+            mark_chunk_gone(reason = vendor_no_data)     # survivorship signal, not an error
+            return gone
         if response.status == 404 and source == Yahoo:
             mark_chunk_gone(reason = vendor_no_data)     # survivorship signal, not an error
             return gone
@@ -40,6 +43,7 @@ constants.
 
 | Source | Base backoff | Max attempts | Rate-limit (429) backoff |
 |---|---|---|---|
+| EODHD | 1s | 3 | 60s, then halve the refill rate for 10 minutes; a 401/403 (key or plan) stops the run |
 | Yahoo | 2s | 3 | 60s, then halve the refill rate for 10 minutes |
 | SEC EDGAR | 1s | 5 | 60s (a 403/429 from SEC may mean a temporary IP block: stop the source for the run) |
 | FRED / ALFRED | 1s | 3 | 120s |
@@ -52,7 +56,8 @@ Backoff is exponential: 1s, 2s, 4s, 8s, 16s. Capped at 60s.
 
 ## Non-Retryable Failures
 
-- HTTP 4xx (except 429). A Yahoo `404` / `chart.error = Not Found` is
+- HTTP 4xx (except 429). An EODHD `200` with `[]`, or a Yahoo `404` /
+  `chart.error = Not Found`, is
   recorded as chunk status `gone` (reason `vendor_no_data`) and is **not** an
   ingestion failure: it feeds the survivorship coverage report
   (`SURVIVORSHIP.md`)
@@ -119,4 +124,5 @@ These lines go to the container log and to `data_quality` (columns `entity`,
 - Do not retry forever. Bounded attempts, then escalate.
 - Do not silently swallow failures. Every failed fetch is logged.
 - Do not retry on a shorter schedule than the source's update cadence.
-  Yahoo does not update mid-day. Retrying every 5 minutes wastes calls.
+  EODHD publishes a day once, after the close. Retrying every 5 minutes wastes
+  calls.

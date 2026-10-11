@@ -103,7 +103,7 @@ the observation dated `t` itself, and never a value filled from the future.
 Because every target uses it, this is the macro input that matters most
 (`02-panel-construction/TARGETS.md` §1).
 
-### Yahoo Prices
+### Prices (EODHD, D15)
 
 - **Close on date `t`:** usable at 16:00 ET on `t`. Open, high, low and
   volume on `t` are usable at the same time (the bar is complete).

@@ -4,7 +4,7 @@ A single-stock and small-universe quant trading system. It produces probabilisti
 
 ## Project phase and build order
 
-**Current phase: data collection.** Collect 15+ years of every dataset (prices, filings, macro, universe, and the rest) from free sources, with the resulting survivorship bias documented and quantified, then train GSPQR, TCP calibration and EVT tails. **Next:** panel validation, then regime, conviction and portfolio, then the ledger, then the frontend. **Execution (Schwab) and live trading come last and are out of scope for now.** The execution documents (`10-execution-schwab`, `11-rust-event-bus` execution parts, the lock enforcement code) are kept as the specification for that later phase; do not build or refine them unless asked. The phase order is the Build Order table in `scaffold.md`.
+**Current phase: data collection.** Collect 15+ years of every dataset (prices, filings, macro, universe, and the rest) from EODHD (prices) and free sources (everything else, `DECISIONS.md` D15), with the remaining survivorship bias documented and quantified, then train GSPQR, TCP calibration and EVT tails. **Next:** panel validation, then regime, conviction and portfolio, then the ledger, then the frontend. **Execution (Schwab) and live trading come last and are out of scope for now.** The execution documents (`10-execution-schwab`, `11-rust-event-bus` execution parts, the lock enforcement code) are kept as the specification for that later phase; do not build or refine them unless asked. The phase order is the Build Order table in `scaffold.md`.
 
 ## Universe
 
@@ -12,14 +12,14 @@ The universe is the individual stocks held by two iShares ETFs: IWF (large-cap g
 
 ## Data
 
-Four free sources are used, fetched by Rust over direct HTTP (`ingest/`; no Python anywhere):
+Four sources are used, fetched by Rust over direct HTTP (`ingest/`; no Python anywhere). EODHD is the only paid one (`DECISIONS.md` D15):
 
-- **Yahoo Finance** (chart API) for raw as-traded daily OHLCV plus split and dividend events. No valuation snapshots and no earnings calendar. No API key.
+- **EODHD** ("EOD Historical Data, All World", about $20/month) for raw as-traded daily OHLCV plus split and dividend events, including delisted US tickers. No fundamentals in the plan. API key `EODHD_API_KEY`. Yahoo Finance (chart API) is an optional secondary price source.
 - **SEC EDGAR** for fundamentals (bulk XBRL), 8-K events and delistings (Form 25/15). Point-in-time stamped with filing dates. No API key, but requires a User-Agent email header.
 - **FRED** for macro series (treasury yields, credit spreads, CPI, VIX), with ALFRED vintages so each value is known only from its release date. Free API key.
 - **iShares** for ETF holdings CSVs by as-of date. No API key.
 
-Free price sources drop most delisted names, so the history carries survivorship bias. It is not hidden: it is quantified (`01-data-ingestion/SURVIVORSHIP.md`) and the caveat is attached to every artifact built on the data.
+EODHD keeps the history of delisted tickers, but its coverage of old delistings is not complete (probes P1-P4 measure it), so the history can still carry survivorship bias. It is not hidden: it is quantified (`01-data-ingestion/SURVIVORSHIP.md`) and the caveat is attached to every artifact built on the data.
 
 Every data point is timestamped with its publication date, not its observation date. SEC filings use `filing_date`, never `period_end`. This is the system's most important rule and is enforced by a linter and a validation script.
 

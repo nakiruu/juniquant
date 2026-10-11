@@ -85,13 +85,13 @@ W1-W3 own disjoint directories and run in parallel. W4 starts when DuckDB is ins
 
 ### Phase I2 — Ingestion and the 15+ year backfill (critical path)
 
-1. **Probes first** (`quant-ingest probe P1..P8`, 01 `BACKFILL.md` §2): settle every "verify" item (Yahoo raw vs adjusted OHLCV and delisted symbols, EDGAR bulk URLs and sizes, ALFRED parameters, iShares `asOfDate` depth = decision D1, Form 25 timing, XBRL phase-in). Results are written to `docs/probes/` and fed back into the skills.
+1. **Probes first** (`quant-ingest probe P1..P8`, 01 `BACKFILL.md` §2): settle every "verify" item (EODHD raw vs adjusted OHLCV and its coverage of delisted symbols, `DECISIONS.md` D15, EDGAR bulk URLs and sizes, ALFRED parameters, iShares `asOfDate` depth = decision D1, Form 25 timing, XBRL phase-in). Results are written to `docs/probes/` and fed back into the skills.
 2. Common ingest infrastructure: raw landing zone with SHA-256 sidecars, `manifest.db` state machine, rate buckets, retry policy, fetch / parse / compact separation, gates G0-G10.
 3. Per-source workers, in parallel after step 2, each owning one module:
 
 | Worker | Sources | Datasets |
 |---|---|---|
-| W5 Yahoo | chart API | `prices` (raw as-traded), `splits`, `dividends` |
+| W5 Prices (D15) | EODHD EOD API (primary), Yahoo chart API (optional secondary) | `prices` (raw as-traded), `splits`, `dividends` |
 | W6 EDGAR | bulk companyfacts / submissions, 8-K items | `fundamentals`, `filing_events`, `delistings`, `security_master` (CIK side) |
 | W7 FRED/ALFRED | series + vintages | `macro` (long form, `known_from`) |
 | W8 iShares | holdings by as-of date (month-end + D2 extras) | `etf_holdings` |
@@ -104,13 +104,14 @@ IWF/IWP. Consequences to settle in I2:
 - **Archive the listing files from day one.** No free point-in-time listing history exists
   (Wayback snapshots are roughly yearly), so the daily Nasdaq Trader files go into the raw
   landing zone as soon as the W9 fetcher exists; that archive is the only exact history.
-- **Request budget.** About 5,500 Yahoo symbols at the current rate (1 request per 2 s) is
-  about 3 hours for the backfill and for any full daily refresh. Probe P4 measures the real
-  ceiling; the rate is not widened without it (01 `BACKFILL.md`).
+- **Request budget.** EODHD allows 100,000 API calls a day and 1,000 a minute (D15), so
+  about 5,500 symbols fit easily in one day's quota for the backfill and for any full daily
+  refresh. Probe P4 measures the real behaviour; the rate is not widened without it (01
+  `BACKFILL.md`).
 - **Daily window (existing problem, any scope).** The 16:10 price fetch must finish before
-  16:30 inference, but even about 700 IWF/IWP requests at 0.5/s take about 23 minutes. Fix in
-  I2 design: fetch traded members first in the 16:10 slot (and move inference later or raise
-  the rate after P4), and refresh the rest of the listed set in an overnight job, which no
+  16:30 inference. At the old Yahoo rate about 700 IWF/IWP requests at 0.5/s took about 23
+  minutes; at EODHD's limits they take about a minute. I2 design: fetch traded members first
+  in the 16:10 slot, and refresh the rest of the listed set in an overnight job, which no
   same-day decision depends on.
 - **Estimates to update.** Row counts, storage and wall-clock figures in 01 `BACKFILL.md` and
   `13-parquet-lake/SCHEMAS.md` assume about 2,500 tickers; expect roughly 3-4x for prices,

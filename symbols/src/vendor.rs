@@ -12,7 +12,10 @@ use crate::canon::Canon;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Vendor {
-    /// Yahoo Finance chart API (`BRK-B`).
+    /// EODHD, the primary price source (DECISIONS D15): `BRK-B`, sent as `BRK-B.US` (the
+    /// client appends the exchange). Class-share form verify (P3).
+    Eodhd,
+    /// Yahoo Finance chart API (`BRK-B`), optional secondary source.
     Yahoo,
     /// SEC EDGAR `company_tickers` (`BRK-B`).
     Sec,
@@ -25,12 +28,19 @@ pub enum Vendor {
 
 impl Vendor {
     /// All vendors, in declaration order.
-    pub const ALL: [Self; 4] = [Self::Yahoo, Self::Sec, Self::Schwab, Self::IShares];
+    pub const ALL: [Self; 5] = [
+        Self::Eodhd,
+        Self::Yahoo,
+        Self::Sec,
+        Self::Schwab,
+        Self::IShares,
+    ];
 
-    /// The lower-case name used in fixtures and config: `yahoo`, `sec`, `schwab`, `ishares`.
+    /// The lower-case name used in fixtures and config: `eodhd`, `yahoo`, `sec`, `schwab`, `ishares`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Eodhd => "eodhd",
             Self::Yahoo => "yahoo",
             Self::Sec => "sec",
             Self::Schwab => "schwab",
@@ -47,7 +57,7 @@ impl fmt::Display for Vendor {
 
 /// An unknown vendor name.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("unknown vendor {input:?}: expected yahoo, sec, schwab or ishares")]
+#[error("unknown vendor {input:?}: expected eodhd, yahoo, sec, schwab or ishares")]
 pub struct UnknownVendor {
     /// The rejected input, verbatim.
     pub input: String,
@@ -108,7 +118,7 @@ impl RenderError {
 
 /// Renders a canonical symbol in a vendor's spelling (UNIVERSE.md §3, `symbol_render.csv`).
 ///
-/// - Yahoo and SEC: the class dot becomes a hyphen (`BRK.B` -> `BRK-B`).
+/// - EODHD, Yahoo and SEC: the class dot becomes a hyphen (`BRK.B` -> `BRK-B`).
 /// - Schwab: class-less symbols are unchanged; class shares are refused until their
 ///   spelling is verified (`10-execution-schwab`).
 /// - iShares: input only, always refused.
@@ -119,8 +129,12 @@ impl RenderError {
 pub fn render(symbol: &Canon, vendor: Vendor) -> Result<String, RenderError> {
     match (vendor, symbol.class()) {
         (Vendor::IShares, _) => Err(RenderError::InputOnly { vendor }),
-        (Vendor::Yahoo | Vendor::Sec | Vendor::Schwab, None) => Ok(symbol.as_str().to_owned()),
-        (Vendor::Yahoo | Vendor::Sec, Some(class)) => Ok(format!("{}-{class}", symbol.base())),
+        (Vendor::Eodhd | Vendor::Yahoo | Vendor::Sec | Vendor::Schwab, None) => {
+            Ok(symbol.as_str().to_owned())
+        }
+        (Vendor::Eodhd | Vendor::Yahoo | Vendor::Sec, Some(class)) => {
+            Ok(format!("{}-{class}", symbol.base()))
+        }
         (Vendor::Schwab, Some(_)) => Err(RenderError::UnverifiedVendor {
             vendor,
             symbol: symbol.clone(),

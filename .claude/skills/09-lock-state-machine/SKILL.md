@@ -476,7 +476,7 @@ deterministic:
 ### 3.8 Symbol mapping (one canonical map)
 
 The same company appears under different spellings in different sources
-(Yahoo `BRK-B`, iShares holdings `BRKB`, Schwab `BRK/B`; also `BF.B`, class
+(EODHD `BRK-B.US`, Yahoo `BRK-B`, iShares holdings `BRKB`, Schwab `BRK/B`; also `BF.B`, class
 shares such as `GOOG` / `GOOGL`, and renames such as `FB` to `META`; every
 spelling here is a **verify** item, never a fact). A lock check that compares
 spellings as strings can miss a block, so there is **one canonical symbol map**,
@@ -500,7 +500,7 @@ counted, never dropped. The map is used by:
 - the order generator and the snapshot writer (they emit canonical tickers; the
   Schwab spelling is produced only at the API boundary by `canonical -> schwab`).
 
-Map shape: one entry per canonical ticker with its `yahoo`, `ishares` and
+Map shape: one entry per canonical ticker with its `eodhd`, `yahoo`, `ishares` and
 `schwab` spellings, an optional `aliases` list (old tickers after a rename, with
 `until` dates), and a `lock_group`. An old ticker listed in `aliases` maps to
 the new canonical ticker for the lookback window, so an order placed under the
@@ -728,8 +728,8 @@ all, and a sell could be placed one trading day too early. Therefore:
   `calendar-sync --bars` fetches **daily bars** for the broad-market reference set
   **`IWF`, `IWP`, `SPY`** from Schwab `pricehistory` (`periodType=month`,
   `frequencyType=daily`; parameters per `10-execution-schwab/SCHWAB-API-REFERENCE.md`,
-  verify), falling back to the Yahoo chart API (`interval=1d`, the same client as
-  `01-data-ingestion`) when Schwab is unavailable. It never reads
+  verify), falling back to the price source (EODHD daily EOD, `DECISIONS.md` D15; the
+  same client as `01-data-ingestion`) when Schwab is unavailable. It never reads
   `prices.parquet`. For each of the **last 10 sessions** before today that the
   current calendar (rules + overrides) treats as open:
   - **No bar from any of the three** (each request succeeded and parsed, and none
@@ -752,7 +752,7 @@ all, and a sell could be placed one trading day too early. Therefore:
 
   **One-time historical run.** After the price backfill, `calendar-sync --bars
   --from 2001-01-01` runs the same test over every rules-session weekday from
-  2001 to yesterday, using the Yahoo chart API daily history of the reference
+  2001 to yesterday, using the EODHD daily history of the reference
   set (Schwab's daily depth is unverified). A ticker counts in the set only from
   its first bar (`IWP` began trading in 2001, verify), and at least `SPY` must be
   present. It must **rediscover** the seed closures (2001-09-11 to 2001-09-14,

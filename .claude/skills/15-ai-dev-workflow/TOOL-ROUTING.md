@@ -66,7 +66,7 @@ memory of what it "probably" contains.
 ## Web Fetch
 
 **Use for:**
-- Checking current API docs (Schwab, SEC EDGAR, Yahoo)
+- Checking current API docs (Schwab, SEC EDGAR, EODHD, Yahoo)
 - Looking up a library version
 - Reading arXiv for a method referenced in a skill
 

@@ -30,9 +30,9 @@ ticker (not a return across the gap). The same series is the "equal-weighted
 universe return" of the `vol_60d_res` feature (`02-panel-construction`); there
 is one definition. The universe is point-in-time (the membership and
 eligibility known at `t`), not today's constituents. It still inherits the
-free-data survivorship bias (`01-data-ingestion`, coverage report): delisted
-names that the free sources dropped are missing, which understates the
-volatility of the universe, and the regime thresholds should be read with
+remaining survivorship bias (`01-data-ingestion`, coverage report): delisted
+names that the price source (EODHD, `DECISIONS.md` D15) does not cover are
+missing, which understates the volatility of the universe, and the regime thresholds should be read with
 that in mind.
 
 Adjusted prices are computed in Julia from the raw prices, splits and

@@ -152,8 +152,8 @@ the hook itself are not scanned, so the pattern no longer matches them.
 Target construction is isolated in `features/src/targets.jl`. No other file may
 reference `shift(-N)` or forward indexing.
 
-Survivorship (`01-data-ingestion/SURVIVORSHIP.md`): free price sources miss
-most delisted names. The gap is measured per ticker (`price_coverage`), rows
+Survivorship (`01-data-ingestion/SURVIVORSHIP.md`): the price source
+(EODHD, `DECISIONS.md` D15) does not cover every delisted name. The gap is measured per ticker (`price_coverage`), rows
 flagged `survivorship_gap` are excluded from training and calibration, and
 every model artifact and backtest report carries the survivorship caveat
 (TESTED: a report without the caveat header fails, `14-backtest-protocol`).

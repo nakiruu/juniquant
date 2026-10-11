@@ -1,4 +1,5 @@
-//! P1-P4: the Yahoo chart API (`BACKFILL.md` §2, `SOURCES.md` Yahoo). The analysis is in
+//! Y1-Y4: P1-P4 against the Yahoo chart API, for Yahoo as an optional secondary source
+//! (DECISIONS D15; `BACKFILL.md` §2, `SOURCES.md` Yahoo). The analysis is in
 //! pure functions over the parsed response, so it is unit-tested without the network.
 
 #![allow(

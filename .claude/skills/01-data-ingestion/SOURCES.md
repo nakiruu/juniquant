@@ -1,7 +1,8 @@
 # Source Details
 
 Per-source endpoints, parameters, parsing rules and quirks. Everything is
-Rust over direct HTTP; no vendor client library, no Python. Rate limits are
+Rust over direct HTTP; no vendor client library, no Python. Prices come from
+EODHD (paid, DECISIONS D15); everything else is free. Rate limits are
 in `SKILL.md` §5 (the one table); retry constants in `RETRY-POLICY.md`.
 
 **Verification status.** The endpoint shapes, field names and limits below
@@ -13,7 +14,85 @@ that cannot be undone.
 
 ---
 
-## Yahoo Finance (chart API)
+## EODHD (primary price source, DECISIONS D15)
+
+**Client:** direct HTTP (`reqwest`) to the EODHD REST API. No vendor client
+library. **Plan:** "EOD Historical Data, All World" (about $20/month, personal
+use): end-of-day prices, splits and dividends, including delisted tickers; no
+fundamentals (EDGAR stays the fundamentals source). Raw responses stay on this
+machine; nothing is redistributed.
+
+**Auth.** `api_token={EODHD_API_KEY}` query parameter on every request, read
+from the environment (`.env`). The key is redacted in every sidecar, log and
+probe record, like the FRED key.
+
+**Symbols.** `{CODE}.US`, where `CODE` is the vendor form of the canonical
+ticker (`UNIVERSE.md` §3). The `.US` exchange is composite (NYSE, Nasdaq,
+NYSE American). Share-class form (`BRK-B.US`) **verify** (P3).
+
+**Endpoints** (from the EODHD documentation, 2026-10-11; each costs 1 API call
+per request whatever the range, except bulk):
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/eod/{CODE}.US?fmt=json&from=YYYY-MM-DD&to=YYYY-MM-DD` | `[{date, open, high, low, close, adjusted_close, volume}]` |
+| `GET /api/splits/{CODE}.US?fmt=json&from=...` | `[{date, split: "4.000000/1.000000"}]`, new shares first; `date` is the ex-date |
+| `GET /api/div/{CODE}.US?fmt=json&from=...` | `[{date, declarationDate, recordDate, paymentDate, period, value, unadjustedValue, currency}]`; `date` is the ex-date |
+| `GET /api/eod-bulk-last-day/US?fmt=json&date=YYYY-MM-DD[&type=splits\|dividends]` | One trading day for the whole exchange; **100 calls** per request. A non-trading day returns the previous trading day |
+| `GET /api/exchange-symbol-list/US?fmt=json[&delisted=1][&type=common_stock]` | `[{Code, Name, Country, Exchange, Currency, Type, Isin}]` today; `delisted=1` returns the delisted set instead. A snapshot with no dates: a fetch list, never a point-in-time listing (`listings` #35 stays Nasdaq Trader + EDGAR) |
+| `GET /api/user` | Plan and usage counters (**verify**, P4) |
+
+**What the fields mean** (EODHD documentation, confirmed by P1):
+
+- `open`, `high`, `low`, `close`: **raw, as traded** that day, no adjustment.
+- `volume`: **split-adjusted** (restated in today's shares).
+- `adjusted_close`: adjusted for splits and dividends; stored as
+  `adj_close_vendor` (diagnostic, reconciliation gate only).
+- Dividend `unadjustedValue`: the amount actually paid per share on the day;
+  `value` is restated in today's shares. `dividends.amount` stores
+  `unadjustedValue`.
+- A **delisted** ticker keeps its history (`TWTR.US` returns Twitter until
+  2022-10). A **renamed** company's old code returns an empty array (`FB.US`):
+  the history is under the current code, and the dated holdings of
+  `config/symbol_map.toml` map it back (P2 confirms which code holds the
+  pre-rename bars).
+- Depth: US common stocks from 1962-01-02 at the earliest; the backfill needs
+  2005 on (D12).
+
+**Normalization to as-traded.** Prices are already raw (`F = 1` for OHLC).
+Volume is undone with the splits fetched in the same run:
+
+    F(d)      = product of ratio_s over splits s with ex_date_s > d and ex_date_s <= eod fetch date
+    volume_d  = round(vendor_volume_d / F(d))
+
+The splits request is made right after the eod request; a split whose ex-date
+falls after the eod fetch date is not in that eod response's adjustment and is
+excluded from `F`.
+
+**Usage.** 100,000 calls per day and 1,000 per minute on this plan (pricing
+page, 2026-10-11). The backfill costs 3 calls per code (eod, splits,
+dividends): about 16,500 for 5,500 codes, plus the delisted set (size from P2).
+The daily update uses the three bulk requests: 300 calls. The client stops for
+the day at 90,000 calls (counted in the manifest) rather than run into the cap.
+
+**Point in time.** A close for `t` is usable after 16:00 ET on `t`; the daily
+job runs after EODHD publishes the day (time **verify**, P4) and drops a bar
+dated today if it is fetched before 16:05 ET.
+
+**Failure modes.** An unknown or renamed code returns `200` with `[]`: the
+chunk is `gone` with reason `vendor_no_data`, as a Yahoo `Not Found` was. `401`
+or `403` (key, plan) stops the run: never retried. `429` follows
+`RETRY-POLICY.md`.
+
+---
+
+## Yahoo Finance (chart API): optional secondary source
+
+Since D15 Yahoo is not the price source. It may be registered as a secondary
+source behind the price-source interface (`SURVIVORSHIP.md` §2, source id
+`yahoo`) for names EODHD does not serve; the rules below apply only then. On
+2026-10-11 Yahoo answered every request from this machine with `429`, so it is
+unusable until that clears.
 
 **Client:** direct HTTP (`reqwest`) to the chart endpoint. No `yfinance`, no
 crate that wraps it.

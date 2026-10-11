@@ -6,6 +6,7 @@
 //! shortcut: blocking HTTP and a per-source minimum interval instead of the token bucket and
 //! manifest of the I2 ingest infrastructure (`SKILL.md` §4-§5); probes run once, by hand.
 
+mod eodhd;
 mod p5_edgar;
 mod p6_alfred;
 mod yahoo;
@@ -27,7 +28,7 @@ pub enum ProbeError {
     #[error("{0} is not set")]
     EnvUnset(&'static str),
     /// Unknown probe name.
-    #[error("unknown probe `{0}` (p1-p6 are implemented)")]
+    #[error("unknown probe `{0}` (p1-p6 and y1-y4 are implemented)")]
     Unknown(String),
     /// The HTTP client failed to build or the request did not complete (DNS, TLS, timeout).
     #[error("http: {0}")]
@@ -48,6 +49,8 @@ pub enum ProbeError {
 /// A data source, with its pacing and headers (`SKILL.md` §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Source {
+    /// EODHD, the primary price source (key `EODHD_API_KEY`, sent as `api_token=`, redacted).
+    Eodhd,
     /// Yahoo chart API.
     Yahoo,
     /// SEC EDGAR (needs `SEC_EDGAR_EMAIL`).
@@ -63,6 +66,7 @@ impl Source {
     /// Minimum time between two requests to the source (the sustained rate of `SKILL.md` §5).
     fn min_interval(self) -> Duration {
         Duration::from_millis(match self {
+            Self::Eodhd => 125,
             Self::Yahoo => 2000,
             Self::Edgar => 200,
             Self::Fred => 1000,
@@ -100,6 +104,8 @@ pub struct Probe {
     dir: PathBuf,
     client: reqwest::blocking::Client,
     edgar_ua: Option<String>,
+    /// `EODHD_API_KEY`, for the EODHD probes to put in their URLs.
+    pub(crate) eodhd_key: Option<String>,
     last: Vec<(Source, Instant)>,
     min_interval: Vec<(Source, Duration)>,
     requests: Vec<Value>,
@@ -151,6 +157,9 @@ impl Probe {
             dir,
             client,
             edgar_ua,
+            eodhd_key: std::env::var("EODHD_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty()),
             last: Vec::new(),
             min_interval: Vec::new(),
             requests: Vec::new(),
@@ -171,7 +180,17 @@ impl Probe {
     ///
     /// [`ProbeError::EnvUnset`] for EDGAR without `SEC_EDGAR_EMAIL`; transport and I/O errors.
     pub fn get(&mut self, source: Source, url: &str) -> Result<Reply, ProbeError> {
-        self.send(source, reqwest::Method::GET, url, None)
+        self.send(source, reqwest::Method::GET, url, None, true)
+    }
+
+    /// GET without landing the body (only its hash is logged): for a response that carries
+    /// personal data, such as the EODHD account record.
+    ///
+    /// # Errors
+    ///
+    /// As [`Probe::get`].
+    pub fn get_private(&mut self, source: Source, url: &str) -> Result<Reply, ProbeError> {
+        self.send(source, reqwest::Method::GET, url, None, false)
     }
 
     /// HEAD `url`: paced and logged like [`Probe::get`]; there is no body to land.
@@ -180,7 +199,7 @@ impl Probe {
     ///
     /// As [`Probe::get`].
     pub fn head(&mut self, source: Source, url: &str) -> Result<Reply, ProbeError> {
-        self.send(source, reqwest::Method::HEAD, url, None)
+        self.send(source, reqwest::Method::HEAD, url, None, true)
     }
 
     /// GET bytes `start..=end` of `url` (`Range`, uncompressed so the offsets are the file's);
@@ -196,7 +215,7 @@ impl Probe {
         start: u64,
         end: u64,
     ) -> Result<Reply, ProbeError> {
-        self.send(source, reqwest::Method::GET, url, Some((start, end)))
+        self.send(source, reqwest::Method::GET, url, Some((start, end)), true)
     }
 
     fn send(
@@ -205,6 +224,7 @@ impl Probe {
         method: reqwest::Method,
         url: &str,
         range: Option<(u64, u64)>,
+        land: bool,
     ) -> Result<Reply, ProbeError> {
         let interval = self
             .min_interval
@@ -233,7 +253,8 @@ impl Probe {
                 .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
                 .header(reqwest::header::ACCEPT_ENCODING, "identity");
         }
-        let resp = req.send()?;
+        // without_url: a reqwest error displays the URL, and ours carry API keys.
+        let resp = req.send().map_err(reqwest::Error::without_url)?;
         let status = resp.status().as_u16();
         let headers: Vec<(String, String)> = resp
             .headers()
@@ -245,16 +266,18 @@ impl Probe {
                 )
             })
             .collect();
-        let body = resp.bytes()?.to_vec();
+        let body = resp.bytes().map_err(reqwest::Error::without_url)?.to_vec();
         self.last.retain(|(s, _)| *s != source);
         self.last.push((source, Instant::now()));
 
         let n = self.requests.len() + 1;
         let raw = self.dir.join("raw").join(format!("{n:03}.body"));
-        fs::write(&raw, &body).map_err(|e| ProbeError::Io {
-            path: raw.clone(),
-            source: e,
-        })?;
+        if land {
+            fs::write(&raw, &body).map_err(|e| ProbeError::Io {
+                path: raw.clone(),
+                source: e,
+            })?;
+        }
         let kept: serde_json::Map<String, Value> = headers
             .iter()
             .filter(|(k, _)| KEEP_HEADERS.contains(&k.as_str()))
@@ -272,7 +295,7 @@ impl Probe {
             "sha256": hex(&Sha256::digest(&body)),
             "fetched_at": fetched_at.to_rfc3339(),
             "elapsed_ms": started.elapsed().as_millis(),
-            "raw": raw.strip_prefix(&self.dir).unwrap_or(&raw).display().to_string(),
+            "raw": land.then(|| raw.strip_prefix(&self.dir).unwrap_or(&raw).display().to_string()),
         }));
         Ok(Reply {
             status,
@@ -313,10 +336,15 @@ impl Probe {
 /// gathered before an error is still written.
 pub fn run(name: &str) -> Result<PathBuf, ProbeError> {
     let f: fn(&mut Probe) -> Result<(), ProbeError> = match name {
-        "p1" => yahoo::p1,
-        "p2" => yahoo::p2,
-        "p3" => yahoo::p3,
-        "p4" => yahoo::p4,
+        "p1" => eodhd::p1,
+        "p2" => eodhd::p2,
+        "p3" => eodhd::p3,
+        "p4" => eodhd::p4,
+        // The Yahoo versions, for Yahoo as an optional secondary source (D15).
+        "y1" => yahoo::p1,
+        "y2" => yahoo::p2,
+        "y3" => yahoo::p3,
+        "y4" => yahoo::p4,
         "p5" => p5_edgar::run,
         "p6" => p6_alfred::run,
         other => return Err(ProbeError::Unknown(other.to_owned())),
@@ -330,13 +358,16 @@ pub fn run(name: &str) -> Result<PathBuf, ProbeError> {
     result.map(|()| path)
 }
 
-/// Replace the value of an `api_key=` query parameter.
+/// Replace the value of the `api_key=` (FRED) and `api_token=` (EODHD) query parameters.
 fn redact(url: &str) -> String {
-    let Some((head, rest)) = url.split_once("api_key=") else {
-        return url.to_owned();
-    };
-    let tail = rest.find('&').and_then(|j| rest.get(j..)).unwrap_or("");
-    format!("{head}api_key=REDACTED{tail}")
+    let mut out = url.to_owned();
+    for param in ["api_key=", "api_token="] {
+        if let Some((head, rest)) = out.split_once(param) {
+            let tail = rest.find('&').and_then(|j| rest.get(j..)).unwrap_or("");
+            out = format!("{head}{param}REDACTED{tail}");
+        }
+    }
+    out
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -358,5 +389,9 @@ mod tests {
             "https://x/s?a=1&api_key=REDACTED"
         );
         assert_eq!(redact("https://x/s?a=1"), "https://x/s?a=1");
+        assert_eq!(
+            redact("https://eodhd.com/api/eod/X.US?api_token=K&fmt=json"),
+            "https://eodhd.com/api/eod/X.US?api_token=REDACTED&fmt=json"
+        );
     }
 }
