@@ -947,7 +947,7 @@ class on US venues) over its whole life. Redefined before first write on
 | `delisted` | `bool` | no | True if every code of the security is in the delisted list |
 | `security_type` | `utf8` | yes | OpenFIGI `securityType` (`Common Stock`, `REIT`, ...) |
 | `figi_name` | `utf8` | yes | OpenFIGI `name` |
-| `resolution` | `utf8` | no | How the FIGI was found: `override` / `isin` / `cusip_13f` |
+| `resolution` | `utf8` | no | How the FIGI was found: `override` / `isin` / `cusip_13f` / `rename` (a renamed code or vendor twin of a resolved code, `01-data-ingestion/SOURCES.md` Identifiers) |
 | `resolution_note` | `utf8` | yes | Evidence: the ISIN or CUSIP used, the normalized names compared |
 | `updated_at` | `timestamp[ns, UTC]` | no | |
 | `sic` | `utf8` | yes | 4-digit SIC code of the issuer (CIK) from EDGAR submissions `sic`; null if unresolved or absent. Current value only (`UNIVERSE.md` §6) |

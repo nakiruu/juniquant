@@ -90,3 +90,18 @@ pub fn write_file(path: &Path, batch: &arrow::array::RecordBatch) -> Result<(), 
 pub fn read_file(path: &Path) -> Result<arrow::array::RecordBatch, LakeError> {
     read::read_leaf(path, None, None)
 }
+
+/// Read a Parquet file, optionally only the top-level columns `columns` (file order indices)
+/// and only rows whose `date32` column `dates.0` lies in `[dates.1, dates.2]`, filtered while
+/// decoding: for bounded-memory passes over many files (ingest compaction).
+///
+/// # Errors
+///
+/// I/O and Parquet errors.
+pub fn read_file_with(
+    path: &Path,
+    columns: Option<&[usize]>,
+    dates: Option<(usize, chrono::NaiveDate, chrono::NaiveDate)>,
+) -> Result<arrow::array::RecordBatch, LakeError> {
+    read::read_leaf(path, columns, dates)
+}

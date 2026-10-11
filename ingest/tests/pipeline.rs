@@ -334,3 +334,94 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// A `prices` stage batch: one bar per day in `days` (days since the epoch).
+fn prices(figi: &'static str, days: &[i32]) -> RecordBatch {
+    let n = days.len();
+    let s = |v: &'static str| -> ArrayRef { Arc::new(StringArray::from(vec![v; n])) };
+    let f = |v: f64| -> ArrayRef { Arc::new(Float64Array::from(vec![v; n])) };
+    let cols: Vec<ArrayRef> = vec![
+        s(figi),
+        s("X"),
+        Arc::new(Date32Array::from(days.to_vec())),
+        f(1.0),
+        f(1.0),
+        f(1.0),
+        f(1.0),
+        Arc::new(arrow::array::Int64Array::from(vec![100; n])),
+        f(1.0),
+        s("eodhd"),
+        Arc::new(TimestampNanosecondArray::from(vec![0; n]).with_timezone("UTC")),
+        s("ab"),
+    ];
+    let names = [
+        "figi",
+        "ticker",
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "adj_close_vendor",
+        "source",
+        "fetched_at",
+        "raw_sha256",
+    ];
+    let schema = arrow::datatypes::Schema::new(
+        names
+            .iter()
+            .zip(&cols)
+            .map(|(n, c)| arrow::datatypes::Field::new(*n, c.data_type().clone(), true))
+            .collect::<Vec<_>>(),
+    );
+    RecordBatch::try_new(Arc::new(schema), cols).unwrap()
+}
+
+#[test]
+fn partitioned_compaction_runs_year_by_year() {
+    let e = env();
+    let registry = lake::Registry::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../schemas/registry.json"),
+    )
+    .unwrap();
+    let lake = lake::Lake::new(
+        e.dir.path().join("lake"),
+        e.dir.path().join("locks"),
+        registry,
+    );
+    let st = e.dir.path().join("stage");
+    // 2023-12-29, 2024-01-02, 2024-01-03 for one FIGI; a twin code repeats 2024-01-02.
+    for (entity, days) in [
+        ("A.US", &[19_720, 19_724, 19_725][..]),
+        ("A_old.US", &[19_724][..]),
+    ] {
+        let key = ("eodhd", entity, "eod-full");
+        e.manifest.ensure(key).unwrap();
+        stage::write_stage(&st, &e.manifest, "prices", key, "1", &prices("BBG_A", days)).unwrap();
+    }
+    assert_eq!(
+        stage::compact(&lake, &e.manifest, &st, "eodhd", "prices").unwrap(),
+        Compacted::Written {
+            rows: 3,
+            duplicates: 1
+        }
+    );
+    for leaf in ["year=2023/month=12", "year=2024/month=01"] {
+        assert!(
+            e.dir
+                .path()
+                .join("lake/prices")
+                .join(leaf)
+                .join("data.parquet")
+                .is_file(),
+            "{leaf}"
+        );
+    }
+    assert_eq!(
+        lake.read_dataset("prices", None, &[], None)
+            .unwrap()
+            .num_rows(),
+        3
+    );
+}

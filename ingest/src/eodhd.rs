@@ -745,6 +745,12 @@ pub mod run {
             }
         };
         let figi = ctx.figis.get(&c.code).cloned();
+        if figi.is_none() {
+            // A code that lost its FIGI (J4a re-run) must not stay in compaction.
+            for chunk in ["eod-full", "splits-full", "div-full"] {
+                ctx.manifest.unstage(key(chunk))?;
+            }
+        }
         let mut result = CodeResult {
             resolved: figi.is_some(),
             ..CodeResult::default()

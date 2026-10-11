@@ -9,6 +9,7 @@
 //! shortcut: compaction rereads every stage file of the dataset and writes every partition they
 //! touch (`Mode::Replace`); add a stage-to-partition index if daily compaction gets slow.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use arrow::array::RecordBatch;
@@ -106,23 +107,92 @@ pub fn compact(
     if manifest.partition_inputs(dataset, &partition)?.as_deref() == Some(inputs_hash.as_str()) {
         return Ok(Compacted::Unchanged);
     }
-    let batches = files
+    let paths: Vec<&Path> = files
         .iter()
-        .map(|(p, _, _)| lake::read_file(Path::new(p)))
-        .collect::<Result<Vec<_>, _>>()?;
-    let Some(first) = batches.first() else {
-        return Ok(Compacted::Unchanged);
+        .map(|(p, _, _)| Path::new(p.as_str()))
+        .collect();
+    let spec = lake.registry().get(dataset)?;
+    let date_col = spec.partition_column.as_deref().and_then(|c| {
+        spec.fields
+            .iter()
+            .position(|f| f.name == c && f.ty == "date32")
+    });
+    let (rows, duplicates) = match date_col {
+        Some(col) => compact_by_year(lake, dataset, &paths, col)?,
+        None => {
+            let batches = paths
+                .iter()
+                .map(|p| lake::read_file(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            let Some(first) = batches.first() else {
+                return Ok(Compacted::Unchanged);
+            };
+            let all = concat_batches(&first.schema(), &batches)?;
+            let (all, duplicates) = first_per_key(lake, dataset, &all)?;
+            lake.write_dataset(dataset, &all, lake::Mode::Replace)?;
+            (all.num_rows(), duplicates)
+        }
     };
-    let all = concat_batches(&first.schema(), &batches)?;
-    let (all, duplicates) = first_per_key(lake, dataset, &all)?;
-    lake.write_dataset(dataset, &all, lake::Mode::Replace)?;
     // shortcut: content_hash is recorded as the inputs hash; hash the written leaves when the
     // kill-and-resume test (BACKFILL.md §12) compares lake content.
     manifest.record_partition(dataset, &partition, &inputs_hash, &inputs_hash)?;
-    Ok(Compacted::Written {
-        rows: all.num_rows(),
-        duplicates,
-    })
+    Ok(Compacted::Written { rows, duplicates })
+}
+
+/// A partitioned dataset in bounded memory: one pass reads only the date column of each stage
+/// file to learn the years it spans, then each year is rebuilt from the rows of that year
+/// alone (filtered while decoding), so about one year of rows is in memory at a time.
+///
+/// shortcut: a year that no stage file reaches any more keeps its old leaves; delete them by
+/// hand if a whole year of inputs is ever withdrawn.
+fn compact_by_year(
+    lake: &lake::Lake,
+    dataset: &str,
+    paths: &[&Path],
+    col: usize,
+) -> Result<(usize, usize), StageError> {
+    use arrow::array::AsArray;
+    use chrono::Datelike;
+    let mut by_year: BTreeMap<i32, Vec<&Path>> = BTreeMap::new();
+    for p in paths {
+        let b = lake::read_file_with(p, Some(&[col]), None)?;
+        let d = b.column(0).as_primitive::<arrow::datatypes::Date32Type>();
+        let year = |v: Option<i32>| {
+            v.and_then(|x| {
+                chrono::NaiveDate::default()
+                    .checked_add_signed(chrono::Duration::days(i64::from(x)))
+            })
+            .map(|d| d.year())
+        };
+        if let (Some(a), Some(z)) = (year(arrow::compute::min(d)), year(arrow::compute::max(d))) {
+            for y in a..=z {
+                by_year.entry(y).or_default().push(p);
+            }
+        }
+    }
+    let (mut rows, mut duplicates) = (0, 0);
+    for (y, files) in by_year {
+        let (from, to) = match (
+            chrono::NaiveDate::from_ymd_opt(y, 1, 1),
+            chrono::NaiveDate::from_ymd_opt(y, 12, 31),
+        ) {
+            (Some(f), Some(t)) => (f, t),
+            _ => continue,
+        };
+        let batches = files
+            .iter()
+            .map(|p| lake::read_file_with(p, None, Some((col, from, to))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(first) = batches.first() else {
+            continue;
+        };
+        let year_rows = concat_batches(&first.schema(), &batches)?;
+        let (kept, dropped) = first_per_key(lake, dataset, &year_rows)?;
+        lake.write_dataset(dataset, &kept, lake::Mode::Replace)?;
+        rows += kept.num_rows();
+        duplicates += dropped;
+    }
+    Ok((rows, duplicates))
 }
 
 /// Keep the first row of each primary key, in stage-file order (a plain EODHD code sorts

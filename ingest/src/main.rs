@@ -373,11 +373,12 @@ fn identity(rest: &[&str]) -> Result<(), String> {
     quality.write(&lake).map_err(|e| e.to_string())?;
     let s = result?;
     println!(
-        "identity: {} codes -> {} securities (ISIN {}, 13(f) CUSIP {}); out of scope {}; unresolved {} (no match {}, ambiguous {})",
+        "identity: {} codes -> {} securities (ISIN {}, 13(f) CUSIP {}, rename {}); out of scope {}; unresolved {} (no match {}, ambiguous {})",
         s.codes,
         s.securities,
         s.by_isin,
         s.by_cusip,
+        s.by_rename,
         s.out_of_scope,
         s.no_match + s.ambiguous,
         s.no_match,

@@ -266,6 +266,9 @@ pub enum Resolution {
     Isin(String),
     /// Through a 13(f) CUSIP whose OpenFIGI name equals the code's name.
     Cusip13f(String),
+    /// A rename or vendor twin of the resolved code given (same name, continuous or identical
+    /// price series); the string is the evidence.
+    Rename(String),
 }
 
 /// A resolved code.
@@ -313,6 +316,7 @@ pub fn resolve(
             .or_default()
             .insert(f.figi.clone(), (f, cusip.as_str()));
     }
+    let by_code: BTreeMap<&str, &Code> = codes.iter().map(|c| (c.code.as_str(), c)).collect();
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for c in codes {
         if let Some((isin, f)) = c.isin.as_ref().and_then(|i| by_isin.get(i).map(|f| (i, f))) {
@@ -328,6 +332,13 @@ pub fn resolve(
                 figi: f.clone(),
                 how: Resolution::Isin(isin.clone()),
             });
+            continue;
+        }
+        if let Some(kind) = instrument_suffix(c, &by_code) {
+            bad.push((
+                c.clone(),
+                Unresolved::OutOfScope(format!("{kind} (code suffix)")),
+            ));
             continue;
         }
         let name = name_key(&c.name);
@@ -353,6 +364,108 @@ pub fn resolve(
         }
     }
     (ok, bad)
+}
+
+/// A warrant, unit or right listed beside a stock: the code is another in-scope code plus a
+/// suffix (`-WT`, `-WS`, `-U`, `-UN`, `-RT`, `-R`, or a fifth letter `W` / `U` / `R` / `Z` after a
+/// four-letter base), and that base has the same name. Requiring the base keeps an ordinary
+/// five-letter ticker out.
+#[must_use]
+pub fn instrument_suffix(c: &Code, by_code: &BTreeMap<&str, &Code>) -> Option<&'static str> {
+    let code = c.code.as_str();
+    let (base, kind) = if let Some((base, s)) = code.rsplit_once('-') {
+        let kind = match s {
+            "WT" | "WS" => "warrant",
+            "U" | "UN" => "unit",
+            "RT" | "R" => "right",
+            _ => return None,
+        };
+        (base, kind)
+    } else if code.len() == 5 {
+        let kind = match code.as_bytes().get(4) {
+            Some(b'W') => "warrant",
+            Some(b'U') => "unit",
+            Some(b'R') => "right",
+            Some(b'Z') => "other instrument",
+            _ => return None,
+        };
+        (code.get(..4)?, kind)
+    } else {
+        return None;
+    };
+    let b = by_code.get(base)?;
+    (name_key(&b.name) == name_key(&c.name) && !name_key(&c.name).is_empty()).then_some(kind)
+}
+
+/// Daily closes of an `/api/eod` body.
+#[must_use]
+pub fn closes(body: &[u8]) -> BTreeMap<NaiveDate, f64> {
+    let rows: Vec<Value> = serde_json::from_slice(body).unwrap_or_default();
+    rows.iter()
+        .filter_map(|r| {
+            let d = NaiveDate::parse_from_str(r.get("date")?.as_str()?, "%Y-%m-%d").ok()?;
+            Some((d, r.get("close")?.as_f64()?))
+        })
+        .collect()
+}
+
+/// How an unresolved code's prices relate to a resolved code's: a ticker change (its last bar
+/// at most 10 days before the other's first) or the same series under two codes (at least 20
+/// common dates, closes within 0.5% on 95% of them).
+#[must_use]
+pub fn same_security(
+    a: &BTreeMap<NaiveDate, f64>,
+    b: &BTreeMap<NaiveDate, f64>,
+) -> Option<&'static str> {
+    let (a_last, b_first) = (*a.keys().next_back()?, *b.keys().next()?);
+    if a_last < b_first && (b_first - a_last).num_days() <= 10 {
+        return Some("continuation");
+    }
+    let common: Vec<(f64, f64)> = a
+        .iter()
+        .filter_map(|(d, x)| b.get(d).map(|y| (*x, *y)))
+        .collect();
+    let agree = common
+        .iter()
+        .filter(|(x, y)| *y != 0.0 && ((x / y) - 1.0).abs() <= 0.005)
+        .count();
+    (common.len() >= 20 && agree * 100 >= common.len() * 95).then_some("same series")
+}
+
+/// Renames and vendor twins (ADR 0001 rule 4): an unresolved code whose name equals the name of
+/// exactly one resolved security and whose prices continue or repeat that security's series
+/// takes its FIGI. `bars` gives a code's closes (from the landing zone).
+pub fn rename_links(
+    unresolved: &[Code],
+    resolved: &[Resolved],
+    bars: &mut dyn FnMut(&str) -> Option<BTreeMap<NaiveDate, f64>>,
+) -> Vec<Resolved> {
+    let mut by_name: BTreeMap<String, Vec<&Resolved>> = BTreeMap::new();
+    for r in resolved {
+        by_name.entry(name_key(&r.code.name)).or_default().push(r);
+    }
+    let mut out = Vec::new();
+    for u in unresolved {
+        let key = name_key(&u.name);
+        let Some(cands) = by_name.get(&key).filter(|_| key.len() > 3) else {
+            continue;
+        };
+        let figis: BTreeSet<&str> = cands.iter().map(|r| r.figi.figi.as_str()).collect();
+        let Some(r) = cands.first().filter(|_| figis.len() == 1) else {
+            continue;
+        };
+        let (Some(ub), Some(rb)) = (bars(&u.code), bars(&r.code.code)) else {
+            continue;
+        };
+        if let Some(how) = same_security(&ub, &rb) {
+            out.push(Resolved {
+                code: u.clone(),
+                figi: r.figi.clone(),
+                how: Resolution::Rename(format!("{how} of {}", r.code.code)),
+            });
+        }
+    }
+    out
 }
 
 fn nullable(fields: &[(&str, DataType)]) -> Arc<Schema> {
@@ -408,6 +521,7 @@ pub fn master_batch(
                 normalize_name(&r.figi.name)
             ),
         ),
+        Resolution::Rename(e) => ("rename", e.clone()),
     };
     let cols: Vec<ArrayRef> = vec![
         s(&|(r, _)| Some(r.figi.figi.clone())),
@@ -495,6 +609,7 @@ pub fn spells_batch(
         let cusip = match &r.how {
             Resolution::Isin(i) => isin_cusip(i).map(|c| (c.to_owned(), "eodhd_symbols")),
             Resolution::Cusip13f(c) => Some((c.clone(), "sec_13f")),
+            Resolution::Rename(_) => None,
         };
         if let Some((c, src)) = cusip {
             let span = cusip_span.get(&c);
@@ -540,6 +655,102 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
 
     use super::*;
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn instruments_need_a_base_code_with_the_same_name() {
+        let c = |code: &str, name: &str| Code {
+            code: code.into(),
+            name: name.into(),
+            ..Code::default()
+        };
+        let all = [
+            c("DKNG", "DraftKings Inc"),
+            c("DKNGW", "DraftKings Inc"),
+            c("MPLN", "MultiPlan Corp"),
+            c("MPLN-WT", "MultiPlan Corporation"),
+            c("GOOGL", "Alphabet Inc"),
+            c("ABCDW", "Other Co"),
+        ];
+        let by: BTreeMap<&str, &Code> = all.iter().map(|x| (x.code.as_str(), x)).collect();
+        assert_eq!(instrument_suffix(&all[1], &by), Some("warrant"));
+        assert_eq!(instrument_suffix(&all[3], &by), Some("warrant"));
+        assert_eq!(
+            instrument_suffix(&all[4], &by),
+            None,
+            "five letters, no base code"
+        );
+        assert_eq!(instrument_suffix(&all[5], &by), None, "no ABCD code");
+        assert_eq!(instrument_suffix(&all[0], &by), None);
+    }
+
+    #[test]
+    fn renames_link_by_name_and_price_series() {
+        let series = |from: NaiveDate, n: i64, px: f64| {
+            (0..n)
+                .map(|i| (from + chrono::Days::new(u64::try_from(i).unwrap()), px))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let old = series(day(2010, 1, 1), 100, 5.0);
+        let new = series(day(2010, 4, 15), 100, 6.0);
+        assert_eq!(same_security(&old, &new), Some("continuation"));
+        assert_eq!(
+            same_security(&old, &series(day(2010, 1, 1), 300, 5.0)),
+            Some("same series")
+        );
+        assert_eq!(
+            same_security(&old, &series(day(2010, 1, 1), 300, 9.0)),
+            None,
+            "same dates, different prices"
+        );
+        assert_eq!(
+            same_security(&old, &series(day(2012, 1, 1), 100, 5.0)),
+            None,
+            "a two-year gap is not a rename"
+        );
+        let f = Figi {
+            figi: "BBG_PGEN".into(),
+            share_class: None,
+            name: "PRECIGEN INC".into(),
+            security_type: None,
+            security_type2: "Common Stock".into(),
+        };
+        let pgen = Resolved {
+            code: Code {
+                code: "PGEN".into(),
+                name: "Precigen Inc".into(),
+                ..Code::default()
+            },
+            figi: f,
+            how: Resolution::Isin("US74017N1054".into()),
+        };
+        let xon = Code {
+            code: "XON".into(),
+            name: "Precigen Inc".into(),
+            ..Code::default()
+        };
+        let mut bars = |code: &str| {
+            Some(if code == "XON" {
+                old.clone()
+            } else {
+                new.clone()
+            })
+        };
+        let links = rename_links(
+            std::slice::from_ref(&xon),
+            std::slice::from_ref(&pgen),
+            &mut bars,
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].figi.figi, "BBG_PGEN");
+        assert_eq!(
+            links[0].how,
+            Resolution::Rename("continuation of PGEN".into())
+        );
+    }
 
     #[test]
     fn cusip_check_digits() {
@@ -808,6 +1019,8 @@ pub mod run {
         pub by_isin: usize,
         /// Resolved through a 13(f) CUSIP.
         pub by_cusip: usize,
+        /// Resolved as a rename or vendor twin of a resolved code.
+        pub by_rename: usize,
         /// Unresolved: no match.
         pub no_match: usize,
         /// Unresolved: ambiguous.
@@ -1025,12 +1238,34 @@ pub mod run {
             .cloned()
             .collect();
         let by_cusip = map(job, "ID_CUSIP", &pool).await?;
-        let (ok, bad) = super::resolve(&codes, &by_isin, &by_cusip);
+        let (mut ok, mut bad) = super::resolve(&codes, &by_isin, &by_cusip);
+        // Renames and vendor twins, from the prices already in the landing zone (no requests).
+        let unresolved: Vec<Code> = bad
+            .iter()
+            .filter(|(_, w)| !matches!(w, Unresolved::OutOfScope(_)))
+            .map(|(c, _)| c.clone())
+            .collect();
+        let manifest = job.manifest.clone();
+        let mut bars = |code: &str| {
+            let entity = format!("{code}.US");
+            let (path, _, _) = manifest
+                .landed(("eodhd", &entity, "eod-full"))
+                .ok()
+                .flatten()?;
+            landing::read(Path::new(&path))
+                .ok()
+                .map(|b| super::closes(&b))
+        };
+        let links = super::rename_links(&unresolved, &ok, &mut bars);
+        let linked: BTreeSet<String> = links.iter().map(|r| r.code.code.clone()).collect();
+        bad.retain(|(c, _)| !linked.contains(&c.code));
+        s.by_rename = links.len();
+        ok.extend(links);
         s.by_isin = ok
             .iter()
             .filter(|r| matches!(r.how, super::Resolution::Isin(_)))
             .count();
-        s.by_cusip = ok.len() - s.by_isin;
+        s.by_cusip = ok.len() - s.by_isin - s.by_rename;
         for (c, why) in &bad {
             let note = match why {
                 Unresolved::NoMatch => {

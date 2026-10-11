@@ -293,6 +293,21 @@ impl Manifest {
         Ok(())
     }
 
+    /// Withdraw a chunk's stage file from compaction (its code lost its FIGI): back to
+    /// `fetched`, the raw body kept. Returns whether anything changed.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn unstage(&self, (s, e, c): Key<'_>) -> Result<bool, rusqlite::Error> {
+        let n = self.db().execute(
+            "UPDATE chunks SET status='fetched', stage_path=NULL, stage_sha256=NULL, parse_version=NULL, parsed_at=NULL, compacted_at=NULL, updated_at=?4
+             WHERE source=?1 AND entity=?2 AND chunk=?3 AND status IN ('parsed','compacted')",
+            params![s, e, c, now()],
+        )?;
+        Ok(n > 0)
+    }
+
     /// Chunks with a stage file for `source`: `(stage_path, stage_sha256, parse_version)`.
     ///
     /// # Errors

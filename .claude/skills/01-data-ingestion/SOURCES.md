@@ -579,7 +579,14 @@ characters and abbreviated, so names are compared on OpenFIGI's side.
 **Resolution**, first that applies: an override row; the code's EODHD ISIN ->
 FIGI; otherwise a 13(f) CUSIP whose OpenFIGI name equals the code's EODHD name
 after `identity::normalize_name` (upper case, punctuation and legal-form and
-share-class words dropped), when exactly one FIGI has that name. Anything else
+share-class words dropped), when exactly one FIGI has that name. Two more
+rules, before and after the name match: a code that is another in-scope code plus a
+warrant, unit or right suffix (`-WT`, `-WS`, `-U`, `-UN`, `-RT`, `-R`, or a fifth letter `W`
+/ `U` / `R` / `Z`) with the same name is out of scope; and a still-unresolved code whose
+name equals exactly one resolved security's takes its FIGI when its landed prices
+continue that series (last bar at most 10 days before the other's first: a ticker
+change) or repeat it (20 or more common dates, closes within 0.5% on 95%: a vendor
+twin), recorded as `rename`. Anything else
 is unresolved (`identity_unresolved` in `data_quality`, gate G5), never a
 guess. A pre-merger SPAC shell is out of scope, not unresolved (D19,
 `UNIVERSE.md` §5a).
