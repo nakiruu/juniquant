@@ -1,9 +1,16 @@
 # Universe, Identifiers and Symbol Rules
 
-The universe is the individual stocks held by IWF and IWP (constitution §6).
-This file fixes how it is defined **point in time**, how tickers are
-identified, and the single symbol-normalization rule that every component,
-including the Rust lock and execution code, reuses.
+Two universes, kept apart (DECISIONS D20):
+
+- **The training universe** is every in-scope common stock of the D12 scope (NYSE,
+  NYSE American, Nasdaq) that is point-in-time eligible from our own data (§5): it
+  feeds the panel, LightGBM, calibration and backtests.
+- **The buy universe** is the individual stocks held by IWF and IWP **today**
+  (constitution §6): it only restricts what may be bought, at trading time.
+
+This file fixes how both are defined **point in time**, how securities are identified,
+and the single symbol-normalization rule that every component, including the Rust lock
+and execution code, reuses.
 
 ## 1. Who Writes What (one writer per dataset)
 
@@ -19,7 +26,14 @@ The earlier text had both "Julia universe builder" (`SCHEMAS.md`) and "Rust
 `ingest_universe`: the fetched part is `etf_holdings`, the derived part is
 `universe`.
 
-## 2. Membership Snapshots, Point in Time
+## 2. Membership Snapshots: the Buy Filter (D20)
+
+IWF/IWP membership is a **buy filter**, not a training population. iShares serves only
+the latest file (probe P7), so `etf_holdings` is archived forward from the first snapshot
+(2026-10-09, `quant-ingest ishares snapshot`); there is no membership before that date
+and none is reconstructed. At trading time the filter is the latest snapshot with
+`available_date <= t`. A backtest restricted to the buy list can start only at the first
+snapshot; any earlier backtest runs on the training universe.
 
 `etf_holdings` has one row per (snapshot date, ETF, ticker) as the file
 published it (`SCHEMAS.md` #30). The primary key includes `etf`: Russell
@@ -40,7 +54,8 @@ collide.
 - Snapshots older than 45 days at `t` are a gate failure (G5).
 
 Using the **current** holdings for past dates is never allowed (selection of
-the winners); see `BACKFILL.md` §7.
+the winners), for training and for backtests alike; see `BACKFILL.md` §7. Using them
+as today's buy filter is what they are for.
 
 ## 3. Canonical Symbol Normalization (the one shared definition)
 
@@ -169,14 +184,16 @@ delisted names at first.
 
 ## 5. Eligibility, Derived Per Date From Trailing Metrics Only
 
-`universe` has a row for every member on every trading day
-(`SCHEMAS.md` #1). Every metric at date `t` uses data through `t` only:
+`universe` has a row for every in-scope security (a FIGI in `security_master`) with a
+price on that trading day, whether or not it is eligible or in IWF/IWP (`SCHEMAS.md` #1,
+D20). `in_iwf` / `in_iwp` record the buy filter where a snapshot exists. Every metric at
+date `t` uses data through `t` only:
 
 | Field | Definition |
 |---|---|
 | `median_dollar_vol_60d` | Median over the 60 trading days ending `t` of `close x volume` (as traded). Null with fewer than 40 valid days |
 | `history_days` | Count of valid price days on or before `t` (0 without prices). "Clean" means the row passed the per-row price checks (G2) |
-| `eligible` | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` (3 years of 252 days; the outline's "fewer than 3 years of clean data") and a resolved `cik` and a price on `t` |
+| `eligible` | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` (3 years of 252 days; the outline's "fewer than 3 years of clean data"; from the business combination for a de-SPACed company, §5a) and a FIGI (every security in `prices` has one) and a price on `t`. A missing CIK does not exclude a security; its `sp_ratio` is NaN |
 | `exclusion_reason` | Null if eligible, else the first of `no_price_data`, `identity_unresolved`, `data_quality` (a failed-G2 price on `t`), `history`, `liquidity` |
 
 The earlier `data_years` (years of history available, computed over the whole

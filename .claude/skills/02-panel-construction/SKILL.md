@@ -9,10 +9,10 @@ description: Building the 12-feature panel that feeds GSPQR. Load when
 
 # Panel Construction
 
-The panel is the training and inference matrix. One row per universe member
-with prices per trading day, from the first trading day with at least 50
+The panel is the training and inference matrix. One row per in-scope security
+(a FIGI in `security_master`) with prices per trading day, from the first trading day with at least 50
 eligible names; training and calibration use only the rows that are
-point-in-time eligible (§2, decision C3). Twenty-five columns: three identifiers, three forward-return
+point-in-time eligible (§2, decisions C3, D20). Twenty-five columns: three identifiers, three forward-return
 targets, six raw features, six cross-sectional rank features, three
 appended label-flag columns and four appended candidate columns (not features, D18).
 
@@ -56,16 +56,19 @@ Inherited from the constitution (§2, §3):
   rank column is computed per date across the eligible names that have that
   feature; if that count is below 50 the column is NaN on that date
   (`CROSS-SECTIONAL.md` §4). The eligible set is the point-in-time
-  `universe` (IWF + IWP, about 600 names after liquidity filters; the $5M
+  `universe` (every in-scope common stock of the D12 scope that passes the trailing
+  liquidity and history rules, D20; the $5M
   median dollar-volume floor is computed trailing at `t`; the entry-only
   maximum-median-quoted-spread filter of
   `10-execution-schwab/EXECUTION-WINDOW.md` §8 is docs only and is not part
   of the historical panel).
-- **Train on what you would trade (decision C3, owner 2026-10-10).** The
+- **Train on the broad universe; buy from IWF/IWP (decision C3 as amended by D20).** The
   panel starts on the first trading day on which at least 50 names are
   `eligible` in `universe` (about 2008-01, `FEATURES.md` §6), and from then on
-  holds a row for every IWF/IWP member that has a price on that date,
-  eligible or not. The schema has no eligibility column: every consumer that
+  holds a row for every in-scope security that has a price on that date,
+  eligible or not. IWF/IWP membership is not a panel filter: it is applied only at
+  trading time, as the buy filter (`01-data-ingestion/UNIVERSE.md` §2), and exists only
+  from the first archived snapshot (2026-10-09). The schema has no eligibility column: every consumer that
   fits or calibrates (GSPQR generations and the research model, CPCV, TCP
   conformity scores, EVT residuals, the evaluation metrics) joins `universe`
   on `(date, ticker)` and keeps only rows with `eligible = true` at `t`.
