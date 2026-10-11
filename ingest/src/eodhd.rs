@@ -918,7 +918,7 @@ pub mod run {
             source: "EODHD",
             dataset: "prices".into(),
             entity,
-            chunk: "eod-full".into(),
+            chunk: "eod-full/collision".into(),
             level: Level::Fail,
             attempts: 1,
             notes: Some(format!(

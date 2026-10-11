@@ -286,11 +286,33 @@ fn stage_then_compact_is_idempotent() {
     }
     assert_eq!(
         stage::compact(&lake, &e.manifest, &st, "eodhd", "splits").unwrap(),
-        Compacted::Written(2)
+        Compacted::Written {
+            rows: 2,
+            duplicates: 0
+        }
     );
     assert_eq!(
         stage::compact(&lake, &e.manifest, &st, "eodhd", "splits").unwrap(),
         Compacted::Unchanged
+    );
+    // A second code of the same security (an `_old` twin) returns the same split: kept once.
+    let twin = ("eodhd", "AAPL_old.US", "splits-full");
+    e.manifest.ensure(twin).unwrap();
+    stage::write_stage(
+        &st,
+        &e.manifest,
+        "splits",
+        twin,
+        "1",
+        &splits("AAPL", &[18_505]),
+    )
+    .unwrap();
+    assert_eq!(
+        stage::compact(&lake, &e.manifest, &st, "eodhd", "splits").unwrap(),
+        Compacted::Written {
+            rows: 2,
+            duplicates: 1
+        }
     );
     assert_eq!(
         lake.read_dataset("splits", None, &[], None)

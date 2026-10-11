@@ -141,7 +141,7 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
                             source: "EODHD",
                             dataset: "prices".into(),
                             entity: format!("{}.US", c.code),
-                            chunk: "eod-full".into(),
+                            chunk: "eod-full/identity".into(),
                             level: ingest::infra::quality::Level::Warn,
                             attempts: 1,
                             notes: Some(format!("identity_unresolved_with_prices: {} bars, {:?}; landed, not compacted", res.bars, res.span)),
@@ -166,17 +166,21 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
     });
     // Whatever happened, keep what was staged and the quality rows.
     let compacted = run::compact(&ctx, &lake).map_err(|e| e.to_string());
-    quality.write(&lake).map_err(|e| e.to_string())?;
+    println!("eodhd: compaction {compacted:?}");
+    // Reported after compaction, so one failure never hides the other.
+    let written = quality
+        .write(&lake)
+        .map_err(|e| format!("data_quality: {e}"));
     let rows = quality.rows();
     let count = |l| rows.iter().filter(|r| r.level == l).count();
     use ingest::infra::quality::Level;
     println!(
-        "eodhd: quality OK {} WARN {} FAIL {}; compaction {:?}",
+        "eodhd: quality OK {} WARN {} FAIL {}",
         count(Level::Ok),
         count(Level::Warn),
-        count(Level::Fail),
-        compacted
+        count(Level::Fail)
     );
+    written?;
     match outcome? {
         Some(fatal) => Err(format!("stopped early: {fatal} (re-run resumes)")),
         None => compacted.map(|_| ()),

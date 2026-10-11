@@ -3,10 +3,11 @@
 //! dataset's lake partitions from all of the source's stage files for it, and skips the
 //! rebuild when the inputs are unchanged.
 //!
-//! shortcut: compaction rereads every stage file of the dataset and writes every partition
-//! they touch (`Mode::Replace`), so a duplicate key across two stage files (for example a
-//! bulk day overlapping a full history) fails it; add "the later stage file wins" when the
-//! daily bulk chunks arrive.
+//! A key present in two stage files keeps its first row in stage-path order (two vendor codes of
+//! one security return the same split); the count is reported.
+//!
+//! shortcut: compaction rereads every stage file of the dataset and writes every partition they
+//! touch (`Mode::Replace`); add a stage-to-partition index if daily compaction gets slow.
 
 use std::path::{Path, PathBuf};
 
@@ -68,8 +69,13 @@ pub fn write_stage(
 pub enum Compacted {
     /// Inputs unchanged since the last compaction: nothing written.
     Unchanged,
-    /// The dataset's partitions were rebuilt from this many rows.
-    Written(usize),
+    /// The dataset's partitions were rebuilt.
+    Written {
+        /// Rows written.
+        rows: usize,
+        /// Rows dropped because an earlier stage file had the same key.
+        duplicates: usize,
+    },
 }
 
 /// Rebuild `dataset` from `source`'s stage files for it.
@@ -108,9 +114,47 @@ pub fn compact(
         return Ok(Compacted::Unchanged);
     };
     let all = concat_batches(&first.schema(), &batches)?;
+    let (all, duplicates) = first_per_key(lake, dataset, &all)?;
     lake.write_dataset(dataset, &all, lake::Mode::Replace)?;
     // shortcut: content_hash is recorded as the inputs hash; hash the written leaves when the
     // kill-and-resume test (BACKFILL.md §12) compares lake content.
     manifest.record_partition(dataset, &partition, &inputs_hash, &inputs_hash)?;
-    Ok(Compacted::Written(all.num_rows()))
+    Ok(Compacted::Written {
+        rows: all.num_rows(),
+        duplicates,
+    })
+}
+
+/// Keep the first row of each primary key, in stage-file order (a plain EODHD code sorts
+/// before its `_old` twin, so the preferred code wins): two codes of one security can return
+/// the same split or dividend. Returns the rows kept and the number dropped.
+fn first_per_key(
+    lake: &lake::Lake,
+    dataset: &str,
+    batch: &RecordBatch,
+) -> Result<(RecordBatch, usize), StageError> {
+    use arrow::row::{RowConverter, SortField};
+    let spec = lake.registry().get(dataset)?;
+    let cols = spec
+        .primary_key
+        .iter()
+        .filter_map(|k| batch.column_by_name(k).cloned())
+        .collect::<Vec<_>>();
+    if cols.len() != spec.primary_key.len() {
+        return Ok((batch.clone(), 0));
+    }
+    let conv = RowConverter::new(
+        cols.iter()
+            .map(|c| SortField::new(c.data_type().clone()))
+            .collect(),
+    )?;
+    let rows = conv.convert_columns(&cols)?;
+    let mut seen = std::collections::HashSet::with_capacity(rows.num_rows());
+    let keep: Vec<u32> = (0..rows.num_rows())
+        .filter(|&i| seen.insert(rows.row(i)))
+        .filter_map(|i| u32::try_from(i).ok())
+        .collect();
+    let dropped = batch.num_rows() - keep.len();
+    let kept = arrow::compute::take_record_batch(batch, &arrow::array::UInt32Array::from(keep))?;
+    Ok((kept, dropped))
 }
