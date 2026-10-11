@@ -132,23 +132,30 @@ The rule-computed NYSE full-day holidays of year `y`, sorted. A Saturday 1 Janua
 nothing; a Sunday one moves to Monday. Juneteenth from 2022. The rules are applied to every
 year uniformly; for old years this can only add closures (the safe direction).
 """
-function rule_holidays(y::Integer)
-    h = Date[]
+rule_holidays(y::Integer) = sort!(filter!(!=(NO_HOLIDAY), collect(rule_dates(y))))
+
+# Marks a rule that closes nothing in a year (Saturday 1 January; Juneteenth before 2022).
+const NO_HOLIDAY = typemin(Date)
+
+# The ten rules of year `y` as a tuple: allocation-free, so `is_rule_holiday` can sit in the
+# per-day loops of the trading-day walks (panel horizons call it millions of times).
+function rule_dates(y::Integer)
     ny = Date(y, 1, 1)
-    dayofweek(ny) == 6 || push!(h, dayofweek(ny) == 7 ? ny + Day(1) : ny)
-    push!(h, nth_weekday(y, 1, 1, 3))            # Martin Luther King Jr. Day
-    push!(h, nth_weekday(y, 2, 1, 3))            # Washington's Birthday
-    push!(h, easter_sunday(y) - Day(2))          # Good Friday
-    push!(h, nth_weekday(y, 5, 1, -1))           # Memorial Day
-    y >= JUNETEENTH_FIRST_YEAR && push!(h, observed(Date(y, 6, 19)))
-    push!(h, observed(Date(y, 7, 4)))            # Independence Day
-    push!(h, nth_weekday(y, 9, 1, 1))            # Labor Day
-    push!(h, nth_weekday(y, 11, 4, 4))           # Thanksgiving
-    push!(h, observed(Date(y, 12, 25)))          # Christmas
-    return sort!(h)
+    return (
+        dayofweek(ny) == 6 ? NO_HOLIDAY : dayofweek(ny) == 7 ? ny + Day(1) : ny,
+        nth_weekday(y, 1, 1, 3),                                   # Martin Luther King Jr. Day
+        nth_weekday(y, 2, 1, 3),                                   # Washington's Birthday
+        easter_sunday(y) - Day(2),                                 # Good Friday
+        nth_weekday(y, 5, 1, -1),                                  # Memorial Day
+        y >= JUNETEENTH_FIRST_YEAR ? observed(Date(y, 6, 19)) : NO_HOLIDAY,
+        observed(Date(y, 7, 4)),                                   # Independence Day
+        nth_weekday(y, 9, 1, 1),                                   # Labor Day
+        nth_weekday(y, 11, 4, 4),                                  # Thanksgiving
+        observed(Date(y, 12, 25)),                                 # Christmas
+    )
 end
 
-is_rule_holiday(d::Date) = d in rule_holidays(year(d))
+is_rule_holiday(d::Date) = d != NO_HOLIDAY && d in rule_dates(year(d))
 
 function validate_closure(date::Date, name::AbstractString, where_::AbstractString)
     is_weekend(date) && throw(CalendarError("$where_: $date is a weekend, not a closure"))

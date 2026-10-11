@@ -147,19 +147,6 @@ impl AuditHandle {
             .map_err(|_| AuditError::Closed)?;
         done.await.map_err(|_| AuditError::Closed)?
     }
-
-    /// Queues the row without waiting for the commit. For `phase = "outcome"` rows only: the
-    /// `intent` row (durable, awaited) is what must precede the broker call, and a crash that
-    /// loses an outcome leaves an unresolved intent that the startup scan resolves against the
-    /// broker. Keeps the second fsync off the order's critical path; the writer still group-
-    /// commits it with the next row. A writer failure still halts trading (`run` returns Err).
-    pub async fn append_deferred(&self, event: AuditEvent) -> Result<(), AuditError> {
-        let (ack, _unused) = oneshot::channel();
-        self.tx
-            .send(AuditRequest { event, ack })
-            .await
-            .map_err(|_| AuditError::Closed)
-    }
 }
 
 pub struct AuditWriter {

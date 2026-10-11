@@ -57,6 +57,10 @@ impl LockMonitor {
         // (a due Buy and a due Sell of one name). One read per row would serialise a REST round
         // trip per account in front of every release, at the moment the window opens.
         let mut cached = None;
+        // TODO(lock group): key this by the ticker's lock group (DECISIONS B1: GOOG and GOOGL
+        // share one), not the ticker, so a release also refreshes its share class's pre-check.
+        // A stale cache is safe: placement reads fresh, and a stale `BlockedUntil` only re-dates
+        // the row (the conservative direction).
         let mut released = std::collections::HashSet::new();
 
         for order in due {

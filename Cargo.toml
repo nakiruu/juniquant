@@ -36,3 +36,9 @@ todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
 indexing_slicing = "warn"
+
+# The Julia side shells out to `lake-io` (cargo build --release -p lake); Arrow and ZSTD work is
+# much slower unoptimised. The execution binary will want the same.
+[profile.release]
+lto = "fat"
+codegen-units = 1
