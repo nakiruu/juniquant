@@ -9,6 +9,7 @@
 mod eodhd;
 mod p5_edgar;
 mod p6_alfred;
+mod s1_sharadar;
 mod yahoo;
 
 use std::fs;
@@ -29,7 +30,7 @@ pub enum ProbeError {
     #[error("{0} is not set")]
     EnvUnset(&'static str),
     /// Unknown probe name.
-    #[error("unknown probe `{0}` (p1-p6 and y1-y4 are implemented)")]
+    #[error("unknown probe `{0}` (p1-p6, y1-y4 and s1 are implemented)")]
     Unknown(String),
     /// The HTTP client failed to build or the request did not complete (DNS, TLS, timeout).
     #[error("http: {0}")]
@@ -58,6 +59,8 @@ pub enum Source {
     Edgar,
     /// FRED / ALFRED (key passed as `api_key=` in the URL, redacted in the log).
     Fred,
+    /// Sharadar on Nasdaq Data Link (key `NASDAQ_DATA_LINK_API_KEY`, sent as `api_key=`, redacted).
+    Sharadar,
     /// iShares holdings files.
     #[allow(dead_code, reason = "used by probe P7")]
     IShares,
@@ -71,6 +74,7 @@ impl Source {
             Self::Yahoo => 2000,
             Self::Edgar => 200,
             Self::Fred => 1000,
+            Self::Sharadar => 500,
             Self::IShares => 5000,
         })
     }
@@ -348,6 +352,8 @@ pub fn run(name: &str) -> Result<PathBuf, ProbeError> {
         "y4" => yahoo::p4,
         "p5" => p5_edgar::run,
         "p6" => p6_alfred::run,
+        // Sharadar as a possible second price source (G10).
+        "s1" => s1_sharadar::run,
         other => return Err(ProbeError::Unknown(other.to_owned())),
     };
     let mut probe = Probe::new(name)?;

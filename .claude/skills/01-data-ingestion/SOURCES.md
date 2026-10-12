@@ -228,6 +228,19 @@ point-in-time source and is deferred; nothing in GSPQR needs it.
 
 ---
 
+## Sharadar (Nasdaq Data Link): trial second source
+
+Under evaluation (2026-10-12) as a second price source for G10 and as a fix for the EODHD
+identity faults G2 finds (reused codes, renamed histories, split-scaled blocks). Datatables
+`https://data.nasdaq.com/api/v3/datatables/SHARADAR/{SEP,TICKERS,ACTIONS}.json` with column
+filters (`ticker=`, `date.gte=`, `date.lte=`). Key `NASDAQ_DATA_LINK_API_KEY` in `.env`, sent
+as `api_key=` and redacted in every log. `quant-ingest probe s1` runs it on the `ten_fold`
+offenders of the latest G2 run and lands its evidence under `reports/probes/s1`. Access with
+a free key, coverage, terms and the meaning of `SEP` columns (`closeunadj`) are **verify**
+until that probe has run. Not ingested into the lake.
+
+---
+
 ## SEC EDGAR
 
 **Client:** direct HTTP. `edgartools` is not used.

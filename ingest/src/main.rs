@@ -3,7 +3,7 @@
 //! Specification: `.claude/skills/01-data-ingestion/` (SKILL.md, BACKFILL.md, SOURCES.md).
 //!
 //! ```text
-//! quant-ingest probe <p1..p6|y1..y4>                      BACKFILL.md §2
+//! quant-ingest probe <p1..p6|y1..y4|s1>                   BACKFILL.md §2
 //! quant-ingest eodhd backfill [--codes A,B] [--limit N]   W5, BACKFILL.md §5.1
 //! quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]   J4a, ADR 0001
 //! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
         ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
+                "usage: quant-ingest probe <p1..p6|y1..y4|s1>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
             );
             return ExitCode::from(2);
         }
