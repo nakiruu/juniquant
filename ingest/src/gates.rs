@@ -619,6 +619,15 @@ type Span = (usize, usize, &'static str);
 /// A jump: later-bar index, close ratio, and the reason of the span that explains it.
 type Jump = (usize, f64, Option<&'static str>);
 
+/// The closes around `ex` move by the split (the G2 `splits` test passes).
+fn split_shows(s: &[Bar], ex: NaiveDate, ratio: f64) -> bool {
+    let b = s.partition_point(|x| x.date < ex);
+    match (b.checked_sub(1).and_then(|p| s.get(p)), s.get(b)) {
+        (Some(p), Some(b)) => (0.4..=2.5).contains(&(b.close / p.close * ratio)),
+        _ => false,
+    }
+}
+
 fn median_close(s: &[Bar]) -> f64 {
     let mut v: Vec<f64> = s.iter().filter(|b| priced(b)).map(|b| b.close).collect();
     v.sort_by(f64::total_cmp);
@@ -634,8 +643,9 @@ fn covering(spans: &[Span], k: usize) -> Option<&'static str> {
 
 /// The rejected spans of one security and its jumps (`ten_fold_jumps` less the accepted ones),
 /// each with the reason of the span that explains it, if any. Rules, in order: owner
-/// exclusions (`reviewed`); blocks the vendor adjusted for later splits (the jump equals their
-/// product within 8%, `vendor_adjusted`); a jump undone by an opposite one within 20 bars
+/// exclusions (`reviewed`); blocks the vendor scaled for later splits (the size of the jump
+/// equals their product within 8%, `vendor_adjusted`: up to the move back by the same factor,
+/// else before the jump when the split shows in the closes, else from the jump to the split); a jump undone by an opposite one within 20 bars
 /// marks the bars between (`foreign_quotes`), and with two such flips the series is mixed:
 /// the segments between jumps priced more than 3.16x off the segment with the most filings
 /// of the filer (then the longest) are another
@@ -671,23 +681,32 @@ fn classify(
         let mut f = 1.0;
         for (ex, ratio) in sp.iter().filter(|(ex, _)| *ex > at(k)) {
             f *= ratio;
-            if (r.ln() + f.ln()).abs() < 0.08 {
-                // Entering a block adjusted by `f`: it ends before the next jump or the split.
-                let end = jumps
-                    .get(i + 1)
-                    .map_or(n, |x| x.0)
-                    .min(s.partition_point(|x| x.date < *ex));
-                spans.push((k, end - 1, "vendor_adjusted"));
-                break;
+            // The vendor scales a block by `f` or by `1 / f`, so the size of the jump is the test.
+            if (r.ln().abs() - f.ln().abs()).abs() >= 0.08 {
+                continue;
             }
-            if (r.ln() - f.ln()).abs() < 0.08 {
-                let start = i
-                    .checked_sub(1)
-                    .and_then(|j| jumps.get(j))
-                    .map_or(0, |x| x.0);
-                spans.push((start, k - 1, "vendor_adjusted"));
-                break;
-            }
+            let split_at = s.partition_point(|x| x.date < *ex);
+            // The move back by the same factor (with a day's noise, so not always ten-fold).
+            let back = (k + 1..split_at).find(|&j| match (s.get(j - 1), s.get(j)) {
+                (Some(p), Some(b)) => {
+                    priced(p) && priced(b) && ((b.close / p.close).ln() + r.ln()).abs() < 0.16
+                }
+                _ => false,
+            });
+            let (a, b) = match back {
+                Some(j) => (k, j - 1),
+                // Alone: when the split shows in the closes, the bars up to it are as traded
+                // and the block is the one before the jump; else the block runs to the split.
+                None if split_shows(s, *ex, *ratio) => (
+                    i.checked_sub(1)
+                        .and_then(|j| jumps.get(j))
+                        .map_or(0, |x| x.0),
+                    k - 1,
+                ),
+                None => (k, jumps.get(i + 1).map_or(n, |x| x.0).min(split_at) - 1),
+            };
+            spans.push((a, b, "vendor_adjusted"));
+            break;
         }
     }
     let open: Vec<(usize, f64)> = jumps
@@ -1244,15 +1263,13 @@ mod tests {
             series(0, &|k| if k == 50 { 100.0 } else { 10.0 }, false),
             series(1, &|k| if k == 40 || k == 60 { 100.0 } else { 10.0 }, false),
             series(2, &|k| if k < 70 { 10.0 } else { 100.0 }, false),
-            // Bars 30-49 adjusted for the 1:10 split of day 80.
+            // Bars 30-49 scaled by 10 for the 1:10 split of day 80; the move back is only 9x.
             series(
                 3,
-                &|k| {
-                    if (30..50).contains(&k) || k >= 80 {
-                        100.0
-                    } else {
-                        10.0
-                    }
+                &|k| match k {
+                    30..50 | 80.. => 100.0,
+                    50..80 => 11.1,
+                    _ => 10.0,
                 },
                 false,
             ),
@@ -1275,11 +1292,21 @@ mod tests {
                 },
                 false,
             ),
+            // Bars 0-39 scaled by 1/10 for the split of day 80, which shows in the closes.
+            series(
+                12,
+                &|k| match k {
+                    0..40 => 1.0,
+                    40..80 => 10.0,
+                    _ => 100.0,
+                },
+                false,
+            ),
         ]
         .concat();
         bars.sort_by_key(|b| (b.sec, b.date));
-        let names: Vec<String> = (0..12).map(|i| format!("S{i}")).collect();
-        let splits = Events::from([(3, vec![(day(80), 0.1)])]);
+        let names: Vec<String> = (0..13).map(|i| format!("S{i}")).collect();
+        let splits = Events::from([(3, vec![(day(80), 0.1)]), (12, vec![(day(80), 0.1)])]);
         let cx = JumpContext {
             accepted: HashSet::from([(7, day(50))]),
             excluded: HashMap::from([(8, vec![(day(10), day(20))])]),
@@ -1311,6 +1338,7 @@ mod tests {
             span("S10", 100, 100, "relisted"),
             span("S11", 20, 49, "vendor_wrong_holder"),
             span("S11", 71, 99, "vendor_wrong_holder"),
+            span("S12", 0, 39, "vendor_adjusted"),
         ] {
             assert!(
                 spans.offenders.contains(&want),
@@ -1318,11 +1346,7 @@ mod tests {
                 spans.offenders
             );
         }
-        assert_eq!(
-            spans.offenders.len(),
-            11,
-            "S3's second jump leaves the block, which explains it"
-        );
+        assert_eq!(spans.offenders.len(), 12, "one span per planted defect");
         assert_eq!(
             ten.offenders,
             vec![(

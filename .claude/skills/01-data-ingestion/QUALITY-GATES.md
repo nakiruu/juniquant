@@ -60,7 +60,7 @@ them from `universe` (`exclusion_reason = data_quality`, with the per-row failur
 | Reason | Rule | Evidence |
 |---|---|---|
 | `reviewed` | The owner excluded the range in `config/price_reviews.toml` | owner |
-| `vendor_adjusted` | The jump equals the product of the security's later split ratios within 8% (in log): the vendor adjusted the block for those splits; the block runs from the jump to the next jump or the split (or back to the previous jump) | `splits` |
+| `vendor_adjusted` | The size of the jump equals the product of the security's later split ratios within 8% (in log): the vendor scaled a block by it, up or down. The block runs from the jump to the move back by the same factor (within 16%, so not always ten-fold); without one, it is the block before the jump when the split shows in the closes (the bars up to the split are as traded), else from the jump to the split | `splits` |
 | `foreign_quotes` | A jump undone by an opposite one within 20 bars: the bars between | prices |
 | `vendor_wrong_holder` | Two or more such flips (a mixed series): the segments between jumps priced more than 3.16x off the segment with the most `filing_events` of the security's filer (then the longest) | prices, `filing_events` |
 | `symbol_reused` | A jump within 20 bars of either end drops that stub; one after a gap of more than 30 days drops the side on which the filer has no filing (else the shorter side) | prices, `filing_events` |
@@ -83,6 +83,14 @@ Industries' ticker after 2010, Corinthian Colleges under Vita Coco). The `vendor
 blocks (22.9K eligible rows) are right in level ratios but wrong as raw prices; undoing the
 adjustment in the EODHD parser would recover them. J10 must treat a return whose window holds
 a rejected bar as missing.
+
+Owner review 1 (2026-10-12): AGII (renamed ARGO in May 2018), AIP (listed October 2021),
+ALR (Five Star's years scaled for the 2019 split, mixed with Alere's closes), AOI (bars after
+the Pyxus rename) and ASRT (Depomed's history, scaled by the vendor) are `exclude` entries.
+ASRT showed that the first `vendor_adjusted` rule assumed the vendor always scales up: it
+rejected Assertio's as-traded 2018-2023 and kept the scaled block. The rule now finds the
+side from the move back or the split; `vendor_adjusted` fell from 104K to 41K rejected bars
+(TRQ: the 2009 block only, not 2009-2020). After the review: 65 HARD, 340 WARN.
 
 ## 3. Sketch SQL
 
