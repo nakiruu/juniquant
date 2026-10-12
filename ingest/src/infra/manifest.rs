@@ -146,6 +146,22 @@ impl Manifest {
         Ok(v.as_deref().and_then(Status::parse))
     }
 
+    /// The landed body of the chunk in any status, `gone` included (a `figi_collision` code
+    /// keeps its raw prices, which J4a's rename rule still compares).
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn raw_path(&self, (s, e, c): Key<'_>) -> Result<Option<String>, rusqlite::Error> {
+        self.db()
+            .query_row(
+                "SELECT raw_path FROM chunks WHERE source=?1 AND entity=?2 AND chunk=?3 AND raw_path IS NOT NULL",
+                params![s, e, c],
+                |r| r.get(0),
+            )
+            .optional()
+    }
+
     /// Add the chunk as `pending` unless it already has a row.
     ///
     /// # Errors
@@ -458,6 +474,10 @@ mod tests {
         m.fetched(k, 200, Utc::now(), &landed).unwrap();
         assert!(m.status(k).unwrap().unwrap().is_done());
         assert!(m.work("eodhd").unwrap().is_empty());
+        // A collision exclusion stops compaction but keeps the body readable for J4a.
+        m.gone(k, 200, "figi_collision").unwrap();
+        assert_eq!(m.landed(k).unwrap(), None);
+        assert_eq!(m.raw_path(k).unwrap().as_deref(), Some("/x"));
         let g = ("eodhd", "XX.US", "eod-full");
         m.begin_fetch(g).unwrap();
         m.gone(g, 200, "vendor_no_data").unwrap();

@@ -160,6 +160,15 @@ One row per security (listed share class), keyed by the US composite FIGI
 4. `unresolved`: `cik` null. The row stays and can be eligible (the key is the FIGI,
    D20); only `sp_ratio` is NaN.
 
+**What J4a implements today (2026-10-11).** Rule 2 for active securities only, from the
+current `company_tickers_exchange.json` (a delisted symbol may now belong to another
+issuer). Rule 3 for every other security, from EDGAR's `cik-lookup-data.txt` (current and
+former names of every filer, no dates): the security's normalized name must equal the
+names of exactly one CIK. `resolution` keeps the FIGI path; the name method is recorded as
+`; cik:name` at the end of `resolution_note`. The date-window check of rule 3 is not
+applied: a random sample of 15 matches was all correct, and an ambiguous name stays null.
+Rule 1 is not implemented yet. First run: securities without a CIK fell from 5,165 to 956.
+
 **Renames.** The same CIK appears under ticker X before a date and ticker Y
 after (a `formerNames` entry bridges them, or a manual row). It is one
 security: the canonical ticker is the **latest** symbol, earlier ones go in

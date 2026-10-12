@@ -477,8 +477,39 @@ fn nullable(fields: &[(&str, DataType)]) -> Arc<Schema> {
     ))
 }
 
+/// EDGAR's `cik-lookup-data.txt` (`NAME:CIK:` per line, current and former names of every
+/// filer) as [`name_key`] -> CIK; `None` when the key belongs to more than one CIK.
+#[must_use]
+pub fn parse_cik_lookup(text: &str) -> BTreeMap<String, Option<String>> {
+    let mut out: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for line in text.lines() {
+        let Some((name, cik)) = line
+            .trim_end()
+            .strip_suffix(':')
+            .and_then(|l| l.rsplit_once(':'))
+        else {
+            continue;
+        };
+        let key = name_key(name);
+        if key.is_empty() || cik.len() != 10 || !cik.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        out.entry(key)
+            .and_modify(|v| {
+                if v.as_deref() != Some(cik) {
+                    *v = None;
+                }
+            })
+            .or_insert_with(|| Some(cik.to_owned()));
+    }
+    out
+}
+
 /// `security_master` rows, one per FIGI. When several codes share a FIGI (a vendor rename),
-/// the active code wins, then the plain code over an `_old` one.
+/// the active code wins, then the plain code over an `_old` one. The CIK is the current
+/// ticker's for an active security, else the one CIK whose EDGAR name or former name has the
+/// security's [`name_key`] (`cik_by_name`, from [`parse_cik_lookup`]); an ambiguous name stays
+/// null.
 ///
 /// # Errors
 ///
@@ -486,6 +517,7 @@ fn nullable(fields: &[(&str, DataType)]) -> Arc<Schema> {
 pub fn master_batch(
     resolved: &[Resolved],
     cik_by_ticker: &BTreeMap<String, String>,
+    cik_by_name: &BTreeMap<String, Option<String>>,
     now: DateTime<Utc>,
 ) -> Result<RecordBatch, arrow::error::ArrowError> {
     let mut by_figi: BTreeMap<&str, Vec<&Resolved>> = BTreeMap::new();
@@ -511,6 +543,21 @@ pub fn master_batch(
         Arc::new(StringArray::from(rows.iter().map(f).collect::<Vec<_>>()))
     };
     let n = rows.len();
+    // `(cik, by name)`; a delisted ticker may now belong to another issuer, so only its name counts.
+    let cik = |(r, d): &(&Resolved, bool)| {
+        let by_ticker = if *d {
+            None
+        } else {
+            cik_by_ticker.get(&r.code.ticker)
+        };
+        by_ticker.map(|c| (c.clone(), false)).or_else(|| {
+            cik_by_name
+                .get(&name_key(&r.code.name))
+                .cloned()
+                .flatten()
+                .map(|c| (c, true))
+        })
+    };
     let note = |r: &Resolved| match &r.how {
         Resolution::Isin(i) => ("isin", format!("ISIN {i}")),
         Resolution::Cusip13f(c) => (
@@ -526,13 +573,7 @@ pub fn master_batch(
     let cols: Vec<ArrayRef> = vec![
         s(&|(r, _)| Some(r.figi.figi.clone())),
         s(&|(r, _)| r.figi.share_class.clone()),
-        s(&|(r, d)| {
-            if *d {
-                None
-            } else {
-                cik_by_ticker.get(&r.code.ticker).cloned()
-            }
-        }),
+        s(&|row| cik(row).map(|c| c.0)),
         s(&|(r, _)| Some(r.code.ticker.clone())),
         s(&|(r, _)| Some(r.code.name.clone())),
         s(&|(r, _)| Some(r.code.code.clone())),
@@ -543,7 +584,14 @@ pub fn master_batch(
         s(&|(r, _)| r.figi.security_type.clone()),
         s(&|(r, _)| Some(r.figi.name.clone())),
         s(&|(r, _)| Some(note(r).0.to_owned())),
-        s(&|(r, _)| Some(note(r).1)),
+        s(&|row| {
+            let by_name = cik(row).is_some_and(|c| c.1);
+            Some(format!(
+                "{}{}",
+                note(row.0).1,
+                if by_name { "; cik:name" } else { "" }
+            ))
+        }),
         Arc::new(
             TimestampNanosecondArray::from(vec![now.timestamp_nanos_opt().unwrap_or_default(); n])
                 .with_timezone("UTC"),
@@ -655,6 +703,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
 
     use super::*;
+    use arrow::array::Array;
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -930,8 +979,61 @@ mod tests {
             "found but not common stock"
         );
         let now = Utc::now();
-        let m = master_batch(&ok, &BTreeMap::new(), now).unwrap();
+        let m = master_batch(&ok, &BTreeMap::new(), &BTreeMap::new(), now).unwrap();
         assert_eq!(m.num_rows(), 2);
+        let names = parse_cik_lookup(
+            "MONSANTO CO:0001110783:\nMONSANTO CO /NEW/:0001110783:\n\
+             LEHMAN BROTHERS HOLDINGS INC:0000806085:\nLEHMAN BROTHERS HOLDINGS:0000999999:\n:0001003197:\n",
+        );
+        assert_eq!(
+            names.get("MONSANTO"),
+            Some(&Some("0001110783".into())),
+            "a former name of the same CIK"
+        );
+        assert_eq!(
+            names.get("LEHMANBROTHERSHOLDINGS"),
+            Some(&None),
+            "two CIKs: ambiguous"
+        );
+        let col = |m: &RecordBatch, c: &str| {
+            let a = m
+                .column_by_name(c)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .clone();
+            (0..a.len())
+                .map(|i| a.is_valid(i).then(|| a.value(i).to_owned()))
+                .collect::<Vec<_>>()
+        };
+        let m = master_batch(&ok, &BTreeMap::new(), &names, now).unwrap();
+        assert_eq!(
+            col(&m, "cik"),
+            [Some("0001110783".into()), None],
+            "MON by name; LEH ambiguous"
+        );
+        assert!(
+            col(&m, "resolution_note")[0]
+                .as_deref()
+                .unwrap()
+                .ends_with("; cik:name")
+        );
+        let mut active = ok[0].clone();
+        active.code.delisted = false;
+        let tickers = BTreeMap::from([("MON_old".to_owned(), "0000000001".to_owned())]);
+        let m = master_batch(&[active], &tickers, &names, now).unwrap();
+        assert_eq!(
+            col(&m, "cik"),
+            [Some("0000000001".into())],
+            "the current ticker's CIK wins"
+        );
+        assert!(
+            !col(&m, "resolution_note")[0]
+                .as_deref()
+                .unwrap()
+                .contains("cik:name")
+        );
         let spans = BTreeMap::from([(
             "524908100".to_owned(),
             (
@@ -1183,6 +1285,29 @@ pub mod run {
         Ok(out)
     }
 
+    /// EDGAR name -> CIK from `cik-lookup-data.txt`, landed once a month (it changes slowly).
+    async fn cik_names(
+        job: &Job,
+        today: NaiveDate,
+    ) -> Result<BTreeMap<String, Option<String>>, RunError> {
+        let chunk = format!("cik-lookup-data-{}", today.format("%Y-%m"));
+        let r = Request {
+            entity: "cik_lookup",
+            chunk: &chunk,
+            url: "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt",
+            ext: "txt",
+            cost: 1,
+            dataset: "security_master",
+            empty_is_gone: false,
+        };
+        job.sec.fetch(&r).await?;
+        Ok(
+            body(&job.manifest, (job.sec.spec.id, "cik_lookup", &chunk))?
+                .map(|b| super::parse_cik_lookup(&String::from_utf8_lossy(&b)))
+                .unwrap_or_default(),
+        )
+    }
+
     /// Run J4a: resolve `codes` (all in-scope codes when `None`) and write #31 and #36.
     ///
     /// # Errors
@@ -1248,8 +1373,8 @@ pub mod run {
         let manifest = job.manifest.clone();
         let mut bars = |code: &str| {
             let entity = format!("{code}.US");
-            let (path, _, _) = manifest
-                .landed(("eodhd", &entity, "eod-full"))
+            let path = manifest
+                .raw_path(("eodhd", &entity, "eod-full"))
                 .ok()
                 .flatten()?;
             landing::read(Path::new(&path))
@@ -1305,7 +1430,8 @@ pub mod run {
             });
         }
         let cik = ciks(job, today).await?;
-        let master = super::master_batch(&ok, &cik, Utc::now())?;
+        let names = cik_names(job, today).await?;
+        let master = super::master_batch(&ok, &cik, &names, Utc::now())?;
         s.securities = master.num_rows();
         lake.write_dataset("security_master", &master, lake::Mode::Replace)?;
         lake.write_dataset(

@@ -250,7 +250,11 @@ final state; a test does exactly that (§12).
   the EODHD symbol lists, the 13(f) lists from the quarter before
   `BACKFILL_START` (about 88 files), OpenFIGI for every EODHD ISIN and every
   13(f) CUSIP no ISIN covers (about 600 requests with the key, a few minutes),
-  and the SEC `company_tickers_exchange.json` for current CIKs. Writes
+  the SEC `company_tickers_exchange.json` for current CIKs, and EDGAR's
+  `cik-lookup-data.txt` (every filer's current and former names, landed once a month) for
+  the rest: a security without a current-ticker CIK (every delisted one) takes the one CIK
+  whose name or former name has its normalized name; a name shared by two CIKs stays null
+  (`resolution_note` ends `; cik:name`). Writes
   `security_master` (#31) and `security_spells` (#36); unresolved codes go to
   `data_quality`. Without `OPENFIGI_API_KEY` a mapping of more than 2,000
   lookups is refused (it would take hours). Rules: `SOURCES.md` Identifiers.
