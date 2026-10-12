@@ -12,6 +12,7 @@
 //! quant-ingest edgar events                             J6, filing_events + delistings from the zip
 //! quant-ingest edgar daily                              J7 + J6 daily: filers in the day's form index
 //! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
+//! quant-ingest gates [g7|g8]                             QUALITY-GATES.md G7 filings, G8 events
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -48,9 +49,10 @@ fn main() -> ExitCode {
         ["edgar", "events"] => edgar_events(),
         ["edgar", "daily"] => edgar_daily(),
         ["macro", "backfill" | "daily"] => macro_backfill(),
+        ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|daily"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|daily\n       quant-ingest gates [g7|g8]"
             );
             return ExitCode::from(2);
         }
@@ -734,6 +736,40 @@ fn edgar_events() -> Result<(), String> {
     Ok(())
 }
 
+fn from_days(v: i32) -> NaiveDate {
+    NaiveDate::default() + chrono::Duration::days(i64::from(v))
+}
+
+/// Last price date per FIGI, one year of `prices` at a time.
+fn last_prices(s: &Setup) -> Result<std::collections::HashMap<String, NaiveDate>, String> {
+    use arrow::array::AsArray;
+    use arrow::datatypes::Date32Type;
+    let mut last: std::collections::HashMap<String, NaiveDate> = Default::default();
+    for y in s.ctx.from.year()..=s.today.year() {
+        let (Some(a), Some(z)) = (
+            NaiveDate::from_ymd_opt(y, 1, 1),
+            NaiveDate::from_ymd_opt(y, 12, 31),
+        ) else {
+            continue;
+        };
+        let p = s
+            .lake
+            .read_dataset("prices", Some(&["figi", "date"]), &[], Some((a, z)))
+            .map_err(|e| e.to_string())?;
+        let (f, d) = (
+            p.column(0).as_string::<i32>(),
+            p.column(1).as_primitive::<Date32Type>(),
+        );
+        for i in 0..p.num_rows() {
+            let d = from_days(d.value(i));
+            last.entry(f.value(i).to_owned())
+                .and_modify(|x| *x = (*x).max(d))
+                .or_insert(d);
+        }
+    }
+    Ok(last)
+}
+
 /// `delistings` rebuilt in full from the lake's `filing_events` (the delisting forms and
 /// items only) and each security's last price date (`SURVIVORSHIP.md` §3).
 fn write_delistings(s: &Setup) -> Result<String, String> {
@@ -741,7 +777,6 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
     use arrow::datatypes::Date32Type;
     use ingest::edgar::{Security, events};
     use ingest::infra::quality::{Level, Row};
-    let from_days = |v: i32| NaiveDate::default() + chrono::Duration::days(i64::from(v));
     let b = s
         .lake
         .read_dataset(
@@ -799,30 +834,7 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
                 event_type,
             });
     }
-    // Last price date per FIGI, one year of `prices` at a time.
-    let mut last: std::collections::HashMap<String, NaiveDate> = Default::default();
-    for y in s.ctx.from.year()..=s.today.year() {
-        let (Some(a), Some(z)) = (
-            NaiveDate::from_ymd_opt(y, 1, 1),
-            NaiveDate::from_ymd_opt(y, 12, 31),
-        ) else {
-            continue;
-        };
-        let p = s
-            .lake
-            .read_dataset("prices", Some(&["figi", "date"]), &[], Some((a, z)))
-            .map_err(|e| e.to_string())?;
-        let (f, d) = (
-            p.column(0).as_string::<i32>(),
-            p.column(1).as_primitive::<Date32Type>(),
-        );
-        for i in 0..p.num_rows() {
-            let d = from_days(d.value(i));
-            last.entry(f.value(i).to_owned())
-                .and_modify(|x| *x = (*x).max(d))
-                .or_insert(d);
-        }
-    }
+    let last = last_prices(s)?;
     let rows: Vec<_> = by_figi
         .iter()
         .filter_map(|(f, (cik, sec, ev))| {
@@ -852,6 +864,262 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
         notes: Some(notes.clone()),
     });
     Ok(notes)
+}
+
+/// Gates G7 and G8 (`QUALITY-GATES.md` §2): `data_quality` rows with `source = Gate`, an
+/// aggregate per sub-check and one row per offender. Exits non-zero when a HARD check fails
+/// or cannot run.
+fn gates(rest: &[&str]) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    use arrow::array::{Array, AsArray, StringArray};
+    use arrow::datatypes::{Date32Type, Float64Type, TimestampNanosecondType};
+    use ingest::gates::{self, FilingRow, Outcome};
+    use ingest::infra::quality::{Check, Level, Row};
+    let (g7, g8) = match rest {
+        [] => (true, true),
+        ["g7"] => (true, false),
+        ["g8"] => (false, true),
+        _ => return Err("usage: quant-ingest gates [g7|g8]".into()),
+    };
+    let s = setup("gates")?;
+    let e = |e: lake::LakeError| e.to_string();
+    let ciks: HashSet<String> = filer_securities(&s.lake)?.into_keys().collect();
+    let mut results: Vec<(&'static str, &'static str, Outcome)> = Vec::new();
+    if g7 {
+        let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
+        let b = s
+            .lake
+            .read_dataset(
+                "fundamentals",
+                Some(&[
+                    "figi",
+                    "accession",
+                    "filing_date",
+                    "period_end",
+                    "form_type",
+                    "fiscal_period",
+                    "acceptance_datetime",
+                    "amends_accession",
+                    "revenue_ttm",
+                    "tag_used",
+                ]),
+                &[],
+                None,
+            )
+            .map_err(e)?;
+        let st = |i: usize| b.column(i).as_string::<i32>();
+        let (figi, acc, form, fp, amends, tags) = (st(0), st(1), st(4), st(5), st(7), st(9));
+        let (fd, pe) = (
+            b.column(2).as_primitive::<Date32Type>(),
+            b.column(3).as_primitive::<Date32Type>(),
+        );
+        let at = b.column(6).as_primitive::<TimestampNanosecondType>();
+        let rev = b.column(8).as_primitive::<Float64Type>();
+        let opt = |a: &StringArray, i: usize| a.is_valid(i).then(|| a.value(i).to_owned());
+        let rows: Vec<FilingRow> = (0..b.num_rows())
+            .map(|i| FilingRow {
+                figi: figi.value(i).to_owned(),
+                accession: acc.value(i).to_owned(),
+                filing_date: fd.is_valid(i).then(|| from_days(fd.value(i))),
+                period_end: pe.is_valid(i).then(|| from_days(pe.value(i))),
+                form: form.value(i).to_owned(),
+                fiscal_period: opt(fp, i),
+                acceptance_et: at.is_valid(i).then(|| {
+                    eodhd::eastern(chrono::DateTime::from_timestamp_nanos(at.value(i))).date()
+                }),
+                amends: opt(amends, i),
+                revenue_ttm: rev.is_valid(i).then(|| rev.value(i)),
+                revenue_tag: opt(tags, i).and_then(|t| {
+                    serde_json::from_str::<serde_json::Value>(&t)
+                        .ok()?
+                        .get("revenues")?
+                        .as_str()
+                        .map(str::to_owned)
+                }),
+            })
+            .collect();
+        let u = s
+            .lake
+            .read_dataset(
+                "universe",
+                Some(&["date", "figi", "cik", "eligible"]),
+                &[],
+                None,
+            )
+            .map_err(e)?;
+        let (ud, uf, uc, ue) = (
+            u.column(0).as_primitive::<Date32Type>(),
+            u.column(1).as_string::<i32>(),
+            u.column(2).as_string::<i32>(),
+            u.column(3).as_boolean(),
+        );
+        let eligible: Vec<usize> = (0..u.num_rows()).filter(|&i| ue.value(i)).collect();
+        let pairs: Vec<_> = eligible
+            .iter()
+            .map(|&i| (from_days(ud.value(i)), uf.value(i).to_owned()))
+            .collect();
+        // shortcut: without a universe, the index check uses every CIK of security_master (a
+        // superset); it narrows to eligible universe CIKs once J9 writes `universe`.
+        let index_ciks: HashSet<String> = if eligible.is_empty() {
+            ciks.clone()
+        } else {
+            eligible
+                .iter()
+                .filter(|&&i| uc.is_valid(i))
+                .map(|&i| uc.value(i).to_owned())
+                .collect()
+        };
+        let (mut lines, mut unlanded) = (Vec::new(), Vec::new());
+        for (y, q) in ingest::edgar::quarters((2011, 3), s.today) {
+            let chunk = format!("{y}q{q}");
+            match s
+                .manifest
+                .landed(("sec_bulk", "form_idx", &chunk))
+                .map_err(|e| e.to_string())?
+            {
+                Some((p, _, _)) => {
+                    let body = ingest::infra::landing::read(std::path::Path::new(&p))
+                        .map_err(|e| e.to_string())?;
+                    lines.extend(ingest::edgar::index_lines(&body, &["10-K", "10-Q"]));
+                }
+                None => unlanded.push(chunk),
+            }
+        }
+        for o in gates::validate_filings(&rows, s.today, &cal) {
+            results.push(("G7", "fundamentals", o));
+        }
+        results.push(("G7", "fundamentals", gates::staleness(&pairs, &rows)));
+        let mut idx = gates::index_misses(&lines, &index_ciks, &rows);
+        if !unlanded.is_empty() {
+            idx.level = Level::Fail;
+            idx.note = format!("form.idx not landed for {unlanded:?}; {}", idx.note);
+        }
+        results.push(("G7", "fundamentals", idx));
+        results.push(("G7", "fundamentals", gates::tag_switches(&rows)));
+        results.push(("G7", "fundamentals", gates::ttm_nulls(&rows)));
+    }
+    if g8 {
+        let (_, subs_path) = latest_zip(&s, "submissions_zip")?;
+        let zip =
+            ingest::edgar::open(&subs_path).map_err(|e| format!("{}: {e}", subs_path.display()))?;
+        // Main entries are `CIK##########.json`; pages carry a `-submissions-NNN` suffix.
+        let in_zip: HashSet<String> = zip
+            .file_names()
+            .filter(|n| n.len() == 18 && n.starts_with("CIK") && n.ends_with(".json"))
+            .filter_map(|n| n.get(3..13).map(str::to_owned))
+            .collect();
+        results.push((
+            "G8",
+            "filing_events",
+            gates::missing_submissions(&ciks, &in_zip),
+        ));
+        let ev = s
+            .lake
+            .read_dataset(
+                "filing_events",
+                Some(&["accession", "item", "form_type", "filing_date"]),
+                &[],
+                None,
+            )
+            .map_err(e)?;
+        let (acc, item, form) = (
+            ev.column(0).as_string::<i32>(),
+            ev.column(1).as_string::<i32>(),
+            ev.column(2).as_string::<i32>(),
+        );
+        let fd = ev.column(3).as_primitive::<Date32Type>();
+        let items: Vec<(String, String)> = (0..ev.num_rows())
+            .filter(|&i| form.value(i).starts_with("8-K") && from_days(fd.value(i)) >= s.ctx.from)
+            .map(|i| (acc.value(i).to_owned(), item.value(i).to_owned()))
+            .collect();
+        results.push(("G8", "filing_events", gates::items_share(&items)));
+        let last = last_prices(&s)?;
+        let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
+        let mut cutoff = last.values().max().copied().unwrap_or(s.today);
+        for _ in 0..10 {
+            cutoff = cal.prev_trading_day(cutoff).map_err(|e| e.to_string())?;
+        }
+        let mut explained = HashSet::new();
+        let d = s
+            .lake
+            .read_dataset("delistings", Some(&["figi"]), &[], None)
+            .map_err(e)?;
+        let f = d.column(0).as_string::<i32>();
+        explained.extend((0..d.num_rows()).map(|i| f.value(i).to_owned()));
+        let c = s
+            .lake
+            .read_dataset(
+                "price_coverage",
+                Some(&["figi", "coverage_status"]),
+                &[],
+                None,
+            )
+            .map_err(e)?;
+        let (f, st) = (
+            c.column(0).as_string::<i32>(),
+            c.column(1).as_string::<i32>(),
+        );
+        explained.extend(
+            (0..c.num_rows())
+                .filter(|&i| f.is_valid(i) && st.value(i) == "gap")
+                .map(|i| f.value(i).to_owned()),
+        );
+        let mut o = gates::unexplained_ends(&last, cutoff, &explained);
+        o.note = format!("{}; cutoff {cutoff}", o.note);
+        results.push(("G8", "delistings", o));
+    }
+    let mut hard_fail = Vec::new();
+    for (gate, dataset, o) in &results {
+        println!(
+            "{gate} {:<22} {:<4} {}",
+            o.chunk,
+            match o.level {
+                Level::Ok => "OK",
+                Level::Warn => "WARN",
+                Level::Fail => "FAIL",
+            },
+            o.note
+        );
+        if o.level == Level::Fail {
+            hard_fail.push(format!("{gate} {}", o.chunk));
+        }
+        let row = |entity: String, chunk: String, notes: String| Row {
+            source: "Gate",
+            dataset: (*dataset).into(),
+            entity,
+            chunk,
+            level: o.level,
+            attempts: 1,
+            notes: Some(notes),
+        };
+        s.quality.push_gate(
+            row("*".into(), o.chunk.into(), o.note.clone()),
+            Check {
+                id: gate,
+                measured: o.measured,
+                threshold: o.threshold,
+            },
+        );
+        // The note is in the chunk so two offences of one entity keep distinct keys.
+        let unique: std::collections::BTreeSet<_> = o.offenders.iter().collect();
+        for (entity, note) in unique {
+            s.quality.push_gate(
+                row(entity.clone(), format!("{} {note}", o.chunk), note.clone()),
+                Check {
+                    id: gate,
+                    measured: None,
+                    threshold: None,
+                },
+            );
+        }
+    }
+    s.quality.write(&s.lake).map_err(e)?;
+    if hard_fail.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("HARD checks failed: {hard_fail:?}"))
+    }
 }
 
 /// J8: every vintage of the 9 macro series (BACKFILL.md §5.3): vintage dates, windows of at

@@ -424,32 +424,58 @@ pub fn daily_days(zip_date: NaiveDate, today: NaiveDate) -> Vec<NaiveDate> {
 /// The periodic forms `fundamentals` is built from.
 pub const PERIODIC: [&str; 6] = ["10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT", "10-KT/A"];
 
-/// 10-digit CIKs with one of `forms` in a form index body (daily or quarterly).
+/// One line of a form index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexLine {
+    /// Form type.
+    pub form: String,
+    /// 10-digit CIK.
+    pub cik: String,
+    /// Date filed.
+    pub date: NaiveDate,
+    /// Accession, from the file name.
+    pub accession: String,
+}
+
+/// The lines of a form index body (daily or quarterly) with one of `forms`.
 /// Parsed from the right of each line (file name, date, CIK): the header's column positions
 /// do not match the data, and form types and company names can hold spaces.
 #[must_use]
-pub fn form_ciks(body: &[u8], forms: &[&str]) -> std::collections::BTreeSet<String> {
+pub fn index_lines(body: &[u8], forms: &[&str]) -> Vec<IndexLine> {
     String::from_utf8_lossy(body)
         .lines()
         .filter_map(|l| {
-            let t: Vec<&str> = l.split_whitespace().collect();
             // A form type can hold a space (`NT 10-K`): match it against the line start.
-            if !forms
+            let form = forms
                 .iter()
-                .any(|f| l.strip_prefix(f).is_some_and(|r| r.starts_with("  ")))
-            {
-                return None;
-            }
-            let cik = t.len().checked_sub(3).and_then(|i| t.get(i))?;
+                .find(|f| l.strip_prefix(**f).is_some_and(|r| r.starts_with("  ")))?;
+            let mut t = l.split_whitespace().rev();
+            let (file, date, cik) = (t.next()?, t.next()?, t.next()?);
             let n: u64 = cik.parse().ok()?;
-            Some(format!("{n:010}"))
+            Some(IndexLine {
+                form: (*form).to_owned(),
+                cik: format!("{n:010}"),
+                date: NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                    .or_else(|_| NaiveDate::parse_from_str(date, "%Y%m%d"))
+                    .ok()?,
+                accession: file.rsplit('/').next()?.trim_end_matches(".txt").to_owned(),
+            })
         })
+        .collect()
+}
+
+/// 10-digit CIKs with one of `forms` in a form index body.
+#[must_use]
+pub fn form_ciks(body: &[u8], forms: &[&str]) -> std::collections::BTreeSet<String> {
+    index_lines(body, forms)
+        .into_iter()
+        .map(|l| l.cik)
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, reason = "test")]
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
 
     use super::*;
 
@@ -485,5 +511,13 @@ mod tests {
         assert_eq!(got, vec!["0000320193".to_owned(), "0001770787".to_owned()]);
         let got: Vec<String> = form_ciks(body, &events::FORMS).into_iter().collect();
         assert_eq!(got, vec!["0000000222".to_owned(), "0000000333".to_owned()]);
+        let l = index_lines(body, &PERIODIC);
+        assert_eq!(
+            (l[1].accession.as_str(), l[1].date),
+            (
+                "0000320193-26-000001",
+                NaiveDate::from_ymd_opt(2026, 10, 9).unwrap()
+            )
+        );
     }
 }

@@ -4,6 +4,7 @@
 pub mod alfred;
 pub mod edgar;
 pub mod eodhd;
+pub mod gates;
 pub mod identity;
 pub mod infra;
 pub mod ishares;

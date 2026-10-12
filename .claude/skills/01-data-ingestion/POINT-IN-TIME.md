@@ -214,8 +214,8 @@ catch it.
 
 ## Verification
 
-`scripts/validate-filings.jl` scans `fundamentals` and asserts (rule order,
-severities and exit codes are in the script header and `QUALITY-GATES.md`):
+`quant-ingest gates g7` (`ingest/src/gates.rs`) scans `fundamentals` and asserts (rule
+order and severities are in `QUALITY-GATES.md` §4; the command exits 1 on a HARD failure):
 
 - Every row has a non-null `filing_date` and `period_end` (checked first)
 - Every row has `filing_date >= period_end`

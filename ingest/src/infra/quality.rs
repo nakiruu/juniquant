@@ -46,6 +46,20 @@ pub struct Row {
     pub notes: Option<String>,
 }
 
+/// What a gate row adds to a fetch row (`QUALITY-GATES.md` §1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Check {
+    /// `G0` ... `G9`.
+    pub id: &'static str,
+    /// The value measured.
+    pub measured: Option<f64>,
+    /// The threshold it was compared with.
+    pub threshold: Option<f64>,
+}
+
+/// Rows with their gate fields, if any.
+type Entries = Vec<(Row, Option<Check>)>;
+
 /// The rows of one run; cheap to clone and share between fetch tasks.
 #[derive(Debug, Clone)]
 pub struct QualityLog {
@@ -53,7 +67,7 @@ pub struct QualityLog {
     pub run_id: String,
     /// `data_quality.date`: the run date (ET).
     pub date: NaiveDate,
-    rows: Arc<Mutex<Vec<Row>>>,
+    rows: Arc<Mutex<Entries>>,
 }
 
 impl QualityLog {
@@ -69,19 +83,24 @@ impl QualityLog {
 
     /// Record an outcome.
     pub fn push(&self, row: Row) {
+        self.lock().push((row, None));
+    }
+
+    /// Record a gate result.
+    pub fn push_gate(&self, row: Row, check: Check) {
+        self.lock().push((row, Some(check)));
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Entries> {
         self.rows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(row);
     }
 
     /// The rows so far.
     #[must_use]
     pub fn rows(&self) -> Vec<Row> {
-        self.rows
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.lock().iter().map(|(r, _)| r.clone()).collect()
     }
 
     /// The rows as a `data_quality` batch (registry column order).
@@ -90,8 +109,16 @@ impl QualityLog {
     ///
     /// Arrow errors (a column-count mismatch is a bug).
     pub fn batch(&self) -> Result<RecordBatch, arrow::error::ArrowError> {
-        let rows = self.rows();
+        let all = self.lock().clone();
+        let rows: Vec<Row> = all.iter().map(|(r, _)| r.clone()).collect();
         let n = rows.len();
+        let check = |f: &dyn Fn(&Check) -> Option<f64>| -> ArrayRef {
+            std::sync::Arc::new(Float64Array::from(
+                all.iter()
+                    .map(|(_, c)| c.as_ref().and_then(f))
+                    .collect::<Vec<_>>(),
+            ))
+        };
         let days = i32::try_from(
             self.date
                 .signed_duration_since(NaiveDate::default())
@@ -125,9 +152,13 @@ impl QualityLog {
                     .map(|r| i32::try_from(r.attempts).ok())
                     .collect::<Vec<_>>(),
             )),
-            s(&|_| Some("*".to_owned())),
-            std::sync::Arc::new(Float64Array::from(vec![None; n])),
-            std::sync::Arc::new(Float64Array::from(vec![None; n])),
+            std::sync::Arc::new(StringArray::from(
+                all.iter()
+                    .map(|(_, c)| Some(c.as_ref().map_or("*", |c| c.id)))
+                    .collect::<Vec<_>>(),
+            )),
+            check(&|c| c.measured),
+            check(&|c| c.threshold),
         ];
         RecordBatch::try_new(schema, cols)
     }

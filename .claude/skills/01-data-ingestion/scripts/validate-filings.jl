@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# SUPERSEDED: the rules run in `quant-ingest gates g7` (ingest/src/gates.rs).
 # Validates the `fundamentals` dataset for point-in-time integrity (gate G7,
 # QUALITY-GATES.md section 4).  SKETCH (not normative): the contract is the
 # rule table in QUALITY-GATES.md; the Parquet2/DataFrames calls are unverified
