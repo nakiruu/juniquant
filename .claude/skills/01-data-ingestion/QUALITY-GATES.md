@@ -42,6 +42,13 @@ caveat but do not block.
 | **G9** Replay determinism | Re-parse a random 2% of chunks from the landing zone: stage hashes equal the recorded ones; each lake partition's recorded `inputs_hash` equals the recomputed one | 0 differences | HARD |
 | **G10** Cross-source | Only with a second price source: as-traded close relative difference above 0.5% on more than 0.1% of common days WARN, above 1% FAIL. With one source: reported "not applicable", never "passed" | n/a | WARN/HARD when active |
 
+**Built in `quant-ingest gates` (2026-10-12): G0, G2, G7, G8.** First G0/G2 run over
+24.7M bars: G0 0 differing dates; G2 rows 0.0099% (2,442), ten-fold jumps 8,076 (HARD FAIL:
+91% in about 150 securities whose vendor series mixes two price levels on zero-volume days,
+the `vendor_wrong_holder` pattern of `SURVIVORSHIP.md` §4), unexplained jumps 0.144%,
+595 inconsistent splits, reconciliation 99.26%. G2 offenders are `data_quality` rows
+(`entity` = FIGI, `chunk` = `{check} {date} {why}`).
+
 ## 3. Sketch SQL
 
 Completeness by year (G3). `calendar` is a table the gate runner loads from

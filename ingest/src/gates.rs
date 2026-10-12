@@ -1,4 +1,4 @@
-//! Gates G7 (filings) and G8 (events) of `QUALITY-GATES.md` §2, as pure functions over rows
+//! Gates G0 (calendar), G2 (price sanity), G7 (filings) and G8 (events) of `QUALITY-GATES.md` §2, as pure functions over rows
 //! the caller reads from the lake and the landing zone. Each sub-check is one [`Outcome`]: an
 //! aggregate `data_quality` row (`entity = '*'`, `chunk` = the sub-check) plus one row per
 //! offending entity.
@@ -482,6 +482,251 @@ pub fn unexplained_ends(
     )
 }
 
+/// G0: the calendar's trading days in `[from, to]` against the dates of the SPY bars. Either
+/// side alone is a differing date (HARD, 0 allowed); the calendar is never rebuilt from bars.
+#[must_use]
+pub fn calendar_match(
+    cal: &calendar::Calendar,
+    spy: &std::collections::BTreeSet<NaiveDate>,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Outcome {
+    let mut out = Vec::new();
+    let mut d = from;
+    while d <= to {
+        match (cal.is_trading_day(d), spy.contains(&d)) {
+            (true, false) => {
+                out.push(("SPY".to_owned(), format!("{d} calendar day without a bar")))
+            }
+            (false, true) => out.push(("SPY".to_owned(), format!("{d} bar on a closed day"))),
+            _ => {}
+        }
+        d = d.succ_opt().unwrap_or(NaiveDate::MAX);
+    }
+    let mut o = count(
+        "calendar",
+        true,
+        "dates differ between the calendar and SPY",
+        out,
+    );
+    if spy.is_empty() {
+        o.level = Level::Fail;
+        o.measured = None;
+        o.note = "no SPY bars".into();
+    }
+    o
+}
+
+/// One `prices` row for G2; a null price is NaN and a null volume is -1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bar {
+    /// Index of the security's FIGI in the caller's name list.
+    pub sec: u32,
+    /// Trading day.
+    pub date: NaiveDate,
+    /// As traded.
+    pub open: f64,
+    /// As traded.
+    pub high: f64,
+    /// As traded.
+    pub low: f64,
+    /// As traded.
+    pub close: f64,
+    /// As traded; -1 when null.
+    pub volume: i64,
+    /// The vendor's adjusted close.
+    pub adj: f64,
+}
+
+/// `(ex_date, value)` per security index: split ratios or dividends as paid, sorted.
+pub type Events = HashMap<u32, Vec<(NaiveDate, f64)>>;
+
+fn bad_row(b: &Bar) -> Option<&'static str> {
+    let pos = [b.open, b.high, b.low, b.close]
+        .iter()
+        .all(|p| p.is_finite() && *p > 0.0);
+    if !pos {
+        Some("price not positive")
+    } else if b.high < b.low {
+        Some("high < low")
+    } else if b.close < b.low || b.close > b.high {
+        Some("close outside [low, high]")
+    } else if b.volume < 0 {
+        Some("volume negative or null")
+    } else {
+        None
+    }
+}
+
+/// Product of the ratios with `a < ex <= b`.
+fn rho(splits: &[(NaiveDate, f64)], a: NaiveDate, b: NaiveDate) -> f64 {
+    splits
+        .iter()
+        .filter(|(ex, _)| a < *ex && *ex <= b)
+        .map(|(_, r)| r)
+        .product()
+}
+
+/// G2 (`QUALITY-GATES.md` §2) over `bars` sorted by `(sec, date)`; `names[sec]` is the FIGI.
+/// Returns `rows` (HARD, at most 0.1% of rows; one offender per failed row, chunk
+/// `rows {date} {why}`), `ten_fold` (HARD, 0), `jumps` (WARN, at most 0.05% of ticker-days),
+/// `splits` (WARN) and `reconciliation` (WARN, at least 99.5% of 20-bar windows within 0.5%
+/// of the vendor's adjusted ratio; one offender per security). A jump is explained by a split
+/// with `ex_date` from the previous bar to one day after the bar.
+#[must_use]
+pub fn price_sanity(
+    bars: &[Bar],
+    names: &[String],
+    splits: &Events,
+    divs: &Events,
+) -> [Outcome; 5] {
+    let name = |b: &Bar| names.get(b.sec as usize).cloned().unwrap_or_default();
+    let none: Vec<(NaiveDate, f64)> = Vec::new();
+    let (mut rows, mut ten, mut jumps, mut split_bad) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut pairs, mut windows, mut within) = (0usize, 0usize, 0usize);
+    let mut recon = Vec::new();
+    for s in bars.chunk_by(|a, b| a.sec == b.sec) {
+        let sec = s.first().map_or(0, |b| b.sec);
+        let sp = splits.get(&sec).unwrap_or(&none);
+        let dv = divs.get(&sec).unwrap_or(&none);
+        let ok = |b: &Bar| b.close.is_finite() && b.close > 0.0;
+        // One-bar total-return factor G (`FEATURES.md` §0); NaN across a bad close.
+        let mut g = vec![f64::NAN; s.len()];
+        for (k, b) in s.iter().enumerate() {
+            if let Some(why) = bad_row(b) {
+                rows.push((name(b), format!("{} {why}", b.date)));
+            }
+            let Some(p) = k.checked_sub(1).and_then(|j| s.get(j)) else {
+                continue;
+            };
+            if !(ok(p) && ok(b)) {
+                continue;
+            }
+            pairs += 1;
+            let r = b.close / p.close;
+            let explained = sp
+                .iter()
+                .any(|(ex, _)| p.date <= *ex && *ex <= b.date + chrono::Days::new(1));
+            if !explained && (r >= 1.8 || r <= 0.55) {
+                let off = (name(b), format!("{} close ratio {r:.3}", b.date));
+                if r >= 10.0 || r <= 0.1 {
+                    ten.push(off.clone());
+                }
+                jumps.push(off);
+            }
+            let paid: f64 = dv
+                .iter()
+                .filter(|(ex, _)| p.date < *ex && *ex <= b.date)
+                .map(|(ex, a)| a * rho(sp, p.date, *ex))
+                .sum();
+            if let Some(x) = g.get_mut(k) {
+                *x = (rho(sp, p.date, b.date) * b.close + paid) / p.close;
+            }
+        }
+        for (ex, ratio) in sp {
+            // The first bar on or after the ex-date and the bar before it.
+            let Some([p, b]) = s
+                .windows(2)
+                .find(|w| w.get(1).is_some_and(|b| b.date >= *ex))
+            else {
+                continue;
+            };
+            let v = b.close / p.close * ratio;
+            if !(0.4..=2.5).contains(&v) {
+                split_bad.push((
+                    names.get(sec as usize).cloned().unwrap_or_default(),
+                    format!("{ex} ratio {ratio} gives {v:.3}"),
+                ));
+            }
+        }
+        let (mut n, mut off) = (0usize, 0usize);
+        // 21 bars span 20 factors G: those of bars 1..=20 of the window.
+        for (w, gw) in s.windows(21).zip(g.windows(20).skip(1)) {
+            let ours: f64 = gw.iter().product();
+            let (a0, a1) = (
+                w.first().map_or(0.0, |b| b.adj),
+                w.last().map_or(0.0, |b| b.adj),
+            );
+            if !(ours.is_finite() && a0 > 0.0 && a1 > 0.0) {
+                continue;
+            }
+            n += 1;
+            if ((ours / (a1 / a0)) - 1.0).abs() > 0.005 {
+                off += 1;
+            }
+        }
+        windows += n;
+        within += n - off;
+        if off > 0 {
+            recon.push((
+                names.get(sec as usize).cloned().unwrap_or_default(),
+                format!("{off} of {n} 20-bar windows off by more than 0.5%"),
+            ));
+        }
+    }
+    let share = |n: usize, d: usize| n as f64 / d.max(1) as f64;
+    let rate =
+        |chunk, hard: bool, what: &str, offenders: Vec<(String, String)>, d: usize, t: f64| {
+            let m = share(offenders.len(), d);
+            Outcome {
+                chunk,
+                level: if m <= t {
+                    Level::Ok
+                } else if hard {
+                    Level::Fail
+                } else {
+                    Level::Warn
+                },
+                measured: Some(m),
+                threshold: Some(t),
+                note: format!("{} of {d} {what} ({:.4}%)", offenders.len(), m * 100.0),
+                offenders,
+            }
+        };
+    let rec = share(within, windows);
+    [
+        rate(
+            "rows",
+            true,
+            "rows fail a per-row check",
+            rows,
+            bars.len(),
+            0.001,
+        ),
+        count("ten_fold", true, "ten-fold jumps without a split", ten),
+        rate(
+            "jumps",
+            false,
+            "ticker-days jump without a split",
+            jumps,
+            pairs,
+            0.0005,
+        ),
+        count(
+            "splits",
+            false,
+            "splits inconsistent with the closes",
+            split_bad,
+        ),
+        Outcome {
+            chunk: "reconciliation",
+            level: if windows > 0 && rec >= 0.995 {
+                Level::Ok
+            } else {
+                Level::Warn
+            },
+            measured: Some(rec),
+            threshold: Some(0.995),
+            note: format!(
+                "{within} of {windows} 20-bar windows within 0.5% of the vendor ({:.3}%)",
+                rec * 100.0
+            ),
+            offenders: recon,
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
@@ -609,6 +854,77 @@ mod tests {
         assert_eq!(
             o.offenders,
             vec![("B".to_owned(), "prices end 2020-01-02".to_owned())]
+        );
+    }
+
+    #[test]
+    fn g0_calendar_against_spy() {
+        let cal = calendar::Calendar::rules_only();
+        let (from, to) = (d("2024-01-01"), d("2024-01-31"));
+        let mut spy: std::collections::BTreeSet<_> = from
+            .iter_days()
+            .take_while(|x| *x <= to)
+            .filter(|x| cal.is_trading_day(*x))
+            .collect();
+        assert_eq!(calendar_match(&cal, &spy, from, to).level, Level::Ok);
+        spy.remove(&d("2024-01-10"));
+        spy.insert(d("2024-01-13"));
+        let o = calendar_match(&cal, &spy, from, to);
+        assert_eq!(o.level, Level::Fail);
+        assert_eq!(o.offenders.len(), 2);
+        let none = calendar_match(&cal, &Default::default(), from, to);
+        assert_eq!((none.level, none.measured), (Level::Fail, None));
+    }
+
+    #[test]
+    fn g2_checks() {
+        let day = |k: u64| d("2024-01-01") + chrono::Days::new(k);
+        let bar = |sec, k, close: f64, adj| Bar {
+            sec,
+            date: day(k),
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 100,
+            adj,
+        };
+        let mut bars = Vec::new();
+        for k in 0..30 {
+            // sec 0: flat, one dividend the vendor ignores, one broken row.
+            let mut b = bar(0, k, 10.0, 10.0);
+            if k == 3 {
+                b.high = 9.0;
+            }
+            bars.push(b);
+            // sec 1: a 4-for-1 split on day 10, the vendor's adjusted series is flat.
+            bars.push(bar(1, k, if k < 10 { 40.0 } else { 10.0 }, 10.0));
+            // sec 2: a twelve-fold jump on day 5 with no split.
+            bars.push(bar(2, k, if k < 5 { 1.0 } else { 12.0 }, 1.0));
+        }
+        bars.sort_by_key(|b| (b.sec, b.date));
+        let names = vec!["A".to_owned(), "B".to_owned(), "C".to_owned()];
+        let splits = Events::from([(1, vec![(day(10), 4.0)])]);
+        let divs = Events::from([(0, vec![(day(15), 0.1)])]);
+        let [rows, ten, jumps, sp, rec] = price_sanity(&bars, &names, &splits, &divs);
+        assert_eq!(
+            rows.offenders,
+            vec![("A".to_owned(), format!("{} high < low", day(3)))]
+        );
+        assert_eq!(rows.level, Level::Fail, "1 of 90 rows is above 0.1%");
+        assert_eq!(ten.offenders.len(), 1);
+        assert_eq!(ten.offenders[0].0, "C");
+        assert_eq!(jumps.offenders.len(), 1, "the split explains B's drop");
+        assert_eq!(sp.level, Level::Ok);
+        assert_eq!(rec.level, Level::Warn);
+        assert_eq!(
+            rec.offenders.len(),
+            2,
+            "A's dividend and C's jump differ from the vendor"
+        );
+        assert!(
+            rec.offenders.iter().all(|(f, _)| f != "B"),
+            "split-aligned ratio matches"
         );
     }
 }

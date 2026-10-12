@@ -13,7 +13,7 @@
 //! quant-ingest edgar sic                               J4, security_master SIC from the zip
 //! quant-ingest edgar daily                              J7 + J6 daily: filers in the day's form index
 //! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
-//! quant-ingest gates [g7|g8]                             QUALITY-GATES.md G7 filings, G8 events
+//! quant-ingest gates [g0] [g2] [g7] [g8]                  QUALITY-GATES.md G0 calendar, G2 prices, G7 filings, G8 events
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -54,7 +54,7 @@ fn main() -> ExitCode {
         ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|daily\n       quant-ingest gates [g7|g8]"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
             );
             return ExitCode::from(2);
         }
@@ -831,6 +831,71 @@ fn last_prices(s: &Setup) -> Result<std::collections::HashMap<String, NaiveDate>
     Ok(last)
 }
 
+/// Every `prices` row as a G2 [`ingest::gates::Bar`], sorted by `(sec, date)`, and the FIGI of
+/// each `sec`; read a year at a time (about 1.4 GB for 25M rows).
+fn price_bars(s: &Setup) -> Result<(Vec<ingest::gates::Bar>, Vec<String>), String> {
+    use arrow::array::{Array, AsArray};
+    use arrow::datatypes::{Date32Type, Float64Type, Int64Type};
+    let (mut bars, mut names) = (Vec::new(), Vec::new());
+    let mut index: std::collections::HashMap<String, u32> = Default::default();
+    for y in s.ctx.from.year()..=s.today.year() {
+        let (Some(a), Some(z)) = (
+            NaiveDate::from_ymd_opt(y, 1, 1),
+            NaiveDate::from_ymd_opt(y, 12, 31),
+        ) else {
+            continue;
+        };
+        let p = s
+            .lake
+            .read_dataset(
+                "prices",
+                Some(&[
+                    "figi",
+                    "date",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "adj_close_vendor",
+                ]),
+                &[],
+                Some((a, z)),
+            )
+            .map_err(|e| e.to_string())?;
+        let f = p.column(0).as_string::<i32>();
+        let d = p.column(1).as_primitive::<Date32Type>();
+        let px = |c: usize| p.column(c).as_primitive::<Float64Type>();
+        let (o, h, l, c, adj) = (px(2), px(3), px(4), px(5), px(7));
+        let v = p.column(6).as_primitive::<Int64Type>();
+        let num =
+            |a: &arrow::array::Float64Array, i| if a.is_valid(i) { a.value(i) } else { f64::NAN };
+        for i in 0..p.num_rows() {
+            let sec = match index.get(f.value(i)) {
+                Some(&k) => k,
+                None => {
+                    let k = u32::try_from(names.len()).map_err(|e| e.to_string())?;
+                    names.push(f.value(i).to_owned());
+                    index.insert(f.value(i).to_owned(), k);
+                    k
+                }
+            };
+            bars.push(ingest::gates::Bar {
+                sec,
+                date: from_days(d.value(i)),
+                open: num(o, i),
+                high: num(h, i),
+                low: num(l, i),
+                close: num(c, i),
+                volume: if v.is_valid(i) { v.value(i) } else { -1 },
+                adj: num(adj, i),
+            });
+        }
+    }
+    bars.sort_unstable_by_key(|b| (b.sec, b.date));
+    Ok((bars, names))
+}
+
 /// `delistings` rebuilt in full from the lake's `filing_events` (the delisting forms and
 /// items only) and each security's last price date (`SURVIVORSHIP.md` §3).
 fn write_delistings(s: &Setup) -> Result<String, String> {
@@ -937,16 +1002,79 @@ fn gates(rest: &[&str]) -> Result<(), String> {
     use arrow::datatypes::{Date32Type, Float64Type, TimestampNanosecondType};
     use ingest::gates::{self, FilingRow, Outcome};
     use ingest::infra::quality::{Check, Level, Row};
-    let (g7, g8) = match rest {
-        [] => (true, true),
-        ["g7"] => (true, false),
-        ["g8"] => (false, true),
-        _ => return Err("usage: quant-ingest gates [g7|g8]".into()),
-    };
+    const GATES: [&str; 4] = ["g0", "g2", "g7", "g8"];
+    if let Some(g) = rest.iter().find(|g| !GATES.contains(g)) {
+        return Err(format!(
+            "unknown gate {g}; usage: quant-ingest gates [g0] [g2] [g7] [g8]"
+        ));
+    }
+    let want = |g: &str| rest.is_empty() || rest.contains(&g);
+    let (g7, g8) = (want("g7"), want("g8"));
     let s = setup("gates")?;
     let e = |e: lake::LakeError| e.to_string();
     let ciks: HashSet<String> = filer_securities(&s.lake)?.into_keys().collect();
     let mut results: Vec<(&'static str, &'static str, Outcome)> = Vec::new();
+    if want("g0") || want("g2") {
+        let (bars, names) = price_bars(&s)?;
+        if want("g0") {
+            let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
+            let m = s
+                .lake
+                .read_dataset("security_master", Some(&["figi", "ticker"]), &[], None)
+                .map_err(e)?;
+            let (f, t) = (
+                m.column(0).as_string::<i32>(),
+                m.column(1).as_string::<i32>(),
+            );
+            let spy = (0..m.num_rows())
+                .find(|&i| t.value(i) == "SPY")
+                .and_then(|i| names.iter().position(|n| n == f.value(i)))
+                .and_then(|p| u32::try_from(p).ok());
+            let dates: std::collections::BTreeSet<NaiveDate> = bars
+                .iter()
+                .filter(|b| Some(b.sec) == spy)
+                .map(|b| b.date)
+                .collect();
+            let end = bars.iter().map(|b| b.date).max().unwrap_or(s.today);
+            results.push((
+                "G0",
+                "prices",
+                gates::calendar_match(&cal, &dates, s.ctx.from, end),
+            ));
+        }
+        if want("g2") {
+            let index: std::collections::HashMap<&str, u32> = names
+                .iter()
+                .enumerate()
+                .filter_map(|(i, n)| Some((n.as_str(), u32::try_from(i).ok()?)))
+                .collect();
+            let events = |dataset: &str, value: &str| -> Result<gates::Events, String> {
+                let b = s
+                    .lake
+                    .read_dataset(dataset, Some(&["figi", "ex_date", value]), &[], None)
+                    .map_err(|e| e.to_string())?;
+                let (f, d, v) = (
+                    b.column(0).as_string::<i32>(),
+                    b.column(1).as_primitive::<Date32Type>(),
+                    b.column(2).as_primitive::<Float64Type>(),
+                );
+                let mut out = gates::Events::new();
+                for i in 0..b.num_rows() {
+                    if let Some(&sec) = index.get(f.value(i)) {
+                        out.entry(sec)
+                            .or_default()
+                            .push((from_days(d.value(i)), v.value(i)));
+                    }
+                }
+                out.values_mut().for_each(|v| v.sort_by_key(|x| x.0));
+                Ok(out)
+            };
+            let (splits, divs) = (events("splits", "ratio")?, events("dividends", "amount")?);
+            for o in gates::price_sanity(&bars, &names, &splits, &divs) {
+                results.push(("G2", "prices", o));
+            }
+        }
+    }
     if g7 {
         let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
         let b = s
