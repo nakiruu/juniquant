@@ -68,7 +68,7 @@ a survivor-bias-free vendor):
 
 1. It gets its own `id` and lands raw files under its own `source` directory.
 2. `config/price_sources.toml` lists sources by priority per ticker and date
-   range. `prices` holds **one row per `(ticker, date)`**: the highest-priority
+   range. `prices` holds **one row per `(figi, date)`**: the highest-priority
    source that has the bar. The losing source's bars stay only in the landing
    zone.
 3. When two sources both have a bar, gate G10 (cross-source close
