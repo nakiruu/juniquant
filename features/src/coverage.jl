@@ -15,8 +15,8 @@ member without one. `holdings` as in [`universe_columns`] plus `ticker`; `master
 trading days from a snapshot's `available_date` to the next one of the same ETF, through
 `data_end`.
 
-shortcut: `vendor_wrong_holder` and `symbol_reused` are not detected (they need the vendor's
-`firstTradeDate` and a holder check); add them with the first membership older than the data.
+A member whose days overlap a `vendor_wrong_holder` or `symbol_reused` range G2 `rejected` is
+a `gap` with that reason; pass `price_dates` without the rejected bars.
 
 # Example
 ```julia
@@ -24,7 +24,8 @@ cov = coverage_table(holdings, master, Dict("BBG000B9XRY4" => dates), delistings
                      Date(2026, 10, 9), now(UTC))
 ```
 """
-function coverage_table(holdings, master, price_dates, delistings, tdays, data_end, built_at)
+function coverage_table(holdings, master, price_dates, delistings, tdays, data_end, built_at;
+                        rejected = Rejected())
     mticker = Dict(String(f) => String(t) for (f, t) in zip(master.figi, master.ticker))
     mcik = Dict(String(f) => c for (f, c) in zip(master.figi, master.cik))
     delist = Dict(String(delistings.figi[i]) => i for i in eachindex(delistings.figi)
@@ -46,7 +47,7 @@ function coverage_table(holdings, master, price_dates, delistings, tdays, data_e
         end
     end
     out = [coverage_row(key, sort!(collect(d)), price_dates, mcik, delistings, delist, tdays,
-                        data_end, built_at) for (key, d) in days]
+                        data_end, built_at, rejected) for (key, d) in days]
     sort!(out; by = r -> (coalesce(r.figi, ""), r.ticker))
     return NamedTuple{keys(COVERAGE)}(Tuple(T[r[c] for r in out] for (c, T) in pairs(COVERAGE)))
 end
@@ -59,7 +60,7 @@ const COVERAGE = (figi = Union{Missing,String}, ticker = String, cik = Union{Mis
     data_end = Date, built_at = DateTime)
 
 function coverage_row((figi, ticker), member, price_dates, mcik, dl, delist, tdays, data_end,
-                      built_at)
+                      built_at, rejected)
     px = figi === missing ? Date[] : get(price_dates, figi, Date[])
     pset = Set(px)
     j = figi === missing ? nothing : get(delist, figi, nothing)
@@ -79,6 +80,8 @@ function coverage_row((figi, ticker), member, price_dates, mcik, dl, delist, tda
         "gap", "identity_unresolved"
     elseif isempty(px)
         "gap", "vendor_no_data"
+    elseif (h = held_by_other(get(rejected, figi, NO_SPANS), member)) !== nothing
+        "gap", h
     elseif first_px > first(member)
         "gap", "late_start"
     elseif terminal
@@ -98,4 +101,12 @@ function coverage_row((figi, ticker), member, price_dates, mcik, dl, delist, tda
         n_member_days = Int32(length(member)), n_member_days_priced = Int32(count(in(pset), member)),
         delist_class = class, est_last_trading_date = est, coverage_status = status,
         gap_reason = reason, terminal_class = tclass, data_end = data_end, built_at = built_at)
+end
+
+"""The reason of the first `vendor_wrong_holder` or `symbol_reused` range overlapping the
+member days, else `nothing`."""
+function held_by_other(spans, member)
+    i = findfirst(s -> s[3] in ("vendor_wrong_holder", "symbol_reused") &&
+                       s[1] <= last(member) && s[2] >= first(member), spans)
+    return i === nothing ? nothing : spans[i][3]
 end

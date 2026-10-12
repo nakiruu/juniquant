@@ -4,7 +4,8 @@
     build_universe(; config = ENV["QUANT_CONFIG"]) -> NamedTuple
 
 Rebuild `universe` for every year with prices and `price_coverage` in full, through the lake
-writer. Prints and returns the row counts and the eligible count per year.
+writer, without the prices the latest G2 run rejected (`data_quality`). Prints and returns the
+row counts and the eligible count per year.
 
 shortcut: a full rebuild every run (about 25M rows); rebuild only the years touched since the
 last run once the daily job needs it faster.
@@ -29,14 +30,17 @@ function build_universe(; config::AbstractString = ENV["QUANT_CONFIG"])
     splits = read_dataset("splits"; columns = ["figi", "ex_date", "ratio"])
     delistings = read_dataset("delistings"; columns = ["figi", "delist_class",
         "est_last_trading_date", "bankruptcy_filing_date"])
+    rejected = g2_rejected(read_dataset("data_quality";
+        columns = ["source", "check_id", "run_id", "entity", "chunk"]))
     isempty(prices.date) && error("prices is empty")
     first_day, data_end = extrema(prices.date)
     tdays = [d for d in first_day:Day(1):data_end if is_trading_day(cal, d)]
-    u = universe_rows(prices, master, fund, splits, tdays)
+    u = universe_rows(prices, master, fund, splits, tdays; rejected = rejected)
     years = year.(u.date)
     eligible = Dict{Int,Int}()
     for y in sort!(unique(years))
-        cols = universe_columns(u, findall(==(y), years), prices, master, holdings, ranges)
+        cols = universe_columns(u, findall(==(y), years), prices, master, holdings, ranges;
+                                rejected = rejected)
         write_partition("universe", [string(y)], cols; mode = :replace)
         eligible[y] = count(cols.eligible)
         println("universe $y: $(length(cols.date)) rows, $(eligible[y]) eligible")
@@ -45,10 +49,11 @@ function build_universe(; config::AbstractString = ENV["QUANT_CONFIG"])
     price_dates = Dict{String,Vector{Date}}()
     for r in eachindex(u.src)
         f = String(prices.figi[u.src[r]])
-        f in members && push!(get!(price_dates, f, Date[]), u.date[r])
+        f in members && !in_spans(get(rejected, f, NO_SPANS), u.date[r]) &&
+            push!(get!(price_dates, f, Date[]), u.date[r])
     end
     cov = coverage_table(holdings, master, price_dates, delistings, tdays, data_end,
-                         now(UTC))
+                         now(UTC); rejected = rejected)
     write_dataset("price_coverage", cov; mode = :replace)
     println("price_coverage: $(length(cov.ticker)) members, data end $data_end")
     return (universe = length(u.src), coverage = length(cov.ticker), eligible = eligible)

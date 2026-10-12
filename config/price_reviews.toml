@@ -1,0 +1,14 @@
+# Owner reviews of G2 ten-fold jumps (01-data-ingestion/QUALITY-GATES.md G2). Read by
+# `quant-ingest gates g2`; a FIGI without prices is an error.
+#
+# [[accept]]   a real move: the jump on `date` is not counted and its bars stay.
+# figi = "BBG000XXXXXX"
+# date = "2020-09-23"
+# note = "why"
+#
+# [[exclude]]  bad data: G2 rejects the bars from `from` to `to` (reason `reviewed`), so
+# `universe` excludes those rows.
+# figi = "BBG000XXXXXX"
+# from = "2014-08-13"
+# to   = "2014-12-31"
+# note = "why"

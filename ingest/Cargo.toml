@@ -28,6 +28,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 symbols = { path = "../symbols" }
+toml.workspace = true
 tokio.workspace = true
 zstd.workspace = true
 

@@ -102,6 +102,17 @@ the owner chose `E25` (D22).
 | D4 | Form 25 present, none of the above | `delisted_other` (listing-standard failure, voluntary delisting, exchange transfer) | medium |
 | D5 | Form 15 (15-12B, 15-12G, 15-15D) with no Form 25 | `deregistered` | low |
 | none | No qualifying event | no row | |
+| D0 | Applied last: the security's prices outlive the Form 25 (else the Form 15) at the same level of trade: more than 10 bars after it, the median dollar volume of bars 11-70 after it at least half that of the 60 bars to it, and no ten-fold jump without a split after it | the row is dropped | |
+
+D0 (2026-10-12) catches a Form 25 for another security of the filer (a note, a preferred, a
+tracking stock: Loews' Carolina Group in June 2008) or an exchange transfer, and an Item
+2.01 the filer made as an acquirer or seller (CME 2008, Darden 2015). It dropped 1,414 of
+5,258 rows (`acquired` 176, `bankruptcy` 18, `delisted_other` 1,100, `deregistered` 120). It
+misses a security whose volume fell by half around the form for other reasons (Take-Two and
+Leidos keep a false row; harmless while the series is live: their coverage stays `complete`)
+and drops a few real ones whose stock traded on at volume (Merrill Lynch 2009: 158 bars of
+another security follow). It needs a bar on or before the form; without one the row stays.
+Rebuild alone with `quant-ingest edgar delistings`.
 
 Limits, stated:
 
@@ -113,9 +124,8 @@ Limits, stated:
   fields. This does not matter to the terminal value rule (the last price
   proxies the deal value in both cases), and `acquired` is not split.
 - Form 25 is also filed for an **exchange transfer** (the security keeps
-  trading under the same symbol). The coverage job therefore ignores a
-  delisting row contradicted by prices continuing more than 30 days past
-  `est_last_trading_date`, and counts those in the report. Without prices
+  trading under the same symbol) and for the filer's other securities. D0
+  drops such a row at the source when the prices outlive it. Without prices
   this error cannot be seen: it is one reason the vendor's history is needed.
 - The classification is a heuristic on filing metadata. Confidence is
   recorded, and the evidence accessions are stored for audit
@@ -139,6 +149,8 @@ with [`first_price_date`, `last_price_date`] and the delisting record:
 | `complete` | Prices on all member days (within a 2% internal-hole tolerance), through the last expected day: the data end for a live name, `est_last_trading_date` for a delisted one |
 | `terminal_known` | The series ends within 10 trading days of the `est_last_trading_date` of an `acquired` row, or reaches within 30 days of the `bankruptcy_filing_date` of a `bankruptcy` row (D22: a bankrupt stock stops trading near the 8-K or keeps trading over the counter, so no single date fits; about 90% of D1 series meet the 30-day rule, 29% the 10-day one) |
 | `gap` | Anything else; `gap_reason` is one of `vendor_no_data`, `vendor_wrong_holder` (the code answers with a different holder's series, `SOURCES.md` EODHD), `vendor_truncated` (series ends more than 10 trading days before the expected end), `late_start` (series starts after the first member day), `symbol_reused` (the vendor series starts after the security's first member day by more than 30 days and the security is old, or `firstTradeDate` contradicts the holdings), `identity_unresolved` (no CIK / vendor symbol), `internal_gaps` |
+
+`vendor_wrong_holder` and `symbol_reused` come from the G2 spans (`QUALITY-GATES.md` G2): a member whose member days overlap such a span is a `gap` with that reason, checked right after `vendor_no_data`; the coverage counts no rejected bar as priced.
 
 `terminal_class` (used by the labels): `none` (alive at the data end),
 `bankrupt` (class `bankruptcy`, the series reaches the bankruptcy filing

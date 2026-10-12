@@ -58,15 +58,16 @@ shares_outstanding, shares_asof_date`), `splits` (`figi, ex_date, ratio`); `tday
 sorted trading calendar covering the price dates. Point in time: row `t` reads bars, filings
 and splits dated `<= t` only.
 
-shortcut: "valid" is a positive close with a volume until gate G2 writes per-row price
-failures; the `data_quality` exclusion and the de-SPAC start (§5a) wait for G2 and SIC 6770.
+A valid bar has a positive close and a volume and lies outside the ranges G2 `rejected`
+([`g2_rejected`]). shortcut: the de-SPAC start (§5a) waits for SIC 6770.
 
 # Example
 ```julia
-u = universe_rows(prices, master, fund, splits, tdays)
+u = universe_rows(prices, master, fund, splits, tdays; rejected = g2_rejected(dq))
 ```
 """
-function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date})
+function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date};
+                       rejected = Rejected())
     has_cik = Dict(String(f) => c !== missing for (f, c) in zip(master.figi, master.cik))
     id = Dict{String,Int}()
     pf, pd = prices.figi, prices.date
@@ -97,12 +98,14 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
         end
         fr = sort(get(fund_by, f, Int[]); by = j -> fund.filing_date[j])
         sp = sort(get(split_by, f, Int[]); by = j -> splits.ex_date[j])
+        spans = get(rejected, f, NO_SPANS)
+        good = [valid_bar(close_[src[r]], vol[src[r]]) && !in_spans(spans, pd[src[r]]) for r in lo:hi]
         h, j0, k, shares, cover = Int32(0), lo, 1, missing, missing
         for r in lo:hi
             i = src[r]
             d = pd[i]
-            c, v = close_[i], vol[i]
-            ok = valid_bar(c, v)
+            c = close_[i]
+            ok = good[r-lo+1]
             h += ok
             hist[r] = h
             ti = searchsortedfirst(tdays, d)
@@ -112,7 +115,7 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
             empty!(buf)
             for q in j0:r
                 iq = src[q]
-                valid_bar(close_[iq], vol[iq]) && push!(buf, close_[iq] * vol[iq])
+                good[q-lo+1] && push!(buf, close_[iq] * vol[iq])
             end
             length(buf) >= MIN_WINDOW && (mdv[r] = median!(buf))
             while k <= length(fr) && fund.filing_date[fr[k]] <= d
@@ -137,6 +140,42 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
 end
 
 tdays_index(tdays, d) = searchsortedfirst(tdays, d)
+
+"""Per FIGI, the `(from, to, reason)` date ranges gate G2 rejected."""
+const Rejected = Dict{String,Vector{Tuple{Date,Date,String}}}
+const NO_SPANS = Tuple{Date,Date,String}[]
+
+in_spans(spans, d) = any(s -> s[1] <= d <= s[2], spans)
+
+"""
+    g2_rejected(dq) -> Rejected
+
+The prices gate G2 rejected in its latest run, from `data_quality` columns `source,
+check_id, run_id, entity, chunk`: per FIGI, each `spans {from} {to} {reason}` offender and
+each failed row (`rows {date} {why}`, reason `rows`). Empty before the first G2 run.
+
+# Example
+```julia
+rejected = g2_rejected(read_dataset("data_quality"; columns = ["source", "check_id",
+    "run_id", "entity", "chunk"]))
+```
+"""
+function g2_rejected(dq)
+    g2(i) = coalesce(dq.source[i], "") == "Gate" && coalesce(dq.check_id[i], "") == "G2"
+    star(i) = coalesce(dq.entity[i], "") == "*"
+    runs = [String(dq.run_id[i]) for i in eachindex(dq.run_id) if g2(i) && star(i)]
+    out = Rejected()
+    isempty(runs) && return out
+    run = maximum(runs)
+    for i in eachindex(dq.run_id)
+        (g2(i) && !star(i) && dq.run_id[i] == run) || continue
+        p = split(dq.chunk[i], ' ')
+        span = p[1] == "spans" ? (Date(p[2]), Date(p[3]), String(p[4])) :
+               p[1] == "rows" ? (Date(p[2]), Date(p[2]), "rows") : nothing
+        span === nothing || push!(get!(out, String(dq.entity[i]), Tuple{Date,Date,String}[]), span)
+    end
+    return out
+end
 
 function group_rows(figis)
     g = Dict{String,Vector{Int}}()
@@ -182,18 +221,19 @@ function percentile_by_date(dates, x)
 end
 
 """
-    universe_columns(u, rows, prices, master, holdings, ranges) -> NamedTuple
+    universe_columns(u, rows, prices, master, holdings, ranges; rejected) -> NamedTuple
 
 The `universe` columns (registry order) for `rows` of `u` (from [`universe_rows`]).
 `master` has `figi, cik, sic`; `holdings` has `etf, figi, snapshot_date, available_date,
 weight, sector`. Membership on `t` is the latest snapshot per ETF with `available_date <= t`.
+A row inside a range G2 `rejected` is excluded first, with reason `data_quality`.
 
 # Example
 ```julia
 cols = universe_columns(u, eachindex(u.src), prices, master, holdings, ranges)
 ```
 """
-function universe_columns(u, rows, prices, master, holdings, ranges)
+function universe_columns(u, rows, prices, master, holdings, ranges; rejected = Rejected())
     cik = Dict(String(f) => c for (f, c) in zip(master.figi, master.cik))
     sic = Dict(String(f) => sic_sector(ranges, s) for (f, s) in zip(master.figi, master.sic))
     snaps = Dict(etf => snapshots(holdings, etf) for etf in ("IWF", "IWP"))
@@ -233,7 +273,8 @@ function universe_columns(u, rows, prices, master, holdings, ranges)
             sector[o], source[o] = sic[f], "sic_fallback"
         end
         dv, p = u.median_dollar_vol_60d[r], u.mcap_pct[r]
-        reason[o] = u.history_days[r] < MIN_HISTORY ? "history" :
+        reason[o] = in_spans(get(rejected, f, NO_SPANS), d) ? "data_quality" :
+                    u.history_days[r] < MIN_HISTORY ? "history" :
                     (dv === missing || dv < MIN_DOLLAR_VOL) ? "liquidity" :
                     (p !== missing && p < MIN_MCAP_PCT) ? "size" : missing
         eligible[o] = reason[o] === missing

@@ -131,5 +131,31 @@ row(u, f, d, prices) = only(r for r in eachindex(u.src) if prices.figi[u.src[r]]
         @test cov.coverage_status[e] == "terminal_known" && cov.terminal_class[e] == "acquired"
         empty = coverage_table(map(c -> c[1:0], holdings), m, pd, dl, T, T[800], DateTime(2026))
         @test eltype(empty.figi) == S && isempty(empty.ticker)
+        other = Dict("A" => [(T[795], T[800], "symbol_reused")])
+        c2 = coverage_table(holdings, m, pd, dl, T, T[800], DateTime(2026); rejected = other)
+        @test c2.gap_reason[by["A"]] == "symbol_reused"
+        bad_bar = Dict("A" => [(T[795], T[795], "foreign_quotes")])
+        c3 = coverage_table(holdings, m, pd, dl, T, T[800], DateTime(2026); rejected = bad_bar)
+        @test c3.coverage_status[by["A"]] == "complete"
+    end
+
+    @testset "G2 rejections" begin
+        dq = (source = ["Gate", "Gate", "Gate", "Gate", "Gate", "SEC"],
+              check_id = S["G2", "G2", "G2", "G2", "G2", missing],
+              run_id = ["r2", "r2", "r2", "r1", "r1", "r3"],
+              entity = ["*", "A", "A", "*", "A", "A"],
+              chunk = ["spans", "spans $(T[100]) $(T[109]) vendor_wrong_holder",
+                       "rows $(T[300]) high < low", "spans", "spans $(T[1]) $(T[799]) reviewed",
+                       "spans $(T[1]) $(T[799]) reviewed"])
+        rj = g2_rejected(dq)
+        @test rj == Dict("A" => [(T[100], T[109], "vendor_wrong_holder"), (T[300], T[300], "rows")])
+        @test isempty(g2_rejected(map(c -> c[6:6], dq)))
+        p, m, f, s = inputs()
+        v = universe_rows(p, m, f, s, T; rejected = rj)
+        @test v.history_days[row(v, "A", T[800], p)] == 789  # 11 rejected bars do not count
+        c = universe_columns(v, eachindex(v.src), p, m, holdings, ranges; rejected = rj)
+        at(d) = only(i for i in eachindex(c.date) if c.figi[i] == "A" && c.date[i] == d)
+        @test c.exclusion_reason[at(T[105])] == "data_quality" && !c.eligible[at(T[105])]
+        @test c.exclusion_reason[at(T[300])] == "data_quality" && c.eligible[at(T[800])]
     end
 end

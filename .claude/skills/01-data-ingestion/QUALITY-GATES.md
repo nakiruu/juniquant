@@ -32,7 +32,7 @@ caveat but do not block.
 |---|---|---|---|
 | **G0** Calendar | The trading calendar module (`09-lock-state-machine` §4 rules plus overrides) equals the set of dates of the `SPY` bars from `BACKFILL_START` to the data end. The calendar is never rebuilt from prices; a difference is a finding about the module | 0 differing dates | HARD |
 | **G1** Raw and manifest | No chunk in `failed` or `fetching`; every chunk `compacted` or `gone`; every `raw_sha256` in `prices`, `splits`, `dividends`, `etf_holdings` exists in the manifest; 5% sample of raw files re-hashed (full re-hash monthly) | 0 failed; 0 missing; 0 hash mismatches | HARD |
-| **G2** Price sanity | Per row: `high >= low`, `low <= close <= high`, prices > 0, `volume >= 0`. Split-factor consistency: for each `splits` row, `close[ex] / close[ex-1] * ratio` lies in [0.4, 2.5]. Unexplained jumps: one-day as-traded ratio `>= 1.8` or `<= 0.55` with no split within one day. 10x jumps: ratio `>= 10` or `<= 0.1` without a split. Reconciliation: our adjusted 20-day ratio vs the vendor's `adj_close_vendor` ratio within 0.5% | Row failures <= 0.1% of rows; 0 ten-fold jumps; unexplained jumps <= 0.05% of ticker-days; reconciliation >= 99.5% | HARD for row failures and 10x jumps; WARN for the rest |
+| **G2** Price sanity | Per row: `high >= low`, `low <= close <= high`, prices > 0, `volume >= 0`. Split-factor consistency: for each `splits` row, `close[ex] / close[ex-1] * ratio` lies in [0.4, 2.5]. Unexplained jumps: one-day as-traded ratio `>= 1.8` or `<= 0.55` with no split within one day. 10x jumps: ratio `>= 10` or `<= 0.1` without a split, classified by the rules of §2a; the ones no rule explains count when they fall within 365 days of an eligible `universe` row (all of them without a universe). Reconciliation: our adjusted 20-day ratio vs the vendor's `adj_close_vendor` ratio within 0.5% | Row failures <= 0.1% of rows; 0 unexplained ten-fold jumps near eligible rows; unexplained jumps <= 0.05% of ticker-days outside the rejected spans; reconciliation >= 99.5% | HARD for row failures and 10x jumps near eligible rows; WARN for the rest |
 | **G3** Price completeness | For tickers with vendor data: priced days / expected trading days (from the calendar) between each ticker's first and last price date, by year. Also gaps longer than 5 trading days inside a series, listed | >= 98% per year in aggregate; per ticker >= 95% (list below); gaps > 5 days listed | HARD for the 98% aggregate |
 | **G4** Survivorship coverage | `price_coverage` has a row for every ticker in `etf_holdings`; `gap` rows all have a `gap_reason`; the yearly missing-share table and the caveat file are produced. Missing share of member-days above `survivorship_warn_pct` (2%) in any year is a WARN printed in the caveat; above `survivorship_ack_pct` (10%) a model generation may not be promoted to production without an owner acknowledgement recorded in the report (decision D3) | Report always produced; thresholds in `config/quality_gates.toml` | HARD for completeness, WARN at 2%, owner-ack gate at 10% |
 | **G5** Universe vs holdings | Unresolved identifiers <= 1% of snapshot ticker-rows (0.5% by weight); unparseable symbols <= 0.1%; every snapshot at most 45 days old at each date it is used; holdings count per snapshot within 25% of the trailing median (truncated-file detection); null sector <= 1% of member rows; earliest snapshot date and the resulting first eligible date reported | as stated | HARD |
@@ -48,6 +48,41 @@ caveat but do not block.
 the `vendor_wrong_holder` pattern of `SURVIVORSHIP.md` §4), unexplained jumps 0.144%,
 595 inconsistent splits, reconciliation 99.26%. G2 offenders are `data_quality` rows
 (`entity` = FIGI, `chunk` = `{check} {date} {why}`).
+
+### 2a. G2 jump classification (owner decision, 2026-10-12)
+
+A ten-fold jump is a data error until a rule explains it; the explanation is a **span**, a
+range of the security's bars G2 rejects. Spans are `data_quality` rows (`chunk` = `spans
+{from} {to} {reason}`) of the G2 run; J9 reads the latest G2 run and excludes the rows inside
+them from `universe` (`exclusion_reason = data_quality`, with the per-row failures) and from
+`price_coverage`. Raw `prices` are never changed. Rules, in order (`gates::classify`):
+
+| Reason | Rule | Evidence |
+|---|---|---|
+| `reviewed` | The owner excluded the range in `config/price_reviews.toml` | owner |
+| `vendor_adjusted` | The jump equals the product of the security's later split ratios within 8% (in log): the vendor adjusted the block for those splits; the block runs from the jump to the next jump or the split (or back to the previous jump) | `splits` |
+| `foreign_quotes` | A jump undone by an opposite one within 20 bars: the bars between | prices |
+| `vendor_wrong_holder` | Two or more such flips (a mixed series): the segments between jumps priced more than 3.16x off the segment with the most `filing_events` of the security's filer (then the longest) | prices, `filing_events` |
+| `symbol_reused` | A jump within 20 bars of either end drops that stub; one after a gap of more than 30 days drops the side on which the filer has no filing (else the shorter side) | prices, `filing_events` |
+| `relisted` | A jump after a gap of more than 30 days with filings on both sides (new equity after a reorganisation): only the jump bar, so no return crosses it | prices, `filing_events` |
+| accepted | The owner accepted the jump as a real move in `config/price_reviews.toml`: not a jump | owner |
+
+A jump no rule explains is an offender of `ten_fold` (HARD) when it lies within 365 days of
+an eligible row of the last `universe`, else of `ten_fold_unscoped` (WARN); either note
+names split evidence when there is some (an 8-K Item 5.03 from 45 days before to 10 after,
+or shares outstanding moving against the price). The owner clears a HARD offender with an
+`accept` or an `exclude` entry. The `jumps` check and the reconciliation skip rejected bars.
+Not a rule: bars after a delisting are kept (D0 in `SURVIVORSHIP.md` §3 removes the false
+delistings, but the remaining rows still include real companies that trade on).
+
+First run (2026-10-12, after D0): 8,076 jumps leave 71 HARD and 343 WARN; 5,848 spans over
+376K bars (`vendor_wrong_holder` 134K bars and 7,051 jumps, `vendor_adjusted` 104K and 326,
+`symbol_reused` 63K and 158, `foreign_quotes` 157 and 116, `relisted` 11 and 11); about
+37.5K eligible rows of 8.48M fall in spans, most of them other holders' prices (Terra
+Industries' ticker after 2010, Corinthian Colleges under Vita Coco). The `vendor_adjusted`
+blocks (22.9K eligible rows) are right in level ratios but wrong as raw prices; undoing the
+adjustment in the EODHD parser would recover them. J10 must treat a return whose window holds
+a rejected bar as missing.
 
 ## 3. Sketch SQL
 

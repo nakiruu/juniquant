@@ -11,6 +11,7 @@
 //! quant-ingest edgar fundamentals                       J7, from the landed zips
 //! quant-ingest edgar events                             J6, filing_events + delistings from the zip
 //! quant-ingest edgar sic                               J4, security_master SIC from the zip
+//! quant-ingest edgar delistings                        J6, delistings alone from filing_events and prices (D0)
 //! quant-ingest edgar daily                              J7 + J6 daily: filers in the day's form index
 //! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
 //! quant-ingest gates [g0] [g2] [g7] [g8]                  QUALITY-GATES.md G0 calendar, G2 prices, G7 filings, G8 events
@@ -49,12 +50,13 @@ fn main() -> ExitCode {
         ["edgar", "fundamentals"] => edgar_fundamentals(),
         ["edgar", "events"] => edgar_events(),
         ["edgar", "sic"] => edgar_sic(),
+        ["edgar", "delistings"] => edgar_delistings(),
         ["edgar", "daily"] => edgar_daily(),
         ["macro", "backfill" | "daily"] => macro_backfill(),
         ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
             );
             return ExitCode::from(2);
         }
@@ -652,8 +654,6 @@ fn edgar_fundamentals() -> Result<(), String> {
     Ok(())
 }
 
-/// J6: `filing_events` from the latest submissions zip for the CIKs of `security_master`,
-/// then `delistings` rebuilt from them.
 /// J4: `security_master.sic` from the latest submissions zip, `sic_asof` its landing date. A
 /// changed code is logged (`data_quality` WARN), never back-dated (`UNIVERSE.md` §6).
 fn edgar_sic() -> Result<(), String> {
@@ -713,6 +713,17 @@ fn edgar_sic() -> Result<(), String> {
     Ok(())
 }
 
+/// J6: `delistings` alone, rebuilt from `filing_events` and `prices` (after a price change).
+fn edgar_delistings() -> Result<(), String> {
+    let s = setup("delistings")?;
+    let notes = write_delistings(&s)?;
+    s.quality.write(&s.lake).map_err(|e| e.to_string())?;
+    println!("delistings: {notes}");
+    Ok(())
+}
+
+/// J6: `filing_events` from the latest submissions zip for the CIKs of `security_master`,
+/// then `delistings` rebuilt from them.
 fn edgar_events() -> Result<(), String> {
     use ingest::edgar::{self, events};
     use ingest::infra::quality::{Level, Row};
@@ -896,8 +907,160 @@ fn price_bars(s: &Setup) -> Result<(Vec<ingest::gates::Bar>, Vec<String>), Strin
     Ok((bars, names))
 }
 
+/// Index of each FIGI in `names`.
+fn sec_index(names: &[String]) -> std::collections::HashMap<&str, u32> {
+    names
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| Some((n.as_str(), u32::try_from(i).ok()?)))
+        .collect()
+}
+
+/// `(ex_date, value)` of a `splits` or `dividends` column per security index, sorted.
+fn sec_events(
+    s: &Setup,
+    index: &std::collections::HashMap<&str, u32>,
+    dataset: &str,
+    value: &str,
+) -> Result<ingest::gates::Events, String> {
+    use arrow::array::AsArray;
+    use arrow::datatypes::{Date32Type, Float64Type};
+    let b = s
+        .lake
+        .read_dataset(dataset, Some(&["figi", "ex_date", value]), &[], None)
+        .map_err(|e| e.to_string())?;
+    let (f, d, v) = (
+        b.column(0).as_string::<i32>(),
+        b.column(1).as_primitive::<Date32Type>(),
+        b.column(2).as_primitive::<Float64Type>(),
+    );
+    let mut out = ingest::gates::Events::new();
+    for i in 0..b.num_rows() {
+        if let Some(&sec) = index.get(f.value(i)) {
+            out.entry(sec)
+                .or_default()
+                .push((from_days(d.value(i)), v.value(i)));
+        }
+    }
+    out.values_mut().for_each(|v| v.sort_by_key(|x| x.0));
+    Ok(out)
+}
+
+/// What G2 classifies ten-fold jumps with: the eligible rows of the last
+/// `universe`, the filer's `filing_events` dates (8-K Item 5.03 apart), shares outstanding, and the owner reviews in
+/// `$QUANT_CONFIG/price_reviews.toml` (optional; an unknown FIGI there is an error).
+fn jump_context(
+    s: &Setup,
+    index: &std::collections::HashMap<&str, u32>,
+) -> Result<ingest::gates::JumpContext, String> {
+    use arrow::array::{Array, AsArray, Date32Array};
+    use arrow::datatypes::{Date32Type, Float64Type};
+    let mut cx = ingest::gates::JumpContext::default();
+    let read = |d: &str, cols: &[&str]| {
+        s.lake
+            .read_dataset(d, Some(cols), &[], None)
+            .map_err(|e| e.to_string())
+    };
+    let date = |a: &Date32Array, i: usize| a.is_valid(i).then(|| from_days(a.value(i)));
+    let u = read("universe", &["figi", "date", "eligible"])?;
+    let (f, d, e) = (
+        u.column(0).as_string::<i32>(),
+        u.column(1).as_primitive::<Date32Type>(),
+        u.column(2).as_boolean(),
+    );
+    let mut eligible: std::collections::HashMap<u32, Vec<NaiveDate>> = Default::default();
+    for i in (0..u.num_rows()).filter(|&i| e.value(i)) {
+        if let Some(&sec) = index.get(f.value(i)) {
+            eligible.entry(sec).or_default().push(from_days(d.value(i)));
+        }
+    }
+    // shortcut: the last universe already excludes the rows G2 rejected, so a jump next to a
+    // rejected span of an otherwise eligible security is WARN; recompute eligibility if one shows.
+    if u.num_rows() > 0 {
+        eligible.values_mut().for_each(|v| v.sort_unstable());
+        cx.eligible = Some(eligible);
+    }
+    let ev = read("filing_events", &["figi", "item", "filing_date"])?;
+    let (f, item, fd) = (
+        ev.column(0).as_string::<i32>(),
+        ev.column(1).as_string::<i32>(),
+        ev.column(2).as_primitive::<Date32Type>(),
+    );
+    for i in 0..ev.num_rows() {
+        if let (Some(&sec), Some(x)) = (index.get(f.value(i)), date(fd, i)) {
+            cx.filed.entry(sec).or_default().push(x);
+            if item.value(i) == "5.03" {
+                cx.item503.entry(sec).or_default().push(x);
+            }
+        }
+    }
+    for v in cx.item503.values_mut().chain(cx.filed.values_mut()) {
+        v.sort_unstable();
+        v.dedup();
+    }
+    let fu = read(
+        "fundamentals",
+        &["figi", "filing_date", "shares_outstanding"],
+    )?;
+    let (f, fd) = (
+        fu.column(0).as_string::<i32>(),
+        fu.column(1).as_primitive::<Date32Type>(),
+    );
+    let sh = fu.column(2).as_primitive::<Float64Type>();
+    for i in (0..fu.num_rows()).filter(|&i| sh.is_valid(i)) {
+        if let (Some(&sec), Some(x)) = (index.get(f.value(i)), date(fd, i)) {
+            cx.shares.entry(sec).or_default().push((x, sh.value(i)));
+        }
+    }
+    cx.shares.values_mut().for_each(|v| v.sort_by_key(|x| x.0));
+    let dir = std::env::var(calendar::ENV_QUANT_CONFIG).map_err(|_| "QUANT_CONFIG is not set")?;
+    let path = std::path::Path::new(&dir).join("price_reviews.toml");
+    if !path.exists() {
+        return Ok(cx);
+    }
+    let bad = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let t: toml::Table = std::fs::read_to_string(&path)
+        .map_err(|e| bad(&e))?
+        .parse()
+        .map_err(|e| bad(&e))?;
+    let entries = |key: &str| {
+        t.get(key)
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+    };
+    let field = |e: &toml::Value, k: &str| -> Result<String, String> {
+        e.get(k)
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| bad(&format!("an entry has no string `{k}`")))
+    };
+    let day = |e: &toml::Value, k: &str| {
+        let v = field(e, k)?;
+        NaiveDate::parse_from_str(&v, "%Y-%m-%d").map_err(|x| bad(&format!("{v}: {x}")))
+    };
+    let sec = |e: &toml::Value| {
+        let figi = field(e, "figi")?;
+        index
+            .get(figi.as_str())
+            .copied()
+            .ok_or_else(|| bad(&format!("{figi} has no prices")))
+    };
+    for e in entries("accept") {
+        cx.accepted.insert((sec(e)?, day(e, "date")?));
+    }
+    for e in entries("exclude") {
+        cx.excluded
+            .entry(sec(e)?)
+            .or_default()
+            .push((day(e, "from")?, day(e, "to")?));
+    }
+    Ok(cx)
+}
+
 /// `delistings` rebuilt in full from the lake's `filing_events` (the delisting forms and
-/// items only) and each security's last price date (`SURVIVORSHIP.md` §3).
+/// items only) and each security's prices: the last price date, and D0 drops a form the
+/// prices outlive (`SURVIVORSHIP.md` §3).
 fn write_delistings(s: &Setup) -> Result<String, String> {
     use arrow::array::AsArray;
     use arrow::datatypes::Date32Type;
@@ -960,11 +1123,40 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
                 event_type,
             });
     }
-    let last = last_prices(s)?;
+    let (bars, names) = price_bars(s)?;
+    let index = sec_index(&names);
+    let splits = sec_events(s, &index, "splits", "ratio")?;
+    let series: std::collections::HashMap<u32, &[ingest::gates::Bar]> = bars
+        .chunk_by(|a, b| a.sec == b.sec)
+        .filter_map(|c| Some((c.first()?.sec, c)))
+        .collect();
+    let mut outlived: std::collections::BTreeMap<&str, usize> = Default::default();
     let rows: Vec<_> = by_figi
         .iter()
         .filter_map(|(f, (cik, sec, ev))| {
-            events::classify(ev, last.get(*f).copied()).map(|d| (*cik, sec, d))
+            let bars = index
+                .get(f)
+                .and_then(|i| series.get(i))
+                .copied()
+                .unwrap_or_default();
+            let d = events::classify(ev, bars.last().map(|b| b.date))?;
+            let sp = index
+                .get(f)
+                .and_then(|i| splits.get(i))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let jumps: Vec<usize> = ingest::gates::ten_fold_jumps(bars, sp)
+                .into_iter()
+                .map(|j| j.0)
+                .collect();
+            if d.form25
+                .or(d.form15)
+                .is_some_and(|a| events::outlived(bars, a, &jumps))
+            {
+                *outlived.entry(d.class).or_default() += 1;
+                return None;
+            }
+            Some((*cik, sec, d))
         })
         .collect();
     let batch = events::delisting_batch(&rows, Utc::now()).map_err(|e| e.to_string())?;
@@ -976,7 +1168,7 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
         *by_rule.entry(d.rule).or_default() += 1;
     }
     let notes = format!(
-        "{} rows from {} securities with delisting evidence; by rule {by_rule:?}",
+        "{} rows from {} securities with delisting evidence; by rule {by_rule:?}; dropped by D0 (prices outlive the form) {outlived:?}",
         rows.len(),
         by_figi.len()
     );
@@ -1043,34 +1235,11 @@ fn gates(rest: &[&str]) -> Result<(), String> {
             ));
         }
         if want("g2") {
-            let index: std::collections::HashMap<&str, u32> = names
-                .iter()
-                .enumerate()
-                .filter_map(|(i, n)| Some((n.as_str(), u32::try_from(i).ok()?)))
-                .collect();
-            let events = |dataset: &str, value: &str| -> Result<gates::Events, String> {
-                let b = s
-                    .lake
-                    .read_dataset(dataset, Some(&["figi", "ex_date", value]), &[], None)
-                    .map_err(|e| e.to_string())?;
-                let (f, d, v) = (
-                    b.column(0).as_string::<i32>(),
-                    b.column(1).as_primitive::<Date32Type>(),
-                    b.column(2).as_primitive::<Float64Type>(),
-                );
-                let mut out = gates::Events::new();
-                for i in 0..b.num_rows() {
-                    if let Some(&sec) = index.get(f.value(i)) {
-                        out.entry(sec)
-                            .or_default()
-                            .push((from_days(d.value(i)), v.value(i)));
-                    }
-                }
-                out.values_mut().for_each(|v| v.sort_by_key(|x| x.0));
-                Ok(out)
-            };
-            let (splits, divs) = (events("splits", "ratio")?, events("dividends", "amount")?);
-            for o in gates::price_sanity(&bars, &names, &splits, &divs) {
+            let index = sec_index(&names);
+            let splits = sec_events(&s, &index, "splits", "ratio")?;
+            let divs = sec_events(&s, &index, "dividends", "amount")?;
+            let cx = jump_context(&s, &index)?;
+            for o in gates::price_sanity(&bars, &names, &splits, &divs, &cx) {
                 results.push(("G2", "prices", o));
             }
         }

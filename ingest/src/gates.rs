@@ -567,31 +567,304 @@ fn rho(splits: &[(NaiveDate, f64)], a: NaiveDate, b: NaiveDate) -> f64 {
         .product()
 }
 
+fn priced(b: &Bar) -> bool {
+    b.close.is_finite() && b.close > 0.0
+}
+
+/// A split with `ex_date` from the previous bar `a` to one day after the bar `b`.
+fn explained(splits: &[(NaiveDate, f64)], a: NaiveDate, b: NaiveDate) -> bool {
+    splits
+        .iter()
+        .any(|(ex, _)| a <= *ex && *ex <= b + chrono::Days::new(1))
+}
+
+/// The ten-fold close jumps of one security's sorted bars that no split explains: the index
+/// of the later bar and the close ratio.
+#[must_use]
+pub fn ten_fold_jumps(s: &[Bar], splits: &[(NaiveDate, f64)]) -> Vec<(usize, f64)> {
+    s.windows(2)
+        .enumerate()
+        .filter_map(|(k, w)| {
+            let [p, b] = w else { return None };
+            let r = b.close / p.close;
+            (priced(p)
+                && priced(b)
+                && (r >= 10.0 || r <= 0.1)
+                && !explained(splits, p.date, b.date))
+            .then_some((k + 1, r))
+        })
+        .collect()
+}
+
+/// What G2 classifies ten-fold jumps with (`QUALITY-GATES.md` G2), by security index.
+#[derive(Debug, Clone, Default)]
+pub struct JumpContext {
+    /// Jump bars the owner accepted as real moves (`config/price_reviews.toml`).
+    pub accepted: HashSet<(u32, NaiveDate)>,
+    /// Bar ranges the owner rejected.
+    pub excluded: HashMap<u32, Vec<(NaiveDate, NaiveDate)>>,
+    /// Sorted dates of eligible `universe` rows; `None` without a universe (all in scope).
+    pub eligible: Option<HashMap<u32, Vec<NaiveDate>>>,
+    /// Sorted 8-K Item 5.03 filing dates.
+    pub item503: HashMap<u32, Vec<NaiveDate>>,
+    /// Sorted `filing_events` dates of the security's filer.
+    pub filed: HashMap<u32, Vec<NaiveDate>>,
+    /// `(filing_date, shares_outstanding)` sorted by filing date.
+    pub shares: HashMap<u32, Vec<(NaiveDate, f64)>>,
+}
+
+/// An inclusive range of bar indices G2 rejects, with its reason.
+type Span = (usize, usize, &'static str);
+
+/// A jump: later-bar index, close ratio, and the reason of the span that explains it.
+type Jump = (usize, f64, Option<&'static str>);
+
+fn median_close(s: &[Bar]) -> f64 {
+    let mut v: Vec<f64> = s.iter().filter(|b| priced(b)).map(|b| b.close).collect();
+    v.sort_by(f64::total_cmp);
+    v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+}
+
+fn covering(spans: &[Span], k: usize) -> Option<&'static str> {
+    spans
+        .iter()
+        .find(|(a, b, _)| (*a..=*b).contains(&k) || (*a..=*b).contains(&(k - 1)))
+        .map(|x| x.2)
+}
+
+/// The rejected spans of one security and its jumps (`ten_fold_jumps` less the accepted ones),
+/// each with the reason of the span that explains it, if any. Rules, in order: owner
+/// exclusions (`reviewed`); blocks the vendor adjusted for later splits (the jump equals their
+/// product within 8%, `vendor_adjusted`); a jump undone by an opposite one within 20 bars
+/// marks the bars between (`foreign_quotes`), and with two such flips the series is mixed:
+/// the segments between jumps priced more than 3.16x off the segment with the most filings
+/// of the filer (then the longest) are another
+/// holder's (`vendor_wrong_holder`); a jump within 20 bars of an end drops that stub, and one
+/// after a gap of more than 30 days drops the side without the filer's filings
+/// (`symbol_reused`), only the jump bar when it files on both (`relisted`), else the shorter.
+fn classify(
+    s: &[Bar],
+    sp: &[(NaiveDate, f64)],
+    sec: u32,
+    cx: &JumpContext,
+) -> (Vec<Span>, Vec<Jump>) {
+    let n = s.len();
+    let at = |k: usize| s.get(k).map_or_else(NaiveDate::default, |b| b.date);
+    let mut spans: Vec<Span> = Vec::new();
+    for (a, b) in cx.excluded.get(&sec).into_iter().flatten() {
+        let (i, j) = (
+            s.partition_point(|x| x.date < *a),
+            s.partition_point(|x| x.date <= *b),
+        );
+        if i < j {
+            spans.push((i, j - 1, "reviewed"));
+        }
+    }
+    let jumps: Vec<(usize, f64)> = ten_fold_jumps(s, sp)
+        .into_iter()
+        .filter(|(k, _)| !cx.accepted.contains(&(sec, at(*k))))
+        .collect();
+    for (i, &(k, r)) in jumps.iter().enumerate() {
+        if covering(&spans, k).is_some() {
+            continue;
+        }
+        let mut f = 1.0;
+        for (ex, ratio) in sp.iter().filter(|(ex, _)| *ex > at(k)) {
+            f *= ratio;
+            if (r.ln() + f.ln()).abs() < 0.08 {
+                // Entering a block adjusted by `f`: it ends before the next jump or the split.
+                let end = jumps
+                    .get(i + 1)
+                    .map_or(n, |x| x.0)
+                    .min(s.partition_point(|x| x.date < *ex));
+                spans.push((k, end - 1, "vendor_adjusted"));
+                break;
+            }
+            if (r.ln() - f.ln()).abs() < 0.08 {
+                let start = i
+                    .checked_sub(1)
+                    .and_then(|j| jumps.get(j))
+                    .map_or(0, |x| x.0);
+                spans.push((start, k - 1, "vendor_adjusted"));
+                break;
+            }
+        }
+    }
+    let open: Vec<(usize, f64)> = jumps
+        .iter()
+        .filter(|(k, _)| covering(&spans, *k).is_none())
+        .copied()
+        .collect();
+    let filed = cx.filed.get(&sec).map(Vec::as_slice).unwrap_or_default();
+    let filings = |a: usize, b: usize| {
+        filed.partition_point(|d| *d <= at(b)) - filed.partition_point(|d| *d < at(a))
+    };
+    let has_filing = |a: usize, b: usize| filings(a, b) > 0;
+    let flips: Vec<(usize, usize)> = open
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &(k, r))| {
+            let later = open.get(i + 1..)?;
+            let back = later
+                .iter()
+                .take_while(|x| x.0 <= k + 20)
+                .find(|x| (x.1 > 1.0) != (r > 1.0))?;
+            Some((k, back.0 - 1))
+        })
+        .collect();
+    if flips.len() >= 2 {
+        // A mixed series: the segments between open jumps priced off the holder's level.
+        let cuts: Vec<usize> = std::iter::once(0)
+            .chain(open.iter().map(|j| j.0))
+            .chain(std::iter::once(n))
+            .collect();
+        let segs: Vec<(usize, usize, f64)> = cuts
+            .windows(2)
+            .filter_map(|w| match w {
+                [a, b] => Some((*a, *b, median_close(s.get(*a..*b)?))),
+                _ => None,
+            })
+            .collect();
+        // The holder's level: the segment with the most of the filer's filings, then the longest.
+        let home = segs
+            .iter()
+            .max_by_key(|x| (filings(x.0, x.1 - 1), x.1 - x.0))
+            .map_or(f64::NAN, |x| x.2);
+        spans.extend(
+            segs.iter()
+                .filter(|x| {
+                    let off = (x.2 / home).log10().abs();
+                    off.is_nan() || off >= 0.5
+                })
+                .map(|x| (x.0, x.1 - 1, "vendor_wrong_holder")),
+        );
+    } else {
+        spans.extend(flips.iter().map(|&(a, b)| (a, b, "foreign_quotes")));
+    }
+    for &(k, _) in &open {
+        if covering(&spans, k).is_some() {
+            continue;
+        }
+        let stub = k <= 20 || k + 20 >= n;
+        if !stub && (at(k) - at(k - 1)).num_days() <= 30 {
+            continue;
+        }
+        let shorter = if k < n - k { (0, k - 1) } else { (k, n - 1) };
+        let ((a, b), why) = match (stub, has_filing(0, k - 1), has_filing(k, n - 1)) {
+            // After a gap, the side the filer files on is its own.
+            (false, true, false) => ((k, n - 1), "symbol_reused"),
+            (false, false, true) => ((0, k - 1), "symbol_reused"),
+            // The filer on both sides: a relisting (new equity), so only the return across breaks.
+            (false, true, true) => ((k, k), "relisted"),
+            _ => (shorter, "symbol_reused"),
+        };
+        spans.push((a, b, why));
+    }
+    let out = jumps
+        .iter()
+        .map(|&(k, r)| (k, r, covering(&spans, k)))
+        .collect();
+    (spans, out)
+}
+
+/// Split evidence for a jump the rules leave open: an 8-K Item 5.03 from 45 days before to 10
+/// after, or shares outstanding moving against the price (their ratio times `r` within 2x).
+fn split_hint(cx: &JumpContext, sec: u32, d: NaiveDate, r: f64) -> String {
+    let mut hint = String::new();
+    let (lo, hi) = (d - chrono::Days::new(45), d + chrono::Days::new(10));
+    if let Some(x) = cx
+        .item503
+        .get(&sec)
+        .and_then(|v| v.iter().find(|x| (lo..=hi).contains(*x)))
+    {
+        hint.push_str(&format!("; split candidate: 8-K 5.03 {x}"));
+    }
+    let sh = cx.shares.get(&sec).map(Vec::as_slice).unwrap_or_default();
+    let pre = sh.iter().rev().find(|(f, _)| *f < d);
+    let post = sh
+        .iter()
+        .find(|(f, _)| *f >= d && *f < d + chrono::Days::new(200));
+    if let (Some((_, a)), Some((_, b))) = (pre, post)
+        && *a > 0.0
+        && (0.5..=2.0).contains(&(b / a * r))
+    {
+        hint.push_str(&format!("; split candidate: shares {a:.0} -> {b:.0}"));
+    }
+    hint
+}
+
 /// G2 (`QUALITY-GATES.md` §2) over `bars` sorted by `(sec, date)`; `names[sec]` is the FIGI.
 /// Returns `rows` (HARD, at most 0.1% of rows; one offender per failed row, chunk
-/// `rows {date} {why}`), `ten_fold` (HARD, 0), `jumps` (WARN, at most 0.05% of ticker-days),
-/// `splits` (WARN) and `reconciliation` (WARN, at least 99.5% of 20-bar windows within 0.5%
-/// of the vendor's adjusted ratio; one offender per security). A jump is explained by a split
-/// with `ex_date` from the previous bar to one day after the bar.
+/// `rows {date} {why}`), `ten_fold` (HARD, 0: jumps no rule of [`JumpContext`] explains,
+/// within 365 days of an eligible `universe` row), `ten_fold_unscoped` (WARN: the others),
+/// `spans` (WARN: the rejected bar ranges, chunk `spans {from} {to} {reason}`), `jumps` (WARN,
+/// at most 0.05% of ticker-days outside the spans), `splits` (WARN) and `reconciliation`
+/// (WARN, at least 99.5% of 20-bar windows within 0.5% of the vendor's adjusted ratio; one
+/// offender per security). A jump is explained by a split with `ex_date` from the previous
+/// bar to one day after the bar.
 #[must_use]
 pub fn price_sanity(
     bars: &[Bar],
     names: &[String],
     splits: &Events,
     divs: &Events,
-) -> [Outcome; 5] {
+    cx: &JumpContext,
+) -> [Outcome; 7] {
     let name = |b: &Bar| names.get(b.sec as usize).cloned().unwrap_or_default();
     let none: Vec<(NaiveDate, f64)> = Vec::new();
-    let (mut rows, mut ten, mut jumps, mut split_bad) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut rows, mut ten, mut unscoped, mut jumps, mut split_bad) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let (mut pairs, mut windows, mut within) = (0usize, 0usize, 0usize);
-    let mut recon = Vec::new();
+    let (mut recon, mut rejected) = (Vec::new(), Vec::new());
+    let mut by_reason: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for s in bars.chunk_by(|a, b| a.sec == b.sec) {
         let sec = s.first().map_or(0, |b| b.sec);
         let sp = splits.get(&sec).unwrap_or(&none);
         let dv = divs.get(&sec).unwrap_or(&none);
-        let ok = |b: &Bar| b.close.is_finite() && b.close > 0.0;
-        // One-bar total-return factor G (`FEATURES.md` §0); NaN across a bad close.
+        let (spans, ten_fold) = classify(s, sp, sec, cx);
+        let mut masked = vec![false; s.len()];
+        for &(a, b, why) in &spans {
+            masked
+                .iter_mut()
+                .take(b + 1)
+                .skip(a)
+                .for_each(|m| *m = true);
+            let (Some(x), Some(y)) = (s.get(a), s.get(b)) else {
+                continue;
+            };
+            rejected.push((name(x), format!("{} {} {why}", x.date, y.date)));
+            by_reason.entry(why).or_default().0 += b + 1 - a;
+        }
+        let near = |d: NaiveDate| {
+            cx.eligible.as_ref().is_none_or(|e| {
+                e.get(&sec).is_some_and(|v| {
+                    let i = v.partition_point(|x| *x < d - chrono::Days::new(365));
+                    v.get(i).is_some_and(|x| *x <= d + chrono::Days::new(365))
+                })
+            })
+        };
+        for (k, r, why) in ten_fold {
+            let Some(b) = s.get(k) else { continue };
+            match why {
+                Some(w) => by_reason.entry(w).or_default().1 += 1,
+                None => {
+                    let off = (
+                        name(b),
+                        format!(
+                            "{} close ratio {r:.3}{}",
+                            b.date,
+                            split_hint(cx, sec, b.date, r)
+                        ),
+                    );
+                    if near(b.date) {
+                        ten.push(off);
+                    } else {
+                        unscoped.push(off);
+                    }
+                }
+            }
+        }
+        // One-bar total-return factor G (`FEATURES.md` §0); NaN across a bad or rejected close.
         let mut g = vec![f64::NAN; s.len()];
         for (k, b) in s.iter().enumerate() {
             if let Some(why) = bad_row(b) {
@@ -600,20 +873,15 @@ pub fn price_sanity(
             let Some(p) = k.checked_sub(1).and_then(|j| s.get(j)) else {
                 continue;
             };
-            if !(ok(p) && ok(b)) {
+            let rejected = masked.get(k).copied().unwrap_or(true)
+                || masked.get(k - 1).copied().unwrap_or(true);
+            if rejected || !(priced(p) && priced(b)) {
                 continue;
             }
             pairs += 1;
             let r = b.close / p.close;
-            let explained = sp
-                .iter()
-                .any(|(ex, _)| p.date <= *ex && *ex <= b.date + chrono::Days::new(1));
-            if !explained && (r >= 1.8 || r <= 0.55) {
-                let off = (name(b), format!("{} close ratio {r:.3}", b.date));
-                if r >= 10.0 || r <= 0.1 {
-                    ten.push(off.clone());
-                }
-                jumps.push(off);
+            if !explained(sp, p.date, b.date) && (r >= 1.8 || r <= 0.55) {
+                jumps.push((name(b), format!("{} close ratio {r:.3}", b.date)));
             }
             let paid: f64 = dv
                 .iter()
@@ -685,6 +953,12 @@ pub fn price_sanity(
             }
         };
     let rec = share(within, windows);
+    let classified: Vec<String> = by_reason
+        .iter()
+        .map(|(w, (b, j))| format!("{w} {b} bars, {j} jumps"))
+        .collect();
+    let mut spans = count("spans", false, "rejected bar ranges", rejected);
+    spans.note = format!("{}: {}", spans.note, classified.join("; "));
     [
         rate(
             "rows",
@@ -694,11 +968,23 @@ pub fn price_sanity(
             bars.len(),
             0.001,
         ),
-        count("ten_fold", true, "ten-fold jumps without a split", ten),
+        count(
+            "ten_fold",
+            true,
+            "unexplained ten-fold jumps within 365 days of an eligible row",
+            ten,
+        ),
+        count(
+            "ten_fold_unscoped",
+            false,
+            "unexplained ten-fold jumps away from eligible rows",
+            unscoped,
+        ),
+        spans,
         rate(
             "jumps",
             false,
-            "ticker-days jump without a split",
+            "ticker-days outside the spans jump without a split",
             jumps,
             pairs,
             0.0005,
@@ -906,25 +1192,155 @@ mod tests {
         let names = vec!["A".to_owned(), "B".to_owned(), "C".to_owned()];
         let splits = Events::from([(1, vec![(day(10), 4.0)])]);
         let divs = Events::from([(0, vec![(day(15), 0.1)])]);
-        let [rows, ten, jumps, sp, rec] = price_sanity(&bars, &names, &splits, &divs);
+        let [rows, ten, unscoped, spans, jumps, sp, rec] =
+            price_sanity(&bars, &names, &splits, &divs, &JumpContext::default());
         assert_eq!(
             rows.offenders,
             vec![("A".to_owned(), format!("{} high < low", day(3)))]
         );
         assert_eq!(rows.level, Level::Fail, "1 of 90 rows is above 0.1%");
-        assert_eq!(ten.offenders.len(), 1);
-        assert_eq!(ten.offenders[0].0, "C");
-        assert_eq!(jumps.offenders.len(), 1, "the split explains B's drop");
+        assert!(ten.offenders.is_empty() && unscoped.offenders.is_empty());
+        assert_eq!(
+            spans.offenders,
+            vec![(
+                "C".to_owned(),
+                format!("{} {} symbol_reused", day(0), day(4))
+            )],
+            "C's jump 5 bars in drops the 5 bars before it"
+        );
+        assert!(jumps.offenders.is_empty(), "the split explains B's drop");
         assert_eq!(sp.level, Level::Ok);
         assert_eq!(rec.level, Level::Warn);
         assert_eq!(
-            rec.offenders.len(),
-            2,
-            "A's dividend and C's jump differ from the vendor"
+            rec.offenders
+                .iter()
+                .map(|o| o.0.as_str())
+                .collect::<Vec<_>>(),
+            ["A"],
+            "A's dividend differs from the vendor; C's rejected bars are skipped"
         );
+    }
+
+    #[test]
+    fn g2_classifies_ten_fold_jumps() {
+        let day = |k: u64| d("2024-01-01") + chrono::Days::new(k);
+        // 100 daily bars of `sec`, closes from `c`; `gap` adds 60 days before bar 40.
+        let series = |sec, c: &dyn Fn(u64) -> f64, gap: bool| -> Vec<Bar> {
+            (0..100)
+                .map(|k| Bar {
+                    sec,
+                    date: day(k + if gap && k >= 40 { 60 } else { 0 }),
+                    open: c(k),
+                    high: c(k),
+                    low: c(k),
+                    close: c(k),
+                    volume: 100,
+                    adj: c(k),
+                })
+                .collect()
+        };
+        let step = |k: u64| if k < 50 { 1.0 } else { 20.0 };
+        let mut bars: Vec<Bar> = [
+            series(0, &|k| if k == 50 { 100.0 } else { 10.0 }, false),
+            series(1, &|k| if k == 40 || k == 60 { 100.0 } else { 10.0 }, false),
+            series(2, &|k| if k < 70 { 10.0 } else { 100.0 }, false),
+            // Bars 30-49 adjusted for the 1:10 split of day 80.
+            series(
+                3,
+                &|k| {
+                    if (30..50).contains(&k) || k >= 80 {
+                        100.0
+                    } else {
+                        10.0
+                    }
+                },
+                false,
+            ),
+            series(4, &|k| if k < 40 { 1.0 } else { 20.0 }, true),
+            series(5, &step, false),
+            series(6, &step, false),
+            series(7, &step, false),
+            series(8, &|_| 10.0, false),
+            series(9, &|k| if k < 40 { 1.0 } else { 20.0 }, true),
+            series(10, &|k| if k < 40 { 1.0 } else { 20.0 }, true),
+            // The filer's 20 bars at 10, then another holder at 100 with two dips back.
+            series(
+                11,
+                &|k| {
+                    if k < 20 || k == 50 || k == 70 {
+                        10.0
+                    } else {
+                        100.0
+                    }
+                },
+                false,
+            ),
+        ]
+        .concat();
+        bars.sort_by_key(|b| (b.sec, b.date));
+        let names: Vec<String> = (0..12).map(|i| format!("S{i}")).collect();
+        let splits = Events::from([(3, vec![(day(80), 0.1)])]);
+        let cx = JumpContext {
+            accepted: HashSet::from([(7, day(50))]),
+            excluded: HashMap::from([(8, vec![(day(10), day(20))])]),
+            eligible: Some(HashMap::from([(5, vec![day(50)])])),
+            item503: HashMap::from([(5, vec![day(45)])]),
+            shares: HashMap::new(),
+            filed: HashMap::from([
+                (9, vec![day(10)]),
+                (10, vec![day(10), day(120)]),
+                (11, vec![day(5)]),
+            ]),
+        };
+        let [_, ten, unscoped, spans, ..] =
+            price_sanity(&bars, &names, &splits, &Events::new(), &cx);
+        let span =
+            |s: &str, a, b, why: &str| (s.to_owned(), format!("{} {} {why}", day(a), day(b)));
+        for want in [
+            span("S0", 50, 50, "foreign_quotes"),
+            span("S1", 40, 40, "vendor_wrong_holder"),
+            span("S1", 60, 60, "vendor_wrong_holder"),
+            span("S3", 30, 49, "vendor_adjusted"),
+            (
+                "S4".to_owned(),
+                format!("{} {} symbol_reused", day(0), day(39)),
+            ),
+            span("S8", 10, 20, "reviewed"),
+            // After the 60-day gap: S9 files before it only, S10 on both sides.
+            span("S9", 100, 159, "symbol_reused"),
+            span("S10", 100, 100, "relisted"),
+            span("S11", 20, 49, "vendor_wrong_holder"),
+            span("S11", 71, 99, "vendor_wrong_holder"),
+        ] {
+            assert!(
+                spans.offenders.contains(&want),
+                "{want:?} in {:?}",
+                spans.offenders
+            );
+        }
+        assert_eq!(
+            spans.offenders.len(),
+            11,
+            "S3's second jump leaves the block, which explains it"
+        );
+        assert_eq!(
+            ten.offenders,
+            vec![(
+                "S5".to_owned(),
+                format!(
+                    "{} close ratio 20.000; split candidate: 8-K 5.03 {}",
+                    day(50),
+                    day(45)
+                )
+            )],
+            "S7's jump is accepted"
+        );
+        assert_eq!((ten.level, unscoped.level), (Level::Fail, Level::Warn));
+        assert_eq!(unscoped.offenders.len(), 2, "S2 and S6 are never eligible");
         assert!(
-            rec.offenders.iter().all(|(f, _)| f != "B"),
-            "split-aligned ratio matches"
+            spans.note.contains("vendor_wrong_holder 80 bars, 9 jumps"),
+            "{}",
+            spans.note
         );
     }
 }

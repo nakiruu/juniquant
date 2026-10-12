@@ -262,6 +262,32 @@ pub fn classify(events: &[Event], last_price: Option<NaiveDate>) -> Option<Delis
     f15.map(|e| row("deregistered", "low", "D5", Some(e.filing_date), None, None))
 }
 
+/// D0 (`SURVIVORSHIP.md` §3): the security's prices outlive the Form 25 (or 15) `anchor` at
+/// the same level of trade, so the form delisted another security of the filer (a note, a
+/// preferred, a tracking stock) or moved exchange: more than 10 bars after the anchor, a
+/// median dollar volume over bars 11-70 after it at least half that of the 60 bars to it, and
+/// no ten-fold jump (`jumps`, later-bar indices) after it. `bars` are one security's, sorted.
+#[must_use]
+pub fn outlived(bars: &[crate::gates::Bar], anchor: NaiveDate, jumps: &[usize]) -> bool {
+    let k = bars.partition_point(|b| b.date <= anchor);
+    if k == 0 || k + 10 >= bars.len() || jumps.iter().any(|&j| j >= k) {
+        return false;
+    }
+    let median = |w: Option<&[crate::gates::Bar]>| {
+        let mut v: Vec<f64> = w
+            .unwrap_or_default()
+            .iter()
+            .map(|b| b.close * b.volume.max(0) as f64)
+            .filter(|x| x.is_finite())
+            .collect();
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).copied().unwrap_or(0.0)
+    };
+    let pre = median(bars.get(k.saturating_sub(60)..k));
+    let post = median(bars.get(k + 10..(k + 70).min(bars.len())));
+    pre > 0.0 && post >= 0.5 * pre
+}
+
 /// The `delistings` rows (`SCHEMAS.md` #32 order, `figi` last).
 ///
 /// # Errors
@@ -314,7 +340,7 @@ pub fn delisting_batch(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, reason = "test")]
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
 
     use super::*;
 
@@ -398,5 +424,45 @@ mod tests {
         let r = classify(&ev(&[bk.clone(), f15]), Some(d("2025-01-01"))).unwrap();
         assert_eq!((r.class, r.rule), ("deregistered", "D5"));
         assert_eq!(classify(&ev(&[bk]), None), None);
+    }
+
+    #[test]
+    fn d0_prices_that_outlive_the_form() {
+        // 100 bars from 2024-01-01; the Form 25 on bar 49.
+        let series = |vol_after: i64| -> Vec<crate::gates::Bar> {
+            (0..100u64)
+                .map(|k| crate::gates::Bar {
+                    sec: 0,
+                    date: d("2024-01-01") + Days::new(k),
+                    open: 10.0,
+                    high: 10.0,
+                    low: 10.0,
+                    close: 10.0,
+                    volume: if k < 50 { 1000 } else { vol_after },
+                    adj: 10.0,
+                })
+                .collect()
+        };
+        let anchor = d("2024-02-19");
+        assert!(
+            outlived(&series(900), anchor, &[]),
+            "same trade: another security's form"
+        );
+        assert!(
+            !outlived(&series(100), anchor, &[]),
+            "trade collapses: delisted"
+        );
+        assert!(
+            !outlived(&series(900), anchor, &[70]),
+            "a ten-fold jump after: another holder"
+        );
+        assert!(
+            !outlived(&series(900)[..55], anchor, &[]),
+            "ends within 10 bars"
+        );
+        assert!(
+            !outlived(&series(900), d("2023-12-01"), &[]),
+            "no bar on or before the form"
+        );
     }
 }

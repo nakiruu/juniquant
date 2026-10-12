@@ -207,7 +207,7 @@ date `t` uses data through `t` only:
 | `market_cap` | `close[t] x shares[t]` (`02-panel-construction/FEATURES.md` §0); null without a CIK or before the first filing with a share count |
 | `mcap_pct` | Percentile rank in [0, 1] of `market_cap` on `t` among in-scope securities with a non-null `market_cap` (ties take the average rank); null when `market_cap` is null |
 | `eligible` | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` (3 years of 252 days; the outline's "fewer than 3 years of clean data"; from the business combination for a de-SPACed company, §5a) and `mcap_pct >= 0.30` when `mcap_pct` is not null (D21; a null never excludes) and a FIGI (every security in `prices` has one) and a price on `t`. A missing CIK does not exclude a security; its `sp_ratio` is NaN |
-| `exclusion_reason` | Null if eligible, else the first of `data_quality` (a failed-G2 price on `t`), `history`, `liquidity`, `size`. A security without a FIGI or a price on `t` has no row (`SCHEMAS.md` #1) |
+| `exclusion_reason` | Null if eligible, else the first of `data_quality` (a failed-G2 row on `t`, or `t` inside a G2 span, `QUALITY-GATES.md` §2a), `history`, `liquidity`, `size`. A security without a FIGI or a price on `t` has no row (`SCHEMAS.md` #1) |
 
 The earlier `data_years` (years of history available, computed over the whole
 file) and the single current `eligible` flag looked into the future; they are

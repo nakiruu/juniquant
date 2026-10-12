@@ -287,9 +287,10 @@ final state; a test does exactly that (§12).
   after each monthly zip refresh. First run: 8,326 of 9,443 securities with a SIC.
 - **J9 (built 2026-10-12).** `julia --project=features features/bin/build-universe.jl`
   (`QUANT_CONFIG` for the calendar and `sic_to_gics.toml`, `LAKE_IO_BIN`) rebuilds every
-  `universe` year and `price_coverage` in full (`UNIVERSE.md` §8). Not yet applied: the
-  `data_quality` exclusion (waits for G2 per-row price failures), the de-SPAC start
-  (§5a), and the coverage reasons `vendor_wrong_holder` and `symbol_reused`.
+  `universe` year and `price_coverage` in full (`UNIVERSE.md` §8). Since 2026-10-12 it reads
+  the latest G2 run: the `data_quality` exclusion and the coverage reasons
+  `vendor_wrong_holder` and `symbol_reused` come from its spans (`QUALITY-GATES.md` §2a).
+  Not yet applied: the de-SPAC start (§5a).
 
 ### 5.6 Trading calendar
 
