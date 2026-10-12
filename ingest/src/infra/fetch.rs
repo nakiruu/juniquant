@@ -111,7 +111,9 @@ pub fn classify(source: &str, status: u16, body: &[u8], empty_is_gone: bool) -> 
         200..=299 if body.trim_ascii().is_empty() => Verdict::NoRetry,
         200..=299 if empty_is_gone && body.trim_ascii() == b"[]" => Verdict::Gone("vendor_no_data"),
         200..=299 => Verdict::Data,
-        404 if matches!(source, "eodhd" | "yahoo_chart") => Verdict::Gone("vendor_no_data"),
+        404 if matches!(source, "eodhd" | "yahoo_chart" | "sec_bulk") => {
+            Verdict::Gone("vendor_no_data")
+        }
         401 | 403 => Verdict::Refused,
         429 if source.starts_with("sec") => Verdict::Refused,
         429 => Verdict::RateLimited,
@@ -376,6 +378,11 @@ mod tests {
             Verdict::Gone("vendor_no_data")
         );
         assert_eq!(classify("sec_api", 404, b"", true), Verdict::NoRetry);
+        // A missing daily index of a past weekday is an SEC holiday.
+        assert_eq!(
+            classify("sec_bulk", 404, b"", false),
+            Verdict::Gone("vendor_no_data")
+        );
         assert_eq!(classify("eodhd", 401, b"", true), Verdict::Refused);
         assert_eq!(
             classify("sec_api", 429, b"", true),

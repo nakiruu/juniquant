@@ -9,7 +9,8 @@
 //! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
 //! quant-ingest edgar fetch                              J2, BACKFILL.md §5.2
 //! quant-ingest edgar fundamentals                       J7, from the landed zips
-//! quant-ingest macro backfill                              J8, BACKFILL.md §5.3
+//! quant-ingest edgar daily                              J7 daily: filers in the day's form index
+//! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -43,10 +44,11 @@ fn main() -> ExitCode {
         ["ishares", "snapshot"] => ishares_snapshot(),
         ["edgar", "fetch"] => edgar_fetch(),
         ["edgar", "fundamentals"] => edgar_fundamentals(),
-        ["macro", "backfill"] => macro_backfill(),
+        ["edgar", "daily"] => edgar_daily(),
+        ["macro", "backfill" | "daily"] => macro_backfill(),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|daily"
             );
             return ExitCode::from(2);
         }
@@ -563,55 +565,11 @@ fn edgar_fetch() -> Result<(), String> {
 
 /// J7: `fundamentals` from the latest landed zips, for the CIKs of `security_master`.
 fn edgar_fundamentals() -> Result<(), String> {
-    use arrow::array::{Array, AsArray};
-    use ingest::edgar::{self, Security};
+    use ingest::edgar;
     use ingest::infra::quality::{Level, Row};
     let s = setup("fundamentals")?;
-    let mut by_cik: std::collections::BTreeMap<String, Vec<Security>> = Default::default();
-    let b = s
-        .lake
-        .read_dataset(
-            "security_master",
-            Some(&["figi", "ticker", "cik"]),
-            &[],
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-    let (f, t, c) = (
-        b.column(0).as_string::<i32>(),
-        b.column(1).as_string::<i32>(),
-        b.column(2).as_string::<i32>(),
-    );
-    for i in (0..b.num_rows()).filter(|&i| c.is_valid(i)) {
-        by_cik
-            .entry(c.value(i).to_owned())
-            .or_default()
-            .push(Security {
-                figi: f.value(i).to_owned(),
-                ticker: t.value(i).to_owned(),
-            });
-    }
-    // The newest landed chunk (a fetch date) of a zip.
-    let latest = |entity: &str| -> Result<(String, std::path::PathBuf), String> {
-        let dir = s.paths.raw.join("sec_bulk").join(entity);
-        let mut chunks: Vec<String> = std::fs::read_dir(&dir)
-            .map_err(|e| format!("{}: {e} (run `quant-ingest edgar fetch`)", dir.display()))?
-            .filter_map(|d| d.ok()?.file_name().into_string().ok())
-            .collect();
-        chunks.sort();
-        for chunk in chunks.into_iter().rev() {
-            if let Some((p, _, _)) = s
-                .manifest
-                .landed(("sec_bulk", entity, &chunk))
-                .map_err(|e| e.to_string())?
-            {
-                return Ok((chunk, p.into()));
-            }
-        }
-        Err(format!(
-            "{entity}: nothing landed (run `quant-ingest edgar fetch`)"
-        ))
-    };
+    let by_cik = filer_securities(&s.lake)?;
+    let latest = |entity: &str| latest_zip(&s, entity);
     let (chunk, facts_path) = latest("companyfacts_zip")?;
     let (subs_chunk, subs_path) = latest("submissions_zip")?;
     println!(
@@ -636,11 +594,11 @@ fn edgar_fundamentals() -> Result<(), String> {
         &built.batch,
     )
     .map_err(|e| e.to_string())?;
-    let compacted = ingest::infra::stage::compact(
+    let compacted = ingest::infra::stage::compact_sources(
         &s.lake,
         &s.manifest,
         &s.paths.stage,
-        "sec_bulk",
+        EDGAR_SOURCES,
         "fundamentals",
     )
     .map_err(|e| e.to_string())?;
@@ -699,6 +657,7 @@ fn macro_backfill() -> Result<(), String> {
         lake,
         manifest,
         quality,
+        today,
         ..
     } = setup("macro")?;
     let key = std::env::var("FRED_API_KEY")
@@ -757,7 +716,12 @@ fn macro_backfill() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let (mut incomplete, mut fatal) = (0usize, None);
     'series: for s in alfred::SERIES {
-        let body = match get(s.id, "vintagedates", &alfred::vintage_dates_url(s.id, &key)) {
+        // Refetched daily: a new vintage date renames the open window, which is then refetched.
+        let body = match get(
+            s.id,
+            &format!("vintagedates-{today}"),
+            &alfred::vintage_dates_url(s.id, &key),
+        ) {
             Ok(Some((b, _))) => b,
             Ok(None) => {
                 incomplete += 1;
@@ -887,5 +851,234 @@ fn macro_backfill() -> Result<(), String> {
         (None, n) => Err(format!(
             "{n} series incomplete (see data_quality; re-run resumes)"
         )),
+    }
+}
+
+/// The stage sources of `fundamentals`, in precedence order: the bulk zip, then the daily API.
+const EDGAR_SOURCES: &[&str] = &["sec_bulk", "sec_api"];
+
+/// 10-digit CIK -> its securities, from `security_master`.
+fn filer_securities(
+    lake: &lake::Lake,
+) -> Result<std::collections::BTreeMap<String, Vec<ingest::edgar::Security>>, String> {
+    use arrow::array::{Array, AsArray};
+    let b = lake
+        .read_dataset(
+            "security_master",
+            Some(&["figi", "ticker", "cik"]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let (f, t, c) = (
+        b.column(0).as_string::<i32>(),
+        b.column(1).as_string::<i32>(),
+        b.column(2).as_string::<i32>(),
+    );
+    let mut by_cik: std::collections::BTreeMap<String, Vec<ingest::edgar::Security>> =
+        Default::default();
+    for i in (0..b.num_rows()).filter(|&i| c.is_valid(i)) {
+        by_cik
+            .entry(c.value(i).to_owned())
+            .or_default()
+            .push(ingest::edgar::Security {
+                figi: f.value(i).to_owned(),
+                ticker: t.value(i).to_owned(),
+            });
+    }
+    Ok(by_cik)
+}
+
+/// The newest landed chunk (a fetch date) of a zip, and its path.
+fn latest_zip(s: &Setup, entity: &str) -> Result<(String, std::path::PathBuf), String> {
+    let dir = s.paths.raw.join("sec_bulk").join(entity);
+    let mut chunks: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("{}: {e} (run `quant-ingest edgar fetch`)", dir.display()))?
+        .filter_map(|d| d.ok()?.file_name().into_string().ok())
+        .collect();
+    chunks.sort();
+    for chunk in chunks.into_iter().rev() {
+        if let Some((p, _, _)) = s
+            .manifest
+            .landed(("sec_bulk", entity, &chunk))
+            .map_err(|e| e.to_string())?
+        {
+            return Ok((chunk, p.into()));
+        }
+    }
+    Err(format!(
+        "{entity}: nothing landed (run `quant-ingest edgar fetch`)"
+    ))
+}
+
+/// J7 daily: read the EDGAR daily form index of every weekday since the zips; for each of our
+/// filers listed with a 10-K/10-Q (or amendment) that day, fetch its submissions and
+/// companyfacts JSON once (chunk = that day), rebuild its rows (older filings from the zip
+/// pages) and stage those filed from three days before; then compact zip + daily rows.
+fn edgar_daily() -> Result<(), String> {
+    use ingest::edgar::{self, facts};
+    use ingest::infra::fetch::Request;
+    use ingest::infra::manifest::Status;
+    use ingest::infra::quality::{Level, Row};
+    let s = setup("edgar-daily")?;
+    let by_cik = filer_securities(&s.lake)?;
+    let (zip_chunk, _) = latest_zip(&s, "companyfacts_zip")?;
+    let (_, subs_path) = latest_zip(&s, "submissions_zip")?;
+    let zip_date = NaiveDate::parse_from_str(&zip_chunk, "%Y-%m-%d")
+        .map_err(|e| format!("{zip_chunk}: {e}"))?;
+    let (bulk, api) = (
+        sec_fetcher(&s, SourceSpec::SEC_BULK)?,
+        sec_fetcher(&s, SourceSpec::SEC_API)?,
+    );
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    // The landed body of a chunk, fetched now or earlier; None if it failed or is gone.
+    let get =
+        |f: &Fetcher, entity: &str, chunk: &str, url: &str| -> Result<Option<Vec<u8>>, String> {
+            let r = Request {
+                entity,
+                chunk,
+                url,
+                ext: if f.spec.id == "sec_bulk" {
+                    "txt"
+                } else {
+                    "json"
+                },
+                cost: 1,
+                dataset: "fundamentals",
+                empty_is_gone: false,
+            };
+            rt.block_on(f.fetch(&r)).map_err(|e| e.to_string())?;
+            match s
+                .manifest
+                .landed((f.spec.id, entity, chunk))
+                .map_err(|e| e.to_string())?
+            {
+                Some((p, _, _)) => ingest::infra::landing::read(std::path::Path::new(&p))
+                    .map(Some)
+                    .map_err(|e| e.to_string()),
+                None => Ok(None),
+            }
+        };
+    let days = edgar::daily_days(zip_date, s.today);
+    let mut todo: Vec<(NaiveDate, String)> = Vec::new();
+    for d in &days {
+        if let Some(body) = get(
+            &bulk,
+            "daily_idx",
+            &d.to_string(),
+            &edgar::daily_index_url(*d),
+        )? {
+            todo.extend(
+                edgar::periodic_ciks(&body)
+                    .into_iter()
+                    .filter(|c| by_cik.contains_key(c))
+                    .map(|c| (*d, c)),
+            );
+        }
+    }
+    let mut subs = edgar::open(&subs_path).map_err(|e| format!("{}: {e}", subs_path.display()))?;
+    let (mut staged, mut rows_staged, mut failed) = (0usize, 0usize, Vec::new());
+    for (d, cik) in &todo {
+        let entity = format!("CIK{cik}");
+        let fchunk = format!("facts-{d}");
+        if s.manifest
+            .status(("sec_api", &entity, &fchunk))
+            .map_err(|e| e.to_string())?
+            .is_some_and(|st| matches!(st, Status::Parsed | Status::Compacted))
+        {
+            continue;
+        }
+        let main = get(
+            &api,
+            &entity,
+            &format!("submissions-{d}"),
+            &format!("https://data.sec.gov/submissions/{entity}.json"),
+        )?;
+        let body = get(
+            &api,
+            &entity,
+            &fchunk,
+            &format!("https://data.sec.gov/api/xbrl/companyfacts/{entity}.json"),
+        )?;
+        let (Some(main), Some(body)) = (main, body) else {
+            failed.push(cik.clone());
+            continue;
+        };
+        let parse = |b: &[u8]| {
+            serde_json::from_slice::<serde_json::Value>(b).map_err(|e| format!("{entity}: {e}"))
+        };
+        let (main, body) = (parse(&main)?, parse(&body)?);
+        // Recent filings from the API, older ones from the zip (they do not change).
+        let mut filings = main
+            .pointer("/filings/recent")
+            .map(facts::filings)
+            .unwrap_or_default();
+        if let Some(z) =
+            edgar::entry(&mut subs, &format!("{entity}.json")).map_err(|e| e.to_string())?
+        {
+            let z: serde_json::Value = parse(&z)?;
+            let seen: std::collections::BTreeSet<String> =
+                filings.iter().map(|f| f.accession.clone()).collect();
+            filings.extend(
+                edgar::all_filings(&mut subs, &z)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .filter(|f| !seen.contains(&f.accession)),
+            );
+        }
+        let from = *d - chrono::Duration::days(3);
+        let (rows, _) = facts::rows(&filings, &facts::parse_facts(&body), s.today);
+        let rows: Vec<_> = rows.into_iter().filter(|r| r.filing_date >= from).collect();
+        let secs = by_cik.get(cik).map(Vec::as_slice).unwrap_or_default();
+        let batch = edgar::filer_batch(cik, secs, &rows).map_err(|e| e.to_string())?;
+        ingest::infra::stage::write_stage(
+            &s.paths.stage,
+            &s.manifest,
+            "fundamentals",
+            ("sec_api", &entity, &fchunk),
+            facts::PARSE_VERSION,
+            &batch,
+        )
+        .map_err(|e| e.to_string())?;
+        staged += 1;
+        rows_staged += batch.num_rows();
+    }
+    let compacted = ingest::infra::stage::compact_sources(
+        &s.lake,
+        &s.manifest,
+        &s.paths.stage,
+        EDGAR_SOURCES,
+        "fundamentals",
+    )
+    .map_err(|e| e.to_string())?;
+    s.manifest.compacted("sec_api").map_err(|e| e.to_string())?;
+    let notes = format!(
+        "{} days since the {zip_chunk} zips; {} filer-days with a periodic filing; {staged} staged ({rows_staged} rows); {} failed (retried next run)",
+        days.len(),
+        todo.len(),
+        failed.len()
+    );
+    s.quality.push(Row {
+        source: "SEC",
+        dataset: "fundamentals".into(),
+        entity: "daily_idx".into(),
+        chunk: s.today.to_string(),
+        level: if failed.is_empty() {
+            Level::Ok
+        } else {
+            Level::Warn
+        },
+        attempts: 1,
+        notes: Some(notes.clone()),
+    });
+    s.quality.write(&s.lake).map_err(|e| e.to_string())?;
+    println!("edgar daily: {notes}; compaction {compacted:?}");
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{} filers failed: {failed:?}", failed.len()))
     }
 }

@@ -113,9 +113,9 @@ the next run). A permanent "no data" answer (EODHD `[]`, Yahoo `Not Found`) goes
 |---|---|---|
 | `eodhd` | vendor code (`BRK-B.US`) | `eod-full`, `splits-full`, `div-full` (history to the fetch date) or `bulk-YYYY-MM-DD[-splits|-div]` (daily, entity `US`) |
 | `yahoo_chart` | vendor symbol (`BRK-B`) | `full` (history to the fetch date) or `incr-YYYY-MM-DD` |
-| `sec_bulk` | `submissions_zip` / `companyfacts_zip` | `YYYY-MM-DD` (publication date of the zip) |
+| `sec_bulk` | `submissions_zip` / `companyfacts_zip`; `form_idx`; `daily_idx` | `YYYY-MM-DD` (fetch date of the zip); `YYYYqN`; `YYYY-MM-DD` (index day) |
 | `sec_api` | `CIK##########` | `submissions-YYYY-MM-DD` / `facts-YYYY-MM-DD` |
-| `fred_alfred` | series id | `all_vintages` or `delta-YYYY-MM-DD` |
+| `fred_alfred` | series id | `vintagedates-YYYY-MM-DD`, `all_vintages-FIRST-LAST[-open][-oN]` (fetch), `all_vintages` (stage) |
 | `ishares` | `IWF` / `IWP` | `asof=YYYYMMDD` |
 | `sec_tickers` | `company_tickers` / `company_tickers_exchange` / `cik_lookup` | `YYYY-MM-DD` |
 
@@ -204,9 +204,15 @@ final state; a test does exactly that (§12).
   the landing zone and used by a gate to confirm that every 10-K/10-Q/8-K/25
   row of the universe's CIKs in the index is present in the submissions-based
   data (G7). Not a source of values.
-- **Daily hand-off.** `submissions` delta per current member CIK (about 700
-  requests, about 3 minutes at 5/s) and `companyfacts` for the CIKs whose
-  submissions show a new 10-K/10-Q/10-K/A/10-Q/A (average a few per day).
+- **Daily hand-off** (`quant-ingest edgar daily`, built 2026-10-12). One request per
+  weekday: the EDGAR daily form index (`daily-index/YYYY/QTRn/form.YYYYMMDD.idx`, entity
+  `daily_idx`, a 404 on a past weekday is an SEC holiday, `gone`). For each of our CIKs listed
+  there with a 10-K/10-Q/10-K/A/10-Q/A: its `submissions` and `companyfacts` JSON (chunks
+  `submissions-YYYY-MM-DD` / `facts-YYYY-MM-DD`, the index day), rows rebuilt with the older
+  filings from the zip pages, staged under `sec_api`, compacted with the zip rows (zip first
+  on a duplicate key). This replaces polling every member CIK (about 4,700 with D20, 16
+  minutes at 5/s); 8-K events for J6 will need the same per-CIK `submissions` fetch for
+  filers with an 8-K in the index. First run: 18 filers on 2 days, rows identical to the zip.
   The zips are re-downloaded monthly and compared with the accumulated API
   deltas (any difference is logged).
 - **Request estimate for the backfill.** 2 bulk downloads + about 70 index
@@ -223,8 +229,11 @@ final state; a test does exactly that (§12).
   The ICE BofA series return only about three years (P6: from 2023-10-10): the
   gate records the earliest observation and the series is marked `deferred`
   because it does not reach 2004.
-- **Daily hand-off.** `delta-YYYY-MM-DD` with `realtime_start` = the last run
-  date (revisions arrive as new vintage rows); about 9 requests.
+- **Daily hand-off** (`quant-ingest macro daily`, the same run as the backfill). The
+  vintage-date list is refetched (chunk `vintagedates-YYYY-MM-DD`, 9 requests); a new vintage
+  renames the open last window (`all_vintages-FIRST-LAST-open`), which alone is refetched;
+  the series is then restitched and recompacted. No new vintage: 9 requests, nothing
+  rewritten.
 
 ### 5.4 iShares: holdings by as-of date
 

@@ -184,7 +184,14 @@ impl Window {
     /// Manifest chunk id of one page of the window.
     #[must_use]
     pub fn chunk(&self, offset: usize) -> String {
-        let base = format!("all_vintages-{}-{}", self.first, self.last);
+        // An open window (the last) is refetched when it is no longer last: same dates, other
+        // `realtime_end`, other body.
+        let open = if self.realtime_end.year() == 9999 {
+            "-open"
+        } else {
+            ""
+        };
+        let base = format!("all_vintages-{}-{}{open}", self.first, self.last);
         if offset == 0 {
             base
         } else {
@@ -511,6 +518,15 @@ mod tests {
             ws[0].chunk(0),
             format!("all_vintages-2005-01-01-{}", dates[1999])
         );
+        assert!(
+            ws[2].chunk(0).ends_with("-open"),
+            "the last window is renamed once it closes"
+        );
+        // A new vintage renames the open window, so the daily run refetches it.
+        let more: Vec<NaiveDate> = (0..4501)
+            .map(|i| d("2005-01-01") + Duration::days(i))
+            .collect();
+        assert_ne!(windows(&more)[2].chunk(0), ws[2].chunk(0));
         let b = boundaries(&ws);
         assert_eq!(b.len(), 2);
         let (e0, s1) = (dates[1999], dates[2000]);

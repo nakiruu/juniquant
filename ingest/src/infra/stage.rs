@@ -92,12 +92,35 @@ pub fn compact(
     source: &str,
     dataset: &str,
 ) -> Result<Compacted, StageError> {
-    let prefix = stage.join(dataset).join(source);
-    let files: Vec<(String, String, String)> = manifest
-        .stage_files(source)?
-        .into_iter()
-        .filter(|(p, _, _)| Path::new(p).starts_with(&prefix))
-        .collect();
+    compact_sources(lake, manifest, stage, &[source], dataset)
+}
+
+/// Rebuild `dataset` from the stage files of several sources, in the order given: on a
+/// duplicate key the earlier source's row is kept (`fundamentals`: the bulk zip before the
+/// daily API deltas).
+///
+/// # Errors
+///
+/// Lake (validation included), I/O or manifest errors; partitions already renamed stay
+/// written (`IO-CONTRACT.md` §3), and a re-run converges.
+pub fn compact_sources(
+    lake: &lake::Lake,
+    manifest: &Manifest,
+    stage: &Path,
+    sources: &[&str],
+    dataset: &str,
+) -> Result<Compacted, StageError> {
+    let mut files: Vec<(String, String, String)> = Vec::new();
+    for source in sources {
+        let prefix = stage.join(dataset).join(source);
+        files.extend(
+            manifest
+                .stage_files(source)?
+                .into_iter()
+                .filter(|(p, _, _)| Path::new(p).starts_with(&prefix)),
+        );
+    }
+    let source = sources.join("+");
     let inputs: Vec<String> = files
         .iter()
         .map(|(_, sha, ver)| format!("{sha}:{ver}"))

@@ -163,6 +163,28 @@ fn json(
         .transpose()
 }
 
+/// Every filing of a filer: `filings.recent` of its submissions JSON plus the older pages
+/// named there, read from the submissions zip.
+///
+/// # Errors
+///
+/// [`BuildError`]: a page that cannot be read or is not JSON.
+pub fn all_filings(
+    subs: &mut zip::ZipArchive<std::fs::File>,
+    main: &serde_json::Value,
+) -> Result<Vec<facts::Filing>, BuildError> {
+    let mut filings = main
+        .pointer("/filings/recent")
+        .map(facts::filings)
+        .unwrap_or_default();
+    for page in facts::page_names(main) {
+        if let Some(p) = json(subs, &page)? {
+            filings.extend(facts::filings(&p));
+        }
+    }
+    Ok(filings)
+}
+
 /// J7: the `fundamentals` rows of every CIK in `by_cik` (10-digit CIK -> its securities), from
 /// the two landed zips. Pure in the zips, the map and `today`.
 ///
@@ -184,15 +206,7 @@ pub fn build(
             no_submissions.push(cik.clone());
             continue;
         };
-        let mut filings = main
-            .pointer("/filings/recent")
-            .map(facts::filings)
-            .unwrap_or_default();
-        for page in facts::page_names(&main) {
-            if let Some(p) = json(subs, &page)? {
-                filings.extend(facts::filings(&p));
-            }
-        }
+        let filings = all_filings(subs, &main)?;
         let parsed = json(facts_zip, &format!("CIK{cik}.json"))?
             .map(|v| facts::parse_facts(&v))
             .unwrap_or_default();
@@ -349,6 +363,71 @@ fn batch(rows: &[Out<'_>]) -> Result<arrow::array::RecordBatch, arrow::error::Ar
     arrow::array::RecordBatch::try_new(Arc::new(schema), cols)
 }
 
+/// The `fundamentals` rows of one filer, one copy per security.
+///
+/// # Errors
+///
+/// Arrow errors (a bug).
+pub fn filer_batch(
+    cik: &str,
+    secs: &[Security],
+    rows: &[facts::Row],
+) -> Result<arrow::array::RecordBatch, arrow::error::ArrowError> {
+    let out: Vec<Out<'_>> = secs
+        .iter()
+        .flat_map(|s| rows.iter().map(move |r| (cik, s, r.clone())))
+        .collect();
+    batch(&out)
+}
+
+/// The EDGAR daily form index of `d` (every filing disseminated that day).
+#[must_use]
+pub fn daily_index_url(d: NaiveDate) -> String {
+    format!(
+        "https://www.sec.gov/Archives/edgar/daily-index/{}/QTR{}/form.{}.idx",
+        d.year(),
+        (d.month() - 1) / 3 + 1,
+        d.format("%Y%m%d")
+    )
+}
+
+/// The weekdays the daily run reads: from three days before the zips' fetch date (overlap is
+/// harmless, rows are deduplicated by key) through the day before `today`, whose index is
+/// published that night.
+#[must_use]
+pub fn daily_days(zip_date: NaiveDate, today: NaiveDate) -> Vec<NaiveDate> {
+    zip_date
+        .checked_sub_days(chrono::Days::new(3))
+        .unwrap_or(zip_date)
+        .iter_days()
+        .take_while(|d| *d < today)
+        .filter(|d| d.weekday().number_from_monday() <= 5)
+        .collect()
+}
+
+/// 10-digit CIKs with a 10-K, 10-Q or amendment in a form index body (daily or quarterly).
+/// Parsed from the right of each line (file name, date, CIK): the header's column positions
+/// do not match the data, and form types and company names can hold spaces.
+#[must_use]
+pub fn periodic_ciks(body: &[u8]) -> std::collections::BTreeSet<String> {
+    String::from_utf8_lossy(body)
+        .lines()
+        .filter_map(|l| {
+            let t: Vec<&str> = l.split_whitespace().collect();
+            let form = *t.first()?;
+            if !matches!(
+                form,
+                "10-K" | "10-Q" | "10-K/A" | "10-Q/A" | "10-KT" | "10-KT/A"
+            ) {
+                return None;
+            }
+            let cik = t.len().checked_sub(3).and_then(|i| t.get(i))?;
+            let n: u64 = cik.parse().ok()?;
+            Some(format!("{n:010}"))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "test")]
@@ -364,5 +443,26 @@ mod tests {
             vec![(2025, 3), (2025, 4), (2026, 1), (2026, 2), (2026, 3)]
         );
         assert!(quarters((2026, 4), d).is_empty());
+    }
+
+    #[test]
+    fn daily_days_skip_weekends_and_today() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        // Zips fetched Sunday 2026-10-11, run Monday: Thursday and Friday.
+        assert_eq!(
+            daily_days(d("2026-10-11"), d("2026-10-12")),
+            vec![d("2026-10-08"), d("2026-10-09")]
+        );
+        assert_eq!(
+            daily_index_url(d("2026-10-09")),
+            "https://www.sec.gov/Archives/edgar/daily-index/2026/QTR4/form.20261009.idx"
+        );
+    }
+
+    #[test]
+    fn periodic_ciks_read_from_the_right() {
+        let body = b"Form Type   Company Name   CIK   Date Filed  File Name\n-----\n10-Q             10x Genomics, Inc.                                            1770787     2026-08-07  edgar/data/1770787/0001628280-26-054400.txt\n10-K/A           A  B  C                                                       320193      20261009    edgar/data/320193/0000320193-26-000001.txt\nSC 13G           10-K Holdings                                                 111         2026-08-07  edgar/data/111/x.txt\n8-K              Other                                                         222         2026-08-07  edgar/data/222/y.txt\n";
+        let got: Vec<String> = periodic_ciks(body).into_iter().collect();
+        assert_eq!(got, vec!["0000320193".to_owned(), "0001770787".to_owned()]);
     }
 }
