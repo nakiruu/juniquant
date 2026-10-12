@@ -172,7 +172,7 @@ pub struct Delisting {
     pub rule: &'static str,
     /// Latest Form 25 / 25-NSE.
     pub form25: Option<NaiveDate>,
-    /// Form 25 + 10 days, else the evidence date.
+    /// The Form 25 date; for a bankruptcy or without a Form 25, the evidence date (D22).
     pub est_last: Option<NaiveDate>,
     /// Latest Form 15.
     pub form15: Option<NaiveDate>,
@@ -232,9 +232,18 @@ pub fn classify(events: &[Event], last_price: Option<NaiveDate>) -> Option<Delis
         }
     };
     if let Some(e25) = f25.map(|e| e.filing_date) {
-        let est = Some(plus(e25, 10));
+        // D22: trading ends on the Form 25 filing day (the 10 days to effectiveness are legal only).
+        let est = Some(e25);
         if let Some(b) = first(&["bankruptcy"], minus(e25, 365), plus(e25, 30)) {
-            return Some(row("bankruptcy", "high", "D1", est, Some(b), None));
+            // D22: a bankrupt stock stops trading near the 8-K, often long before the Form 25.
+            return Some(row(
+                "bankruptcy",
+                "high",
+                "D1",
+                Some(b.filing_date),
+                Some(b),
+                None,
+            ));
         }
         if let Some(a) = first(acq, minus(e25, 45), plus(e25, 10)) {
             return Some(row("acquired", "high", "D2", est, None, Some(a)));
@@ -366,7 +375,7 @@ mod tests {
             (r.class, r.rule, r.confidence),
             ("bankruptcy", "D1", "high")
         );
-        assert_eq!(r.est_last, Some(d("2023-06-11")));
+        assert_eq!(r.est_last, Some(d("2023-01-10")));
         assert_eq!(r.evidence, vec!["f25".to_owned(), "bk".to_owned()]);
 
         let r = classify(&ev(&[f25.clone(), acq, f15.clone()]), None).unwrap();
@@ -378,6 +387,7 @@ mod tests {
 
         let r = classify(&ev(&[f25, late_acq]), None).unwrap();
         assert_eq!((r.class, r.rule), ("delisted_other", "D4"));
+        assert_eq!(r.est_last, Some(d("2023-06-01")));
 
         // No Form 25: a bankruptcy in the year before the last price, else a Form 15.
         let r = classify(&ev(&[bk.clone(), f15.clone()]), Some(d("2023-09-01"))).unwrap();

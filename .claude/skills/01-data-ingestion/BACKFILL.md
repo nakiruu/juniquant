@@ -41,7 +41,7 @@ backfill for that source until the owner decides.
 | P5 | EDGAR bulk files: URLs, `Last-Modified`, size, whether `filings.files[]` pages are in the submissions zip, a multi-class company's dei shares facts (GOOGL, BRK), the `fy`/`fp` quirk, the `sic` and `sicDescription` fields | SOURCES.md EDGAR items |
 | P6 | ALFRED: full-vintage fetch of `DGS3MO` and `CPIAUCSL`; the earliest `realtime_start`; vintage-count limits; the earliest observation of the ICE BofA series | `config/macro_series.toml` lags, deferral of the credit spreads |
 | P7 | iShares: is `asOfDate` valid, the earliest date served for IWF and IWP, whether non-month-end dates work, the CSV layout and sector labels, publication time of the latest file | Snapshot grid; §7 OPEN |
-| P8 | EDGAR Form 25 timing: for 3 known delistings, the Form 25 filing date vs the last EODHD bar | The "+10 days" rule in `SURVIVORSHIP.md` |
+| P8 | EDGAR Form 25 timing: the Form 25 filing date vs the last EODHD bar (answered 2026-10-12 over all delistings: same day; D22) | `est_last_trading_date` in `SURVIVORSHIP.md` §3 |
 
 Probe output contains the evidence (response status, headers, first and last
 dates, a few values). Nothing in the probe output is a secret.

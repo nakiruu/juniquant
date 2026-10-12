@@ -84,15 +84,15 @@ inputs are `filing_events` rows (`SOURCES.md` "EDGAR events"). One row per
 delisted security (`SCHEMAS.md` #32), built by Rust at ingestion. Rules are
 applied in this order; the first match sets `delist_class`, `confidence` and
 `rule_id`. `E25` = the filing date of the (latest) Form 25 / 25-NSE for the
-CIK. `est_last_trading_date` = `E25` + 10 calendar days (the delisting takes
-effect about 10 days after the Form 25 is filed; **verify** with probe P8);
-without a Form 25, the date of the earliest evidence.
+CIK. `est_last_trading_date` (D22) = `E25` itself for D2-D4 (the delisting takes legal
+effect about 10 days after the Form 25, but trading stops on the filing day); the filing date
+of the Item 1.03 used for D1, with or without a Form 25; the Form 15 date for D5.
 
 Evidence for P8 (J6 first build, 2026-10-12, securities whose prices stop within 30 days of
-the estimate): the last EODHD bar minus the Form 25 filing date has median 0 days for D2
+the +10 estimate): the last EODHD bar minus the Form 25 filing date has median 0 days for D2
 (1,885 securities, p10-p90 -3 to +3) and D4 (679, -11 to +12), and -7 days for D1 (134,
--55 to +33: trading is often suspended at the bankruptcy, months before the Form 25). The
-+10 rule is kept until the owner decides.
+-55 to +33: trading is often suspended at the bankruptcy, months before the Form 25). Within +-5 days of the last bar: `E25` 87% of D2 (`E25` + 10: 6%), 55% of D4 (15%);
+the owner chose `E25` (D22).
 
 | Rule | Condition (all dates are `filing_date`) | `delist_class` | Confidence |
 |---|---|---|---|
@@ -137,7 +137,7 @@ with [`first_price_date`, `last_price_date`] and the delisting record:
 | `coverage_status` | Meaning |
 |---|---|
 | `complete` | Prices on all member days (within a 2% internal-hole tolerance), through the last expected day: the data end for a live name, `est_last_trading_date` for a delisted one |
-| `terminal_known` | The series ends within 10 trading days of the `est_last_trading_date` of a `delistings` row whose class has a terminal rule (`bankruptcy`, `acquired`) |
+| `terminal_known` | The series ends within 10 trading days of the `est_last_trading_date` of an `acquired` row, or reaches within 30 days of the `bankruptcy_filing_date` of a `bankruptcy` row (D22: a bankrupt stock stops trading near the 8-K or keeps trading over the counter, so no single date fits; about 90% of D1 series meet the 30-day rule, 29% the 10-day one) |
 | `gap` | Anything else; `gap_reason` is one of `vendor_no_data`, `vendor_wrong_holder` (the code answers with a different holder's series, `SOURCES.md` EODHD), `vendor_truncated` (series ends more than 10 trading days before the expected end), `late_start` (series starts after the first member day), `symbol_reused` (the vendor series starts after the security's first member day by more than 30 days and the security is old, or `firstTradeDate` contradicts the holdings), `identity_unresolved` (no CIK / vendor symbol), `internal_gaps` |
 
 `terminal_class` (used by the labels): `none` (alive at the data end),

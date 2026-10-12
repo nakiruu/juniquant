@@ -990,12 +990,33 @@ fn gates(rest: &[&str]) -> Result<(), String> {
             results.push(("G7", "fundamentals", o));
         }
         results.push(("G7", "fundamentals", gates::staleness(&pairs, &rows)));
-        let mut idx = gates::index_misses(&lines, &index_ciks, &rows);
+        let (unmatched, checked) = gates::index_unmatched(&lines, &index_ciks, &rows);
+        // The XBRL accessions of only the filers with an unmatched filing.
+        let (_, facts_path) = latest_zip(&s, "companyfacts_zip")?;
+        let mut facts_zip = ingest::edgar::open(&facts_path)
+            .map_err(|e| format!("{}: {e}", facts_path.display()))?;
+        let mut with_facts = HashSet::new();
+        for cik in unmatched
+            .iter()
+            .map(|l| l.cik.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            let name = format!("CIK{cik}.json");
+            if let Some(b) =
+                ingest::edgar::entry(&mut facts_zip, &name).map_err(|e| e.to_string())?
+            {
+                let v: serde_json::Value =
+                    serde_json::from_slice(&b).map_err(|e| format!("{name}: {e}"))?;
+                with_facts.extend(gates::fact_accessions(&v));
+            }
+        }
+        let [mut idx, no_xbrl] = gates::index_misses(&unmatched, checked, &with_facts);
         if !unlanded.is_empty() {
             idx.level = Level::Fail;
             idx.note = format!("form.idx not landed for {unlanded:?}; {}", idx.note);
         }
         results.push(("G7", "fundamentals", idx));
+        results.push(("G7", "fundamentals", no_xbrl));
         results.push(("G7", "fundamentals", gates::tag_switches(&rows)));
         results.push(("G7", "fundamentals", gates::ttm_nulls(&rows)));
     }

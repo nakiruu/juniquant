@@ -397,7 +397,7 @@ following, plus the event forms:
 | 8-K Item 2.01 | Completion of acquisition or disposition of assets | Delisting reason `acquired` (filed by the acquirer or the target) |
 | 8-K Item 5.01 | Changes in control of registrant | Delisting reason `acquired` |
 | 8-K Item 2.04 | Triggering events that accelerate or increase a direct financial obligation | Closest structured proxy for "debt covenant breach disclosed"; not the same thing |
-| Form 25 / 25-NSE | Notification of removal from listing | Delisting date estimate (effective about 10 days after filing; verify) |
+| Form 25 / 25-NSE | Notification of removal from listing | Delisting date estimate: trading stops on the filing day (legal effect about 10 days later; D22) |
 | Form 15 (15-12B, 15-12G, 15-15D) | Termination of registration | Delisting reason `deregistered` or confirmation of `acquired` |
 | NT 10-K, NT 10-Q | Late-filing notice | Warning signal |
 

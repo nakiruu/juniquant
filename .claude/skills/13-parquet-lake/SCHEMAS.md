@@ -985,7 +985,7 @@ and is combined in `price_coverage`.
 | `confidence` | `utf8` | no | `high` / `medium` / `low` |
 | `rule_id` | `utf8` | no | The classification rule that fired (`SURVIVORSHIP.md` §3) |
 | `form25_filing_date` | `date32` | yes | Form 25 / 25-NSE filing date |
-| `est_last_trading_date` | `date32` | yes | Estimate: Form 25 filing date plus 10 days (verify), else the date of the earliest evidence |
+| `est_last_trading_date` | `date32` | yes | Estimate (D22): the Form 25 filing date; for `bankruptcy` the Item 1.03 filing date; without a Form 25 the date of the evidence |
 | `form15_filing_date` | `date32` | yes | Form 15 filing date |
 | `bankruptcy_filing_date` | `date32` | yes | Filing date of the 8-K with Item 1.03 |
 | `acquisition_filing_date` | `date32` | yes | Filing date of the 8-K with Item 2.01 or 5.01 |

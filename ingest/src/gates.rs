@@ -263,45 +263,97 @@ pub fn staleness(eligible: &[(NaiveDate, String)], rows: &[FilingRow]) -> Outcom
     }
 }
 
-/// Index misses: 10-K/10-Q lines of the quarterly `form.idx` from 2011-07-01 for `ciks` whose
-/// accession has no `fundamentals` row; at most 1%.
+/// The 10-K/10-Q lines of the quarterly `form.idx` from 2011-07-01 for `ciks` whose accession
+/// has no `fundamentals` row, and the number of lines checked.
 #[must_use]
-pub fn index_misses(lines: &[IndexLine], ciks: &HashSet<String>, rows: &[FilingRow]) -> Outcome {
+pub fn index_unmatched<'a>(
+    lines: &'a [IndexLine],
+    ciks: &HashSet<String>,
+    rows: &[FilingRow],
+) -> (Vec<&'a IndexLine>, usize) {
     let have: HashSet<&str> = rows.iter().map(|r| r.accession.as_str()).collect();
     let wanted: Vec<_> = lines
         .iter()
         .filter(|l| matches!(l.form.as_str(), "10-K" | "10-Q"))
         .filter(|l| l.date >= xbrl_start() && ciks.contains(&l.cik))
         .collect();
-    let missing: Vec<_> = wanted
-        .iter()
-        .filter(|l| !have.contains(l.accession.as_str()))
-        .map(|l| {
-            (
-                l.cik.clone(),
-                format!("{} {} {}", l.accession, l.form, l.date),
-            )
-        })
-        .collect();
-    let share = missing.len() as f64 / wanted.len().max(1) as f64;
-    let threshold = 0.01;
-    Outcome {
-        chunk: "index_misses",
-        level: if !wanted.is_empty() && share <= threshold {
-            Level::Ok
-        } else {
-            Level::Fail
-        },
-        measured: Some(share),
-        threshold: Some(threshold),
-        note: format!(
-            "{} of {} indexed 10-K/10-Q since 2011-07-01 without a row ({:.2}%)",
-            missing.len(),
-            wanted.len(),
-            share * 100.0
-        ),
-        offenders: missing,
+    let n = wanted.len();
+    (
+        wanted
+            .into_iter()
+            .filter(|l| !have.contains(l.accession.as_str()))
+            .collect(),
+        n,
+    )
+}
+
+/// Every accession that reported a fact in a `companyfacts` JSON
+/// (`facts.{taxonomy}.{tag}.units.{unit}[].accn`).
+#[must_use]
+pub fn fact_accessions(v: &serde_json::Value) -> HashSet<String> {
+    fn obj(v: Option<&serde_json::Value>) -> Vec<&serde_json::Value> {
+        v.and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flat_map(serde_json::Map::values)
+            .collect()
     }
+    obj(v.get("facts"))
+        .into_iter()
+        .flat_map(|tax| obj(Some(tax)))
+        .flat_map(|tag| obj(tag.get("units")))
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .filter_map(|f| f.get("accn")?.as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Index misses (D23), from [`index_unmatched`]: a filing whose accession has XBRL facts
+/// (`with_facts`) but no row is an ingestion loss, HARD at most 1% of `checked`; one with no
+/// facts at the source is listed as WARN (its cost shows in `staleness`).
+#[must_use]
+pub fn index_misses(
+    unmatched: &[&IndexLine],
+    checked: usize,
+    with_facts: &HashSet<String>,
+) -> [Outcome; 2] {
+    let off = |l: &&IndexLine| {
+        (
+            l.cik.clone(),
+            format!("{} {} {}", l.accession, l.form, l.date),
+        )
+    };
+    let (lost, absent): (Vec<_>, Vec<_>) = unmatched
+        .iter()
+        .partition(|l| with_facts.contains(&l.accession));
+    let share = lost.len() as f64 / checked.max(1) as f64;
+    let threshold = 0.01;
+    let mut no_xbrl = count(
+        "index_no_xbrl",
+        false,
+        "indexed 10-K/10-Q since 2011-07-01 with no XBRL facts at the source",
+        absent.iter().map(off).collect(),
+    );
+    no_xbrl.measured = Some(absent.len() as f64 / checked.max(1) as f64);
+    no_xbrl.threshold = None;
+    [
+        Outcome {
+            chunk: "index_misses",
+            level: if checked > 0 && share <= threshold {
+                Level::Ok
+            } else {
+                Level::Fail
+            },
+            measured: Some(share),
+            threshold: Some(threshold),
+            note: format!(
+                "{} of {checked} indexed 10-K/10-Q since 2011-07-01 have XBRL facts but no row ({:.3}%)",
+                lost.len(),
+                share * 100.0
+            ),
+            offenders: lost.iter().map(off).collect(),
+        },
+        no_xbrl,
+    ]
 }
 
 /// Revenue-tag switches with a level jump above 30% (consecutive rows of a security with a
@@ -525,13 +577,22 @@ mod tests {
             accession: acc.into(),
         };
         let ciks = HashSet::from(["0000000001".to_owned()]);
-        let o = index_misses(
-            &[line("a", "10-Q"), line("x", "10-K"), line("y", "8-K")],
-            &ciks,
-            &rows,
-        );
-        assert_eq!((o.measured, o.level), (Some(0.5), Level::Fail));
-        assert_eq!(o.offenders.len(), 1);
+        let lines = [
+            line("a", "10-Q"),
+            line("x", "10-K"),
+            line("z", "10-Q"),
+            line("y", "8-K"),
+        ];
+        let (unmatched, checked) = index_unmatched(&lines, &ciks, &rows);
+        assert_eq!((unmatched.len(), checked), (2, 3));
+        // `x` has facts but no row (a loss); `z` has nothing at the source.
+        let facts = serde_json::json!({"facts": {"us-gaap": {"Assets": {"units": {"USD": [
+            {"accn": "x", "val": 1}, {"accn": "q", "val": 2}
+        ]}}}}});
+        let [lost, absent] = index_misses(&unmatched, checked, &fact_accessions(&facts));
+        assert_eq!((lost.measured, lost.level), (Some(1.0 / 3.0), Level::Fail));
+        assert_eq!(lost.offenders[0].1, "x 10-K 2024-02-05");
+        assert_eq!((absent.level, absent.offenders.len()), (Level::Warn, 1));
     }
 
     #[test]
