@@ -193,8 +193,10 @@ date `t` uses data through `t` only:
 |---|---|
 | `median_dollar_vol_60d` | Median over the 60 trading days ending `t` of `close x volume` (as traded). Null with fewer than 40 valid days |
 | `history_days` | Count of valid price days on or before `t` (0 without prices). "Clean" means the row passed the per-row price checks (G2) |
-| `eligible` | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` (3 years of 252 days; the outline's "fewer than 3 years of clean data"; from the business combination for a de-SPACed company, §5a) and a FIGI (every security in `prices` has one) and a price on `t`. A missing CIK does not exclude a security; its `sp_ratio` is NaN |
-| `exclusion_reason` | Null if eligible, else the first of `data_quality` (a failed-G2 price on `t`), `history`, `liquidity`. A security without a FIGI or a price on `t` has no row (`SCHEMAS.md` #1) |
+| `market_cap` | `close[t] x shares[t]` (`02-panel-construction/FEATURES.md` §0); null without a CIK or before the first filing with a share count |
+| `mcap_pct` | Percentile rank in [0, 1] of `market_cap` on `t` among in-scope securities with a non-null `market_cap` (ties take the average rank); null when `market_cap` is null |
+| `eligible` | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` (3 years of 252 days; the outline's "fewer than 3 years of clean data"; from the business combination for a de-SPACed company, §5a) and `mcap_pct >= 0.30` when `mcap_pct` is not null (D21; a null never excludes) and a FIGI (every security in `prices` has one) and a price on `t`. A missing CIK does not exclude a security; its `sp_ratio` is NaN |
+| `exclusion_reason` | Null if eligible, else the first of `data_quality` (a failed-G2 price on `t`), `history`, `liquidity`, `size`. A security without a FIGI or a price on `t` has no row (`SCHEMAS.md` #1) |
 
 The earlier `data_years` (years of history available, computed over the whole
 file) and the single current `eligible` flag looked into the future; they are
@@ -269,12 +271,13 @@ many of them. Owner decision, recorded as OPEN in the accompanying report.
 
 ## 8. Build Order (Julia, daily)
 
-1. Read `etf_holdings`, `security_master`, `prices` (columns needed only).
+1. Read `etf_holdings`, `security_master`, `prices`, `splits`, `fundamentals` (columns
+   needed only).
 2. One row per `(date, figi)` in `prices` for a FIGI in `security_master`.
 3. Join the latest snapshot per ETF on `figi` (`as of` join on `available_date`; no
    snapshot before 2026-10-09: `in_iwf = in_iwp = false`, `snapshot_date` null).
 4. Compute `history_days` (running count) and the 60-day median of
-   dollar volume.
+   dollar volume, then `market_cap` and its cross-sectional `mcap_pct` per date (D21).
 5. Set `eligible` / `exclusion_reason` by the precedence above.
 6. Write `universe` partitions (`replace` per year touched) through the lake
    writer; then derive and write `price_coverage` (`SURVIVORSHIP.md` §4).
@@ -287,6 +290,7 @@ many of them. Owner decision, recorded as OPEN in the accompanying report.
       `t` is altered (the shuffle/truncation test)
 - [ ] A security outside IWF/IWP with enough history and liquidity is `eligible` (D20)
 - [ ] Rows before the first snapshot have `snapshot_date` null and `in_iwf = in_iwp = false`
+- [ ] A row with null `mcap_pct` and enough history and liquidity is `eligible`; one with `mcap_pct < 0.30` is `size` (D21)
 - [ ] The symbol fixture file passes in the Rust crate
 - [ ] No Julia code implements symbol normalization
 - [ ] `universe` has no `effective_date`, `end_date`, `data_years`

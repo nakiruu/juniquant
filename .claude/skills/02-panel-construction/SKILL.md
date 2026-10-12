@@ -59,7 +59,7 @@ Inherited from the constitution (§2, §3):
   feature; if that count is below 50 the column is NaN on that date
   (`CROSS-SECTIONAL.md` §4). The eligible set is the point-in-time
   `universe` (every in-scope common stock of the D12 scope that passes the trailing
-  liquidity and history rules, D20; the $5M
+  liquidity, history and market-cap percentile rules, D20, D21; the $5M
   median dollar-volume floor is computed trailing at `t`; the entry-only
   maximum-median-quoted-spread filter of
   `10-execution-schwab/EXECUTION-WINDOW.md` §8 is docs only and is not part

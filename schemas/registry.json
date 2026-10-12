@@ -83,6 +83,16 @@
                     "nullable": false
                 },
                 {
+                    "name": "market_cap",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
+                    "name": "mcap_pct",
+                    "type": "float64",
+                    "nullable": true
+                },
+                {
                     "name": "eligible",
                     "type": "bool",
                     "nullable": false
@@ -117,10 +127,12 @@
                 "weight_iwp:DOUBLE",
                 "median_dollar_vol_60d:DOUBLE",
                 "history_days:INTEGER",
+                "market_cap:DOUBLE",
+                "mcap_pct:DOUBLE",
                 "eligible:BOOLEAN",
                 "exclusion_reason:VARCHAR"
             ],
-            "hash": "0009bcb634bd78fa1c17e9b7914311efc4395503001167d3b497a171dce5bb74",
+            "hash": "0836b4a9d742160beebd94eb7095b1bb24ba0ca257271fe840a47b043df11aef",
             "last_migration": "2026-10-10-initial"
         },
         "prices": {

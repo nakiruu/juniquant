@@ -33,7 +33,7 @@ from the first write they are frozen like the rest.
 ## 1. `universe` (derived daily membership and eligibility)
 
 Rows: ~25M (one row per in-scope security per trading day with a price, eligible or not; estimate).
-Writer: Julia (universe builder). Update: daily, after prices and the identifier master.
+Writer: Julia (universe builder). Update: daily, after prices, fundamentals and the identifier master.
 Partitioned: `year`. Spec: `01-data-ingestion/UNIVERSE.md`.
 
 One row per `(date, figi)` for **every** in-scope security (a FIGI in `security_master`)
@@ -61,8 +61,10 @@ uses only information available at `date`: the latest holdings snapshot with
 | `weight_iwp` | `float64` | yes | Percent, from the snapshot; null if not a member |
 | `median_dollar_vol_60d` | `float64` | yes | Median of `close x volume` (as traded) over the 60 trading days ending `date`; null with fewer than 40 valid days |
 | `history_days` | `int32` | no | Count of valid price days on or before `date` |
-| `eligible` | `bool` | no | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` and no `data_quality` FAIL for the security at `date`. IWF/IWP membership is not a condition (D20) |
-| `exclusion_reason` | `utf8` | yes | Null if eligible, else the first failing of `data_quality` / `history` / `liquidity` |
+| `market_cap` | `float64` | yes | USD, `close x` split-aligned shares from the latest filing with `filing_date <= date` (`02-panel-construction/FEATURES.md` §0); null without a CIK or a filed share count |
+| `mcap_pct` | `float64` | yes | Percentile rank in [0, 1] of `market_cap` among rows of `date` with a non-null `market_cap`; null with `market_cap` (D21) |
+| `eligible` | `bool` | no | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` and `mcap_pct >= 0.30` when not null (D21; a null never excludes) and no `data_quality` FAIL for the security at `date`. IWF/IWP membership is not a condition (D20) |
+| `exclusion_reason` | `utf8` | yes | Null if eligible, else the first failing of `data_quality` / `history` / `liquidity` / `size` |
 
 Primary key: `(date, figi)`.
 
