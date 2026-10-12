@@ -9,6 +9,14 @@ training and evaluation artifact, and reduced where EDGAR allows**. This file
 is the specification. The label rules that depend on it are normative in
 `02-panel-construction/TARGETS.md` §3.
 
+**Status (DECISIONS D20, 2026-10-11).** This method counts coverage against a membership
+universe. It is kept unchanged because the universe is meant to grow, and any universe
+with membership history (IWF/IWP from the first archived snapshot, 2026-10-09, or a later
+addition) will need it. Training currently runs on the broad universe (`UNIVERSE.md`),
+which has no membership history before that date, so this report applies only from the
+first snapshot onward; the price gap of the broad universe is reported by the identity
+job (`BACKFILL.md` J4a).
+
 ## 1. The Problem, Stated Plainly
 
 - The universe is defined by historical IWF and IWP holdings (`UNIVERSE.md`),
