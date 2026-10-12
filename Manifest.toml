@@ -2,7 +2,7 @@
 
 julia_version = "1.12.7"
 manifest_format = "2.0"
-project_hash = "5c3f7f94c1cf509f576e5fd26f51649e4eb7b2f3"
+project_hash = "8a688965445f5711690fd57d76852a623c121647"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -99,6 +99,12 @@ version = "1.0.7"
 git-tree-sha1 = "d2e49e7efd29719d6f28b891b0e0e159daa9d2b4"
 uuid = "e2ba6199-217a-4e67-a87a-7c52f15ade04"
 version = "0.1.11"
+
+[[deps.Features]]
+deps = ["Arrow", "Dates", "LakeIO", "NYSECalendar", "TOML"]
+path = "features"
+uuid = "5b0d4f1e-8a3c-4c2e-9f6d-2a7b1c9e4d30"
+version = "0.1.0"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"

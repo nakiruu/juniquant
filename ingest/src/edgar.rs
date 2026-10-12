@@ -201,6 +201,32 @@ pub fn filer_filings(
     }
 }
 
+/// `(sic, sicDescription)` of a filer.
+pub type FilerSic = (Option<String>, Option<String>);
+
+/// J4: a filer's `(sic, sicDescription)` from the submissions zip, `None` when the zip has no
+/// such CIK; a blank code is `(None, None)`.
+///
+/// # Errors
+///
+/// [`BuildError`]: an entry that cannot be read or is not JSON.
+pub fn filer_sic(
+    subs: &mut zip::ZipArchive<std::fs::File>,
+    cik: &str,
+) -> Result<Option<FilerSic>, BuildError> {
+    let text = |v: &serde_json::Value, k: &str| {
+        v.get(k)
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned)
+    };
+    Ok(json(subs, &format!("CIK{cik}.json"))?.map(|v| {
+        let sic = text(&v, "sic");
+        let desc = sic.as_ref().and_then(|_| text(&v, "sicDescription"));
+        (sic, desc)
+    }))
+}
+
 /// J7: the `fundamentals` rows of every CIK in `by_cik` (10-digit CIK -> its securities), from
 /// the two landed zips. Pure in the zips, the map and `today`.
 ///

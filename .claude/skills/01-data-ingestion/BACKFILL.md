@@ -281,6 +281,15 @@ final state; a test does exactly that (§12).
   files already downloaded.
 - **Algorithm and rules.** `UNIVERSE.md` §4. Output `security_master`. The
   share of snapshot tickers left `unresolved` is a gate (G5).
+- **J4 SIC (built 2026-10-12).** `quant-ingest edgar sic` sets `sic`, `sic_description` and
+  `sic_asof` (the zip's landing date) per CIK from the latest landed submissions zip; a changed
+  code is a `data_quality` WARN. J4a keeps these columns when it rebuilds the master. Run it
+  after each monthly zip refresh. First run: 8,326 of 9,443 securities with a SIC.
+- **J9 (built 2026-10-12).** `julia --project=features features/bin/build-universe.jl`
+  (`QUANT_CONFIG` for the calendar and `sic_to_gics.toml`, `LAKE_IO_BIN`) rebuilds every
+  `universe` year and `price_coverage` in full (`UNIVERSE.md` §8). Not yet applied: the
+  `data_quality` exclusion (waits for G2 per-row price failures), the de-SPAC start
+  (§5a), and the coverage reasons `vendor_wrong_holder` and `symbol_reused`.
 
 ### 5.6 Trading calendar
 

@@ -10,6 +10,7 @@
 //! quant-ingest edgar fetch                              J2, BACKFILL.md §5.2
 //! quant-ingest edgar fundamentals                       J7, from the landed zips
 //! quant-ingest edgar events                             J6, filing_events + delistings from the zip
+//! quant-ingest edgar sic                               J4, security_master SIC from the zip
 //! quant-ingest edgar daily                              J7 + J6 daily: filers in the day's form index
 //! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
 //! quant-ingest gates [g7|g8]                             QUALITY-GATES.md G7 filings, G8 events
@@ -47,12 +48,13 @@ fn main() -> ExitCode {
         ["edgar", "fetch"] => edgar_fetch(),
         ["edgar", "fundamentals"] => edgar_fundamentals(),
         ["edgar", "events"] => edgar_events(),
+        ["edgar", "sic"] => edgar_sic(),
         ["edgar", "daily"] => edgar_daily(),
         ["macro", "backfill" | "daily"] => macro_backfill(),
         ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|daily\n       quant-ingest gates [g7|g8]"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|daily\n       quant-ingest gates [g7|g8]"
             );
             return ExitCode::from(2);
         }
@@ -652,6 +654,65 @@ fn edgar_fundamentals() -> Result<(), String> {
 
 /// J6: `filing_events` from the latest submissions zip for the CIKs of `security_master`,
 /// then `delistings` rebuilt from them.
+/// J4: `security_master.sic` from the latest submissions zip, `sic_asof` its landing date. A
+/// changed code is logged (`data_quality` WARN), never back-dated (`UNIVERSE.md` §6).
+fn edgar_sic() -> Result<(), String> {
+    use ingest::identity::{sic_by_cik, with_sic};
+    use ingest::infra::quality::{Level, Row};
+    let s = setup("security-master")?;
+    let (chunk, subs_path) = latest_zip(&s, "submissions_zip")?;
+    let asof =
+        NaiveDate::parse_from_str(&chunk, "%Y-%m-%d").map_err(|e| format!("{chunk}: {e}"))?;
+    let mut subs =
+        ingest::edgar::open(&subs_path).map_err(|e| format!("{}: {e}", subs_path.display()))?;
+    let master = s
+        .lake
+        .read_dataset("security_master", None, &[], None)
+        .map_err(|e| e.to_string())?;
+    let old = sic_by_cik(&master);
+    let (mut sic, mut missing) = (std::collections::BTreeMap::new(), 0usize);
+    for cik in filer_securities(&s.lake)?.keys() {
+        match ingest::edgar::filer_sic(&mut subs, cik).map_err(|e| e.to_string())? {
+            Some((code, desc)) => {
+                if let Some((was, _, _)) = old.get(cik).filter(|o| o.0 != code) {
+                    s.quality.push(Row {
+                        source: "SEC",
+                        dataset: "security_master".into(),
+                        entity: cik.clone(),
+                        chunk: chunk.clone(),
+                        level: Level::Warn,
+                        attempts: 1,
+                        notes: Some(format!("sic changed {was:?} -> {code:?}")),
+                    });
+                }
+                sic.insert(cik.clone(), (code, desc, Some(asof)));
+            }
+            None => missing += 1,
+        }
+    }
+    let out = with_sic(&master, &sic).map_err(|e| e.to_string())?;
+    let with = sic.values().filter(|v| v.0.is_some()).count();
+    let notes = format!(
+        "{with} of {} CIKs with a SIC; {missing} not in the zip",
+        sic.len() + missing
+    );
+    s.quality.push(Row {
+        source: "SEC",
+        dataset: "security_master".into(),
+        entity: "submissions_zip".into(),
+        chunk,
+        level: Level::Ok,
+        attempts: 1,
+        notes: Some(notes.clone()),
+    });
+    s.lake
+        .write_dataset("security_master", &out, lake::Mode::Replace)
+        .map_err(|e| e.to_string())?;
+    s.quality.write(&s.lake).map_err(|e| e.to_string())?;
+    println!("security_master: {notes}");
+    Ok(())
+}
+
 fn edgar_events() -> Result<(), String> {
     use ingest::edgar::{self, events};
     use ingest::infra::quality::{Level, Row};

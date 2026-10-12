@@ -1,0 +1,17 @@
+name = "Features"
+uuid = "5b0d4f1e-8a3c-4c2e-9f6d-2a7b1c9e4d30"
+version = "0.1.0"
+authors = ["juniquant"]
+
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+LakeIO = "7cbf4f88-d04f-4afa-8b38-9ab6dc1c04df"
+NYSECalendar = "76785e91-df8d-46fd-900f-0059955db495"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[compat]
+Arrow = "2.8.1"
+Dates = "1"
+TOML = "1"
+julia = "1.12"

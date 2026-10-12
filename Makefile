@@ -47,8 +47,8 @@ julia-parse:
 fixtures:
 	$(JULIA) $(SKILLS)/09-lock-state-machine/scripts/run_fixtures.jl
 
-# Pkg.test for every shared Julia package under julia/.
-JULIA_PACKAGES := $(wildcard julia/*/Project.toml)
+# Pkg.test for every shared Julia package under julia/, and features/.
+JULIA_PACKAGES := $(wildcard julia/*/Project.toml) features/Project.toml
 julia-test:
 	@for p in $(dir $(JULIA_PACKAGES)); do [ -f $${p}test/runtests.jl ] || { echo "SKIP $$p (no test/runtests.jl)"; continue; }; echo "Pkg.test $$p"; julia --startup-file=no --project=$$p -e "using Pkg; Pkg.test()" || exit 1; done
 

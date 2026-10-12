@@ -260,8 +260,8 @@ about an operating business, so:
   Derivatives`, or a label outside the 11 GICS sectors), `sector` is mapped
   from `security_master.sic` through `config/sic_to_gics.toml` (the narrowest
   range containing the code wins) and `sector_source = sic_fallback`. SIC
-  comes from EDGAR submissions (`sic`, `sicDescription`; verify the field
-  names with P5) and is the **current** value only: using it for past dates
+  comes from EDGAR submissions (`sic`, `sicDescription`, confirmed in the 2026-10-11 zip; written by
+  `quant-ingest edgar sic`) and is the **current** value only: using it for past dates
   is a mild look-ahead, accepted because it fills gaps only, is flagged per
   row, and a company's industry rarely changes. SIC is per issuer, so every
   share class of a CIK gets the same code. Codes with no range (for example

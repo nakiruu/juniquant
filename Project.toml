@@ -3,7 +3,7 @@
 # backtest); they share the committed Manifest.toml at the repository root.
 # julia/ holds shared packages (NYSECalendar, LakeIO); schemas/ holds registry tooling.
 [workspace]
-projects = ["tools", "schemas", "schemas/test", "julia/NYSECalendar", "julia/NYSECalendar/test", "julia/LakeIO", "julia/LakeIO/test"]
+projects = ["tools", "schemas", "schemas/test", "julia/NYSECalendar", "julia/NYSECalendar/test", "julia/LakeIO", "julia/LakeIO/test", "features", "features/test"]
 
 [compat]
 julia = "1.12"

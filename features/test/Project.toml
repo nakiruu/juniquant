@@ -1,0 +1,7 @@
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Features = "5b0d4f1e-8a3c-4c2e-9f6d-2a7b1c9e4d30"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+julia = "1.12"

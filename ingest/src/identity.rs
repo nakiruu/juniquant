@@ -669,6 +669,82 @@ pub fn master_batch(
     RecordBatch::try_new(schema, cols)
 }
 
+/// An issuer's `(sic, sic_description, sic_asof)` (J4).
+pub type Sic = (Option<String>, Option<String>, Option<NaiveDate>);
+
+/// The SIC columns of a `security_master` batch, by CIK (rows without a CIK or SIC skipped).
+#[must_use]
+pub fn sic_by_cik(master: &RecordBatch) -> BTreeMap<String, Sic> {
+    use arrow::array::{Array, AsArray};
+    let col = |n: &str| {
+        master
+            .column_by_name(n)
+            .map(|c| c.as_string::<i32>().clone())
+    };
+    let (Some(cik), Some(sic), Some(desc)) = (col("cik"), col("sic"), col("sic_description"))
+    else {
+        return BTreeMap::new();
+    };
+    let asof = master
+        .column_by_name("sic_asof")
+        .map(|c| c.as_primitive::<arrow::datatypes::Date32Type>().clone());
+    let get = |a: &StringArray, i| a.is_valid(i).then(|| a.value(i).to_owned());
+    (0..master.num_rows())
+        .filter(|&i| cik.is_valid(i) && sic.is_valid(i))
+        .map(|i| {
+            let d = asof
+                .as_ref()
+                .and_then(|a| a.is_valid(i).then(|| a.value_as_date(i)).flatten());
+            (cik.value(i).to_owned(), (get(&sic, i), get(&desc, i), d))
+        })
+        .collect()
+}
+
+/// `master` with its SIC columns set from `sic` by CIK (null for a CIK not in the map).
+///
+/// # Errors
+///
+/// Arrow errors (a batch without the `security_master` columns).
+pub fn with_sic(
+    master: &RecordBatch,
+    sic: &BTreeMap<String, Sic>,
+) -> Result<RecordBatch, arrow::error::ArrowError> {
+    use arrow::array::{Array, AsArray};
+    let schema = master.schema();
+    let cik = master
+        .column(schema.index_of("cik")?)
+        .as_string::<i32>()
+        .clone();
+    let row = |i: usize| cik.is_valid(i).then(|| sic.get(cik.value(i))).flatten();
+    let n = master.num_rows();
+    let epoch = NaiveDate::default();
+    let text = |f: fn(&Sic) -> Option<String>| -> ArrayRef {
+        Arc::new(StringArray::from(
+            (0..n).map(|i| row(i).and_then(f)).collect::<Vec<_>>(),
+        ))
+    };
+    let cols = schema
+        .fields()
+        .iter()
+        .zip(master.columns())
+        .map(|(f, c)| match f.name().as_str() {
+            "sic" => text(|s| s.0.clone()),
+            "sic_description" => text(|s| s.1.clone()),
+            "sic_asof" => Arc::new(Date32Array::from(
+                (0..n)
+                    .map(|i| {
+                        row(i)
+                            .and_then(|s| s.2)
+                            .and_then(|d| i32::try_from((d - epoch).num_days()).ok())
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+            _ => c.clone(),
+        })
+        .collect();
+    RecordBatch::try_new(schema, cols)
+}
+
 /// `(figi, id_type, value)`.
 type SpellKey<'a> = (String, &'a str, String);
 /// `(valid_from, valid_to, source)`.
@@ -1085,6 +1161,15 @@ mod tests {
             [Some("0000000001".into())],
             "the current ticker's CIK wins"
         );
+        let asof = NaiveDate::from_ymd_opt(2026, 10, 11);
+        let sic = BTreeMap::from([(
+            "0000000001".to_owned(),
+            (Some("2800".to_owned()), Some("Chemicals".to_owned()), asof),
+        )]);
+        let with = with_sic(&m, &sic).unwrap();
+        assert_eq!(col(&with, "sic"), [Some("2800".into())]);
+        assert_eq!(sic_by_cik(&with), sic, "SIC survives a rebuild by CIK");
+        assert_eq!(col(&with_sic(&m, &BTreeMap::new()).unwrap(), "sic"), [None]);
         let m = master_batch(&ok, &BTreeMap::new(), &names, &|_, _| false, now).unwrap();
         assert_eq!(
             col(&m, "cik"),
@@ -1587,6 +1672,9 @@ pub mod run {
             priced.len()
         );
         let master = super::master_batch(&ok, &cik, &names, &confirm, Utc::now())?;
+        // J4 owns the SIC columns (`quant-ingest edgar sic`): keep them across a rebuild.
+        let old = lake.read_dataset("security_master", None, &[], None)?;
+        let master = super::with_sic(&master, &super::sic_by_cik(&old))?;
         s.securities = master.num_rows();
         lake.write_dataset("security_master", &master, lake::Mode::Replace)?;
         lake.write_dataset(
