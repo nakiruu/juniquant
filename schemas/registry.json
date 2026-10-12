@@ -3578,13 +3578,18 @@
                     "name": "built_at",
                     "type": "timestamp[ns, UTC]",
                     "nullable": false
+                },
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
                 }
             ],
             "primary_key": [
-                "ticker"
+                "figi"
             ],
             "sort_key": [
-                "ticker"
+                "figi"
             ],
             "merge": "overwrite",
             "columns": [
@@ -3599,9 +3604,10 @@
                 "bankruptcy_filing_date:DATE",
                 "acquisition_filing_date:DATE",
                 "evidence_accessions:VARCHAR",
-                "built_at:TIMESTAMP WITH TIME ZONE"
+                "built_at:TIMESTAMP WITH TIME ZONE",
+                "figi:VARCHAR"
             ],
-            "hash": "7e3fd4cdb48a291b1b859579e74d2ecbbfcfcd2df85e62d65334d78c2dad24ef",
+            "hash": "5796754fbbf80a19ec2f8bbe54bf7f48c3790ca026557f7c8a893b7e3a9558e2",
             "last_migration": "2026-10-10-initial"
         },
         "filing_events": {
@@ -3652,17 +3658,22 @@
                     "name": "event_type",
                     "type": "utf8",
                     "nullable": false
+                },
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
                 }
             ],
             "primary_key": [
                 "accession",
                 "item",
-                "ticker"
+                "figi"
             ],
             "sort_key": [
                 "accession",
                 "item",
-                "ticker"
+                "figi"
             ],
             "merge": "overwrite",
             "columns": [
@@ -3673,9 +3684,10 @@
                 "form_type:VARCHAR",
                 "filing_date:DATE",
                 "acceptance_datetime:TIMESTAMP WITH TIME ZONE",
-                "event_type:VARCHAR"
+                "event_type:VARCHAR",
+                "figi:VARCHAR"
             ],
-            "hash": "5449e3f665bd1f4fd9e9811422982f86a69f648b9ad1647517da3bf4f1955135",
+            "hash": "90eccbd73908eb0508a5e92f869dae031dcbe1523077e09074d54e1d5bce3734",
             "last_migration": "2026-10-10-initial"
         },
         "price_coverage": {

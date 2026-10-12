@@ -88,6 +88,12 @@ CIK. `est_last_trading_date` = `E25` + 10 calendar days (the delisting takes
 effect about 10 days after the Form 25 is filed; **verify** with probe P8);
 without a Form 25, the date of the earliest evidence.
 
+Evidence for P8 (J6 first build, 2026-10-12, securities whose prices stop within 30 days of
+the estimate): the last EODHD bar minus the Form 25 filing date has median 0 days for D2
+(1,885 securities, p10-p90 -3 to +3) and D4 (679, -11 to +12), and -7 days for D1 (134,
+-55 to +33: trading is often suspended at the bankruptcy, months before the Form 25). The
++10 rule is kept until the owner decides.
+
 | Rule | Condition (all dates are `filing_date`) | `delist_class` | Confidence |
 |---|---|---|---|
 | D1 | 8-K Item 1.03 (bankruptcy or receivership) filed in [`E25` - 365 d, `E25` + 30 d], or, with no Form 25, any time in the 365 days before the last known price | `bankruptcy` | high with a Form 25, medium without |

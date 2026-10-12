@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+pub mod events;
 pub mod facts;
 
 use chrono::{Datelike, NaiveDate};
@@ -183,6 +184,21 @@ pub fn all_filings(
         }
     }
     Ok(filings)
+}
+
+/// Every filing of one filer from the submissions zip, `None` when the zip has no such CIK.
+///
+/// # Errors
+///
+/// [`BuildError`]: an entry that cannot be read or is not JSON.
+pub fn filer_filings(
+    subs: &mut zip::ZipArchive<std::fs::File>,
+    cik: &str,
+) -> Result<Option<Vec<facts::Filing>>, BuildError> {
+    match json(subs, &format!("CIK{cik}.json"))? {
+        Some(main) => all_filings(subs, &main).map(Some),
+        None => Ok(None),
+    }
 }
 
 /// J7: the `fundamentals` rows of every CIK in `by_cik` (10-digit CIK -> its securities), from
@@ -405,20 +421,23 @@ pub fn daily_days(zip_date: NaiveDate, today: NaiveDate) -> Vec<NaiveDate> {
         .collect()
 }
 
-/// 10-digit CIKs with a 10-K, 10-Q or amendment in a form index body (daily or quarterly).
+/// The periodic forms `fundamentals` is built from.
+pub const PERIODIC: [&str; 6] = ["10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT", "10-KT/A"];
+
+/// 10-digit CIKs with one of `forms` in a form index body (daily or quarterly).
 /// Parsed from the right of each line (file name, date, CIK): the header's column positions
 /// do not match the data, and form types and company names can hold spaces.
 #[must_use]
-pub fn periodic_ciks(body: &[u8]) -> std::collections::BTreeSet<String> {
+pub fn form_ciks(body: &[u8], forms: &[&str]) -> std::collections::BTreeSet<String> {
     String::from_utf8_lossy(body)
         .lines()
         .filter_map(|l| {
             let t: Vec<&str> = l.split_whitespace().collect();
-            let form = *t.first()?;
-            if !matches!(
-                form,
-                "10-K" | "10-Q" | "10-K/A" | "10-Q/A" | "10-KT" | "10-KT/A"
-            ) {
+            // A form type can hold a space (`NT 10-K`): match it against the line start.
+            if !forms
+                .iter()
+                .any(|f| l.strip_prefix(f).is_some_and(|r| r.starts_with("  ")))
+            {
                 return None;
             }
             let cik = t.len().checked_sub(3).and_then(|i| t.get(i))?;
@@ -460,9 +479,11 @@ mod tests {
     }
 
     #[test]
-    fn periodic_ciks_read_from_the_right() {
-        let body = b"Form Type   Company Name   CIK   Date Filed  File Name\n-----\n10-Q             10x Genomics, Inc.                                            1770787     2026-08-07  edgar/data/1770787/0001628280-26-054400.txt\n10-K/A           A  B  C                                                       320193      20261009    edgar/data/320193/0000320193-26-000001.txt\nSC 13G           10-K Holdings                                                 111         2026-08-07  edgar/data/111/x.txt\n8-K              Other                                                         222         2026-08-07  edgar/data/222/y.txt\n";
-        let got: Vec<String> = periodic_ciks(body).into_iter().collect();
+    fn form_ciks_read_from_the_right() {
+        let body = b"Form Type   Company Name   CIK   Date Filed  File Name\n-----\n10-Q             10x Genomics, Inc.                                            1770787     2026-08-07  edgar/data/1770787/0001628280-26-054400.txt\n10-K/A           A  B  C                                                       320193      20261009    edgar/data/320193/0000320193-26-000001.txt\nSC 13G           10-K Holdings                                                 111         2026-08-07  edgar/data/111/x.txt\n8-K              Other                                                         222         2026-08-07  edgar/data/222/y.txt\nNT 10-K          Late Co                                                       333         2026-08-07  edgar/data/333/z.txt\n";
+        let got: Vec<String> = form_ciks(body, &PERIODIC).into_iter().collect();
         assert_eq!(got, vec!["0000320193".to_owned(), "0001770787".to_owned()]);
+        let got: Vec<String> = form_ciks(body, &events::FORMS).into_iter().collect();
+        assert_eq!(got, vec!["0000000222".to_owned(), "0000000333".to_owned()]);
     }
 }

@@ -9,7 +9,8 @@
 //! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
 //! quant-ingest edgar fetch                              J2, BACKFILL.md §5.2
 //! quant-ingest edgar fundamentals                       J7, from the landed zips
-//! quant-ingest edgar daily                              J7 daily: filers in the day's form index
+//! quant-ingest edgar events                             J6, filing_events + delistings from the zip
+//! quant-ingest edgar daily                              J7 + J6 daily: filers in the day's form index
 //! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
 //! ```
 //!
@@ -44,11 +45,12 @@ fn main() -> ExitCode {
         ["ishares", "snapshot"] => ishares_snapshot(),
         ["edgar", "fetch"] => edgar_fetch(),
         ["edgar", "fundamentals"] => edgar_fundamentals(),
+        ["edgar", "events"] => edgar_events(),
         ["edgar", "daily"] => edgar_daily(),
         ["macro", "backfill" | "daily"] => macro_backfill(),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|daily"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|daily"
             );
             return ExitCode::from(2);
         }
@@ -646,6 +648,212 @@ fn edgar_fundamentals() -> Result<(), String> {
     Ok(())
 }
 
+/// J6: `filing_events` from the latest submissions zip for the CIKs of `security_master`,
+/// then `delistings` rebuilt from them.
+fn edgar_events() -> Result<(), String> {
+    use ingest::edgar::{self, events};
+    use ingest::infra::quality::{Level, Row};
+    let s = setup("filing-events")?;
+    let by_cik = filer_securities(&s.lake)?;
+    let (chunk, subs_path) = latest_zip(&s, "submissions_zip")?;
+    let mut subs = edgar::open(&subs_path).map_err(|e| format!("{}: {e}", subs_path.display()))?;
+    let (mut per_cik, mut missing, mut future) = (Vec::new(), 0usize, 0usize);
+    for cik in by_cik.keys() {
+        let Some(filings) = edgar::filer_filings(&mut subs, cik).map_err(|e| e.to_string())? else {
+            missing += 1;
+            continue;
+        };
+        let (ev, f) = events::events(&filings, s.today);
+        future += f;
+        per_cik.push((cik.as_str(), ev));
+    }
+    let rows: Vec<_> = per_cik
+        .iter()
+        .flat_map(|(cik, ev)| {
+            let secs = by_cik.get(*cik).map(Vec::as_slice).unwrap_or_default();
+            secs.iter()
+                .flat_map(move |sec| ev.iter().map(move |e| (*cik, sec, e)))
+        })
+        .collect();
+    let batch = events::batch(&rows).map_err(|e| e.to_string())?;
+    ingest::infra::stage::write_stage(
+        &s.paths.stage,
+        &s.manifest,
+        "filing_events",
+        ("sec_bulk", "submissions_zip", &chunk),
+        events::PARSE_VERSION,
+        &batch,
+    )
+    .map_err(|e| e.to_string())?;
+    let compacted = ingest::infra::stage::compact_sources(
+        &s.lake,
+        &s.manifest,
+        &s.paths.stage,
+        EDGAR_SOURCES,
+        "filing_events",
+    )
+    .map_err(|e| e.to_string())?;
+    s.manifest
+        .compacted("sec_bulk")
+        .map_err(|e| e.to_string())?;
+    // Gate G8: an 8-K since the start with no items.
+    let (eight_ks, no_items) = per_cik
+        .iter()
+        .flat_map(|(_, ev)| ev)
+        .filter(|e| e.form.starts_with("8-K") && e.filing_date >= s.ctx.from)
+        .fold(
+            (Default::default(), 0usize),
+            |(mut acc, n): (std::collections::BTreeSet<&str>, usize), e| {
+                let new = acc.insert(e.accession.as_str());
+                (acc, n + usize::from(new && e.item == "-"))
+            },
+        );
+    let share = no_items as f64 / eight_ks.len().max(1) as f64;
+    let notes = format!(
+        "{} rows; {} of {} CIKs in the zip; {no_items} of {} 8-Ks since {} without items ({:.2}%); {future} future filings dropped",
+        batch.num_rows(),
+        per_cik.len(),
+        by_cik.len(),
+        eight_ks.len(),
+        s.ctx.from,
+        share * 100.0
+    );
+    s.quality.push(Row {
+        source: "SEC",
+        dataset: "filing_events".into(),
+        entity: "submissions_zip".into(),
+        chunk: chunk.clone(),
+        level: if share > 0.01 { Level::Warn } else { Level::Ok },
+        attempts: 1,
+        notes: Some(notes.clone()),
+    });
+    let delisted = write_delistings(&s);
+    s.quality.write(&s.lake).map_err(|e| e.to_string())?;
+    println!("filing_events: {notes}; {missing} CIKs not in the zip; compaction {compacted:?}");
+    println!("delistings: {}", delisted?);
+    Ok(())
+}
+
+/// `delistings` rebuilt in full from the lake's `filing_events` (the delisting forms and
+/// items only) and each security's last price date (`SURVIVORSHIP.md` §3).
+fn write_delistings(s: &Setup) -> Result<String, String> {
+    use arrow::array::AsArray;
+    use arrow::datatypes::Date32Type;
+    use ingest::edgar::{Security, events};
+    use ingest::infra::quality::{Level, Row};
+    let from_days = |v: i32| NaiveDate::default() + chrono::Duration::days(i64::from(v));
+    let b = s
+        .lake
+        .read_dataset(
+            "filing_events",
+            Some(&[
+                "figi",
+                "ticker",
+                "cik",
+                "accession",
+                "item",
+                "form_type",
+                "filing_date",
+            ]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let col = |i: usize| b.column(i).as_string::<i32>();
+    let (figi, ticker, cik, acc, item, form) = (col(0), col(1), col(2), col(3), col(4), col(5));
+    let fd = b.column(6).as_primitive::<Date32Type>();
+    let wanted = [
+        "delisting_filing",
+        "deregistration",
+        "bankruptcy",
+        "acquisition_completed",
+        "change_in_control",
+        "delisting_notice",
+    ];
+    let mut by_figi: std::collections::BTreeMap<&str, (&str, Security, Vec<events::Event>)> =
+        Default::default();
+    for i in 0..b.num_rows() {
+        let event_type = events::event_type(form.value(i), item.value(i));
+        if !wanted.contains(&event_type) {
+            continue;
+        }
+        by_figi
+            .entry(figi.value(i))
+            .or_insert_with(|| {
+                (
+                    cik.value(i),
+                    Security {
+                        figi: figi.value(i).to_owned(),
+                        ticker: ticker.value(i).to_owned(),
+                    },
+                    Vec::new(),
+                )
+            })
+            .2
+            .push(events::Event {
+                accession: acc.value(i).to_owned(),
+                item: item.value(i).to_owned(),
+                form: form.value(i).to_owned(),
+                filing_date: from_days(fd.value(i)),
+                acceptance: None,
+                event_type,
+            });
+    }
+    // Last price date per FIGI, one year of `prices` at a time.
+    let mut last: std::collections::HashMap<String, NaiveDate> = Default::default();
+    for y in s.ctx.from.year()..=s.today.year() {
+        let (Some(a), Some(z)) = (
+            NaiveDate::from_ymd_opt(y, 1, 1),
+            NaiveDate::from_ymd_opt(y, 12, 31),
+        ) else {
+            continue;
+        };
+        let p = s
+            .lake
+            .read_dataset("prices", Some(&["figi", "date"]), &[], Some((a, z)))
+            .map_err(|e| e.to_string())?;
+        let (f, d) = (
+            p.column(0).as_string::<i32>(),
+            p.column(1).as_primitive::<Date32Type>(),
+        );
+        for i in 0..p.num_rows() {
+            let d = from_days(d.value(i));
+            last.entry(f.value(i).to_owned())
+                .and_modify(|x| *x = (*x).max(d))
+                .or_insert(d);
+        }
+    }
+    let rows: Vec<_> = by_figi
+        .iter()
+        .filter_map(|(f, (cik, sec, ev))| {
+            events::classify(ev, last.get(*f).copied()).map(|d| (*cik, sec, d))
+        })
+        .collect();
+    let batch = events::delisting_batch(&rows, Utc::now()).map_err(|e| e.to_string())?;
+    s.lake
+        .write_dataset("delistings", &batch, lake::Mode::Replace)
+        .map_err(|e| e.to_string())?;
+    let mut by_rule: std::collections::BTreeMap<&str, usize> = Default::default();
+    for (_, _, d) in &rows {
+        *by_rule.entry(d.rule).or_default() += 1;
+    }
+    let notes = format!(
+        "{} rows from {} securities with delisting evidence; by rule {by_rule:?}",
+        rows.len(),
+        by_figi.len()
+    );
+    s.quality.push(Row {
+        source: "SEC",
+        dataset: "delistings".into(),
+        entity: "all".into(),
+        chunk: s.today.to_string(),
+        level: Level::Ok,
+        attempts: 1,
+        notes: Some(notes.clone()),
+    });
+    Ok(notes)
+}
+
 /// J8: every vintage of the 9 macro series (BACKFILL.md §5.3): vintage dates, windows of at
 /// most 2,000 vintages, pages of 100,000 rows; stitched and staged per series, then compacted.
 fn macro_backfill() -> Result<(), String> {
@@ -915,8 +1123,10 @@ fn latest_zip(s: &Setup, entity: &str) -> Result<(String, std::path::PathBuf), S
 /// filers listed with a 10-K/10-Q (or amendment) that day, fetch its submissions and
 /// companyfacts JSON once (chunk = that day), rebuild its rows (older filings from the zip
 /// pages) and stage those filed from three days before; then compact zip + daily rows.
+/// J6 daily: the same for filers listed with an event form (8-K, 25, 15, NT), from the
+/// submissions JSON alone, then `delistings` rebuilt.
 fn edgar_daily() -> Result<(), String> {
-    use ingest::edgar::{self, facts};
+    use ingest::edgar::{self, events, facts};
     use ingest::infra::fetch::Request;
     use ingest::infra::manifest::Status;
     use ingest::infra::quality::{Level, Row};
@@ -963,7 +1173,7 @@ fn edgar_daily() -> Result<(), String> {
             }
         };
     let days = edgar::daily_days(zip_date, s.today);
-    let mut todo: Vec<(NaiveDate, String)> = Vec::new();
+    let (mut todo, mut ev_todo) = (Vec::new(), Vec::new());
     for d in &days {
         if let Some(body) = get(
             &bulk,
@@ -971,12 +1181,15 @@ fn edgar_daily() -> Result<(), String> {
             &d.to_string(),
             &edgar::daily_index_url(*d),
         )? {
-            todo.extend(
-                edgar::periodic_ciks(&body)
+            let ours = |forms: &[&str]| -> Vec<(NaiveDate, String)> {
+                edgar::form_ciks(&body, forms)
                     .into_iter()
                     .filter(|c| by_cik.contains_key(c))
-                    .map(|c| (*d, c)),
-            );
+                    .map(|c| (*d, c))
+                    .collect()
+            };
+            todo.extend(ours(&edgar::PERIODIC));
+            ev_todo.extend(ours(&events::FORMS));
         }
     }
     let mut subs = edgar::open(&subs_path).map_err(|e| format!("{}: {e}", subs_path.display()))?;
@@ -1046,21 +1259,81 @@ fn edgar_daily() -> Result<(), String> {
         staged += 1;
         rows_staged += batch.num_rows();
     }
-    let compacted = ingest::infra::stage::compact_sources(
-        &s.lake,
-        &s.manifest,
-        &s.paths.stage,
-        EDGAR_SOURCES,
-        "fundamentals",
-    )
-    .map_err(|e| e.to_string())?;
+    // J6: the event rows of the day from the submissions JSON (the same chunk as above when the
+    // filer also filed a 10-K/10-Q, so no second request), staged on that chunk's key.
+    let (mut ev_staged, mut ev_rows) = (0usize, 0usize);
+    for (d, cik) in &ev_todo {
+        let entity = format!("CIK{cik}");
+        let chunk = format!("submissions-{d}");
+        if s.manifest
+            .status(("sec_api", &entity, &chunk))
+            .map_err(|e| e.to_string())?
+            .is_some_and(|st| matches!(st, Status::Parsed | Status::Compacted))
+        {
+            continue;
+        }
+        let Some(main) = get(
+            &api,
+            &entity,
+            &chunk,
+            &format!("https://data.sec.gov/submissions/{entity}.json"),
+        )?
+        else {
+            failed.push(cik.clone());
+            continue;
+        };
+        let main: serde_json::Value =
+            serde_json::from_slice(&main).map_err(|e| format!("{entity}: {e}"))?;
+        let filings = main
+            .pointer("/filings/recent")
+            .map(facts::filings)
+            .unwrap_or_default();
+        let from = *d - chrono::Duration::days(3);
+        let (ev, _) = events::events(&filings, s.today);
+        let secs = by_cik.get(cik).map(Vec::as_slice).unwrap_or_default();
+        let rows: Vec<_> = secs
+            .iter()
+            .flat_map(|sec| {
+                ev.iter()
+                    .filter(|e| e.filing_date >= from)
+                    .map(move |e| (cik.as_str(), sec, e))
+            })
+            .collect();
+        let batch = events::batch(&rows).map_err(|e| e.to_string())?;
+        ingest::infra::stage::write_stage(
+            &s.paths.stage,
+            &s.manifest,
+            "filing_events",
+            ("sec_api", &entity, &chunk),
+            events::PARSE_VERSION,
+            &batch,
+        )
+        .map_err(|e| e.to_string())?;
+        ev_staged += 1;
+        ev_rows += batch.num_rows();
+    }
+    let compact = |dataset| {
+        ingest::infra::stage::compact_sources(
+            &s.lake,
+            &s.manifest,
+            &s.paths.stage,
+            EDGAR_SOURCES,
+            dataset,
+        )
+        .map_err(|e| e.to_string())
+    };
+    let compacted = compact("fundamentals")?;
+    let ev_compacted = compact("filing_events")?;
     s.manifest.compacted("sec_api").map_err(|e| e.to_string())?;
+    let delisted = write_delistings(&s)?;
     let notes = format!(
-        "{} days since the {zip_chunk} zips; {} filer-days with a periodic filing; {staged} staged ({rows_staged} rows); {} failed (retried next run)",
+        "{} days since the {zip_chunk} zips; {} filer-days with a periodic filing; {staged} staged ({rows_staged} rows); {} with an event form, {ev_staged} staged ({ev_rows} event rows); {} failed (retried next run)",
         days.len(),
         todo.len(),
+        ev_todo.len(),
         failed.len()
     );
+    println!("filing_events: compaction {ev_compacted:?}; delistings: {delisted}");
     s.quality.push(Row {
         source: "SEC",
         dataset: "fundamentals".into(),

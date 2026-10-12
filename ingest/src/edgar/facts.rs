@@ -24,6 +24,8 @@ pub struct Filing {
     pub form: String,
     /// `acceptanceDateTime`.
     pub acceptance: Option<DateTime<Utc>>,
+    /// `items`: the 8-K item numbers (`2.02`), empty for other forms.
+    pub items: Vec<String>,
 }
 
 fn date(v: Option<&Value>) -> Option<NaiveDate> {
@@ -40,7 +42,7 @@ pub fn filings(cols: &Value) -> Vec<Filing> {
     else {
         return Vec::new();
     };
-    let (rd, at) = (col("reportDate"), col("acceptanceDateTime"));
+    let (rd, at, items) = (col("reportDate"), col("acceptanceDateTime"), col("items"));
     acc.iter()
         .enumerate()
         .filter_map(|(i, a)| {
@@ -54,6 +56,17 @@ pub fn filings(cols: &Value) -> Vec<Filing> {
                     .and_then(Value::as_str)
                     .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                     .map(|t| t.with_timezone(&Utc)),
+                items: items
+                    .and_then(|r| r.get(i))
+                    .and_then(Value::as_str)
+                    .map(|s| {
+                        s.split(',')
+                            .map(str::trim)
+                            .filter(|x| !x.is_empty())
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             })
         })
         .collect()

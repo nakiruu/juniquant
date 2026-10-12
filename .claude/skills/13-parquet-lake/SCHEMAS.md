@@ -991,8 +991,9 @@ and is combined in `price_coverage`.
 | `acquisition_filing_date` | `date32` | yes | Filing date of the 8-K with Item 2.01 or 5.01 |
 | `evidence_accessions` | `utf8` | no | JSON array of the accessions used |
 | `built_at` | `timestamp[ns, UTC]` | no | |
+| `figi` | `utf8` | no | Appended 2026-10-12 before first write (D17). Composite FIGI of the security (`security_master`); one row per security of the delisted filer |
 
-Primary key: `ticker`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+Primary key: `figi` (re-keyed from `ticker` 2026-10-12, before first write: a filer that emerged from bankruptcy keeps its CIK and ticker under a new FIGI, e.g. DBD, CBL, WW, VAL). New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 
 ---
 
@@ -1015,8 +1016,9 @@ item `-`. Usable from `filing_date` (the same point-in-time rule as
 | `filing_date` | `date32` | no | **Point-in-time stamp** |
 | `acceptance_datetime` | `timestamp[ns, UTC]` | yes | |
 | `event_type` | `utf8` | no | `earnings_release` (2.02) / `delisting_notice` (3.01) / `bankruptcy` (1.03) / `acquisition_completed` (2.01) / `change_in_control` (5.01) / `auditor_change` (4.01) / `non_reliance_restatement` (4.02) / `obligation_acceleration` (2.04) / `delisting_filing` (Form 25) / `deregistration` (Form 15) / `late_filing_notice` (NT) / `other` |
+| `figi` | `utf8` | no | Appended 2026-10-12 before first write (D17). Composite FIGI of the security (`security_master`) |
 
-Primary key: `(accession, item, ticker)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+Primary key: `(accession, item, figi)` (re-keyed from `ticker` 2026-10-12, before first write, D17: one ticker and CIK can name two securities). New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 
 ---
 

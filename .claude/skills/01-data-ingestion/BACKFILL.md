@@ -211,8 +211,14 @@ final state; a test does exactly that (§12).
   `submissions-YYYY-MM-DD` / `facts-YYYY-MM-DD`, the index day), rows rebuilt with the older
   filings from the zip pages, staged under `sec_api`, compacted with the zip rows (zip first
   on a duplicate key). This replaces polling every member CIK (about 4,700 with D20, 16
-  minutes at 5/s); 8-K events for J6 will need the same per-CIK `submissions` fetch for
-  filers with an 8-K in the index. First run: 18 filers on 2 days, rows identical to the zip.
+  minutes at 5/s). J6 (`quant-ingest edgar events` from the zip, built 2026-10-12, then the same
+  daily run): each of our CIKs listed with an event form (8-K, 8-K/A, 25, 25-NSE, 15-*, NT
+  10-K/Q) gets its `submissions` JSON (the same `submissions-YYYY-MM-DD` chunk, no second
+  request for a periodic filer), its event rows since the day minus 3 are staged on that
+  chunk's key, and `delistings` is rebuilt in full from `filing_events` and the last price
+  date of each FIGI. First run: 18 periodic filers and 241 event filers on 2 days, rows
+  identical to the zip apart from 3 rows of an 8-K accepted after the zip was built. J6 runs
+  natively on the Debian host (owner decision 2026-10-12), not as an Unraid User Script.
   The zips are re-downloaded monthly and compared with the accumulated API
   deltas (any difference is logged).
 - **Request estimate for the backfill.** 2 bulk downloads + about 70 index
