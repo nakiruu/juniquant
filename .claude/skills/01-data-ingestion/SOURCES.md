@@ -239,6 +239,12 @@ offenders of the latest G2 run and lands its evidence under `reports/probes/s1`.
 a free key, coverage, terms and the meaning of `SEP` columns (`closeunadj`) are **verify**
 until that probe has run. Not ingested into the lake.
 
+First run (2026-10-12 21:27 UTC): the first request already answered `429` `QELx06` ("You have
+exceeded the API speed limit and your account has temporarily been disabled"), so the account
+was locked before the probe; the probe then made 194 more calls into the lock. It now stops at
+the first 401, 403 or 429. Rerun only after Nasdaq lifts the lock
+(`clientsuccess@nasdaq.com`).
+
 ---
 
 ## SEC EDGAR

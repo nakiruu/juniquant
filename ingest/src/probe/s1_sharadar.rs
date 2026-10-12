@@ -37,12 +37,13 @@ pub fn run(p: &mut Probe) -> Result<(), ProbeError> {
             "SEP",
             &format!("ticker={ticker}&date.gte={a}&date.lte={b}"),
         )?;
-        if matches!(sep.status, 401 | 403) {
-            // A key without the SEP table: every other call would fail the same way.
-            p.note("access", json!({"status": sep.status, "error": sep.error}));
+        if refused(p, &sep) {
             break;
         }
         let tickers = table(p, &key, "TICKERS", &format!("ticker={ticker}&table=SEP"))?;
+        if refused(p, &tickers) {
+            break;
+        }
         let (a, b) = window(30);
         let actions = table(
             p,
@@ -50,6 +51,9 @@ pub fn run(p: &mut Probe) -> Result<(), ProbeError> {
             "ACTIONS",
             &format!("ticker={ticker}&date.gte={a}&date.lte={b}"),
         )?;
+        if refused(p, &actions) {
+            break;
+        }
         let verdict = verdict(&sep.rows, *d, *r);
         *tally.entry(verdict.0.to_owned()).or_insert(json!(0)) =
             json!(tally.get(verdict.0).and_then(Value::as_u64).unwrap_or(0) + 1);
@@ -120,6 +124,17 @@ fn verdict(rows: &[Map<String, Value>], d: NaiveDate, r: f64) -> (&'static str, 
         "Sharadar shows a different jump"
     };
     (v, shown)
+}
+
+/// No access (401, 403) or rate-limited (429, `QELx06` locks the account): every further
+/// call fails the same way, and calling on into a 429 only extends the lock
+/// (`RETRY-POLICY.md`), so the probe records it and stops.
+fn refused(p: &mut Probe, t: &Table) -> bool {
+    let stop = matches!(t.status, 401 | 403 | 429);
+    if stop {
+        p.note("access", json!({"status": t.status, "error": t.error}));
+    }
+    stop
 }
 
 /// One datatable reply: HTTP status, rows as column-name maps, and the API's error message.
