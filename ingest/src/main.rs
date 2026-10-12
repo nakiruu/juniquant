@@ -9,6 +9,7 @@
 //! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
 //! quant-ingest edgar fetch                              J2, BACKFILL.md §5.2
 //! quant-ingest edgar fundamentals                       J7, from the landed zips
+//! quant-ingest macro backfill                              J8, BACKFILL.md §5.3
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -42,9 +43,10 @@ fn main() -> ExitCode {
         ["ishares", "snapshot"] => ishares_snapshot(),
         ["edgar", "fetch"] => edgar_fetch(),
         ["edgar", "fundamentals"] => edgar_fundamentals(),
+        ["macro", "backfill"] => macro_backfill(),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]"
+                "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill"
             );
             return ExitCode::from(2);
         }
@@ -684,4 +686,206 @@ fn edgar_fundamentals() -> Result<(), String> {
         built.no_rows.len()
     );
     Ok(())
+}
+
+/// J8: every vintage of the 9 macro series (BACKFILL.md §5.3): vintage dates, windows of at
+/// most 2,000 vintages, pages of 100,000 rows; stitched and staged per series, then compacted.
+fn macro_backfill() -> Result<(), String> {
+    use ingest::alfred;
+    use ingest::infra::fetch::Request;
+    use ingest::infra::quality::{Level, Row};
+    let Setup {
+        paths,
+        lake,
+        manifest,
+        quality,
+        ..
+    } = setup("macro")?;
+    let key = std::env::var("FRED_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .ok_or("FRED_API_KEY is not set")?;
+    let src = SourceSpec::FRED.id;
+    let fetcher = Fetcher::new(
+        SourceSpec::FRED,
+        "juniquant quant-ingest",
+        manifest.clone(),
+        paths.raw.clone(),
+        quality.clone(),
+    )
+    .map_err(|e| e.to_string())?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    // The landed body of a chunk (fetched now or in an earlier run); None if it failed (the
+    // fetcher logged it). Err stops the run (key refused, manifest or disk).
+    type Body = Option<(Vec<u8>, chrono::DateTime<Utc>)>;
+    let get = |entity: &str, chunk: &str, url: &str| -> Result<Body, String> {
+        let r = Request {
+            entity,
+            chunk,
+            url,
+            ext: "json",
+            cost: 1,
+            dataset: "macro",
+            empty_is_gone: false,
+        };
+        rt.block_on(fetcher.fetch(&r)).map_err(|e| e.to_string())?;
+        match manifest
+            .landed((src, entity, chunk))
+            .map_err(|e| e.to_string())?
+        {
+            Some((p, _, at)) => ingest::infra::landing::read(std::path::Path::new(&p))
+                .map(|b| Some((b, at)))
+                .map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    };
+    let log = |entity: &str, level: Level, notes: String| {
+        quality.push(Row {
+            source: SourceSpec::FRED.label,
+            dataset: "macro".into(),
+            entity: entity.to_owned(),
+            chunk: "all_vintages".into(),
+            level,
+            attempts: 1,
+            notes: Some(notes),
+        });
+    };
+    let start = NaiveDate::parse_from_str(alfred::OBSERVATION_START, "%Y-%m-%d")
+        .map_err(|e| e.to_string())?;
+    let (mut incomplete, mut fatal) = (0usize, None);
+    'series: for s in alfred::SERIES {
+        let body = match get(s.id, "vintagedates", &alfred::vintage_dates_url(s.id, &key)) {
+            Ok(Some((b, _))) => b,
+            Ok(None) => {
+                incomplete += 1;
+                continue;
+            }
+            Err(e) => {
+                fatal = Some(e);
+                break;
+            }
+        };
+        let dates = match alfred::parse_vintage_dates(&body) {
+            Ok(d) => d,
+            Err(e) => {
+                log(s.id, Level::Fail, format!("vintagedates: {e}"));
+                incomplete += 1;
+                continue;
+            }
+        };
+        let ws = alfred::windows(&dates);
+        let (mut rows, mut future) = (Vec::new(), 0);
+        for w in &ws {
+            let mut offset = 0;
+            loop {
+                let chunk = w.chunk(offset);
+                let url = alfred::observations_url(s.id, &key, w, offset);
+                let (body, at) = match get(s.id, &chunk, &url) {
+                    Ok(Some(b)) => b,
+                    Ok(None) => {
+                        incomplete += 1;
+                        continue 'series;
+                    }
+                    Err(e) => {
+                        fatal = Some(e);
+                        break 'series;
+                    }
+                };
+                match alfred::parse_observations(&body, at) {
+                    Ok(p) => {
+                        future += p.future;
+                        rows.extend(p.rows);
+                        if p.count <= offset + alfred::PAGE {
+                            break;
+                        }
+                        offset += alfred::PAGE;
+                    }
+                    Err(e) => {
+                        log(s.id, Level::Fail, format!("{chunk}: {e}"));
+                        incomplete += 1;
+                        continue 'series;
+                    }
+                }
+            }
+        }
+        let (rows, joined) = alfred::stitch(rows, &alfred::boundaries(&ws));
+        let Some(earliest) = rows.first().map(|r| r.obs_date) else {
+            log(s.id, Level::Fail, "no observations".into());
+            incomplete += 1;
+            continue;
+        };
+        let batch = alfred::batch(s, &rows).map_err(|e| e.to_string())?;
+        let lag_rule = alfred::known_from(s, &rows)
+            .iter()
+            .filter(|(_, b)| *b == alfred::Basis::LagRule)
+            .count();
+        let observations = rows
+            .iter()
+            .map(|r| r.obs_date)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        let deferred = (earliest - start).num_days() > alfred::DEFERRED_AFTER_DAYS;
+        let skey = (src, s.id, "all_vintages");
+        manifest.ensure(skey).map_err(|e| e.to_string())?;
+        ingest::infra::stage::write_stage(
+            &paths.stage,
+            &manifest,
+            "macro",
+            skey,
+            alfred::PARSE_VERSION,
+            &batch,
+        )
+        .map_err(|e| e.to_string())?;
+        let notes = format!(
+            "{} rows, {observations} observations from {earliest}; {} vintage dates in {} windows, {joined} intervals stitched; {lag_rule} lag_rule; {future} future-dated rows dropped{}",
+            rows.len(),
+            dates.len(),
+            ws.len(),
+            if deferred {
+                format!("; deferred: does not reach {}", alfred::OBSERVATION_START)
+            } else {
+                String::new()
+            }
+        );
+        println!("macro: {}: {notes}", s.id);
+        let level = if deferred || future > 0 {
+            Level::Warn
+        } else {
+            Level::Ok
+        };
+        log(s.id, level, notes);
+    }
+    // Whatever happened, keep what was staged and the quality rows.
+    let compacted = ingest::infra::stage::compact(&lake, &manifest, &paths.stage, src, "macro")
+        .map_err(|e| e.to_string())
+        .and_then(|c| {
+            manifest
+                .compacted(src)
+                .map(|_| c)
+                .map_err(|e| e.to_string())
+        });
+    println!("macro: compaction {compacted:?}");
+    let written = quality
+        .write(&lake)
+        .map_err(|e| format!("data_quality: {e}"));
+    let rows = quality.rows();
+    let count = |l| rows.iter().filter(|r| r.level == l).count();
+    println!(
+        "macro: quality OK {} WARN {} FAIL {}",
+        count(Level::Ok),
+        count(Level::Warn),
+        count(Level::Fail)
+    );
+    written?;
+    compacted?;
+    match (fatal, incomplete) {
+        (Some(e), _) => Err(format!("stopped early: {e} (re-run resumes)")),
+        (None, 0) => Ok(()),
+        (None, n) => Err(format!(
+            "{n} series incomplete (see data_quality; re-run resumes)"
+        )),
+    }
 }
