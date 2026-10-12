@@ -946,7 +946,7 @@ class on US venues) over its whole life. Redefined before first write on
 |---|---|---|---|
 | `figi` | `utf8` | no | US composite FIGI (`BBG` + 9 characters), from OpenFIGI |
 | `share_class_figi` | `utf8` | yes | OpenFIGI share-class FIGI |
-| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK; null until resolved. Active: the current ticker in the SEC ticker file. Otherwise (every delisted security): the one CIK whose EDGAR name or former name (`cik-lookup-data.txt`) has the same normalized name; a name of two CIKs stays null. `resolution_note` ends `; cik:name` for those (J4a, `BACKFILL.md` §5) |
+| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK; null until resolved. Active: the current ticker in the SEC ticker file. Otherwise (every delisted security): the one CIK whose EDGAR name or former name (`cik-lookup-data.txt`) has the same normalized name and whose filings overlap the price span within a year; a name of two CIKs stays null. `resolution_note` ends `; cik:name` for those (J4a, `BACKFILL.md` §5) |
 | `ticker` | `utf8` | no | Canonical form of the latest ticker (from the latest EODHD code) |
 | `name` | `utf8` | no | EODHD `Name` of the latest code |
 | `eodhd_code` | `utf8` | no | The latest EODHD code without `.US` (`MON_old`, `BRK-B`) |

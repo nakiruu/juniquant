@@ -319,10 +319,18 @@ pub fn resolve(
     let by_code: BTreeMap<&str, &Code> = codes.iter().map(|c| (c.code.as_str(), c)).collect();
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for c in codes {
+        let reference = crate::eodhd::run::REFERENCE
+            .iter()
+            .any(|(r, _)| *r == c.code);
+        // Before every route: a SPAC is out of scope even when its ISIN or name resolves (D19).
+        if !reference && is_spac_name(&c.name) {
+            bad.push((
+                c.clone(),
+                Unresolved::OutOfScope("SPAC shell (name, D19)".into()),
+            ));
+            continue;
+        }
         if let Some((isin, f)) = c.isin.as_ref().and_then(|i| by_isin.get(i).map(|f| (i, f))) {
-            let reference = crate::eodhd::run::REFERENCE
-                .iter()
-                .any(|(r, _)| *r == c.code);
             if !reference && !IN_SCOPE.contains(&f.security_type2.as_str()) {
                 bad.push((c.clone(), Unresolved::OutOfScope(f.security_type2.clone())));
                 continue;
@@ -352,10 +360,6 @@ pub fn resolve(
                     });
                 }
             }
-            _ if is_spac_name(&c.name) => bad.push((
-                c.clone(),
-                Unresolved::OutOfScope("SPAC shell (name, D19)".into()),
-            )),
             Some(m) => bad.push((
                 c.clone(),
                 Unresolved::Ambiguous(m.keys().cloned().collect()),
@@ -505,11 +509,52 @@ pub fn parse_cik_lookup(text: &str) -> BTreeMap<String, Option<String>> {
     out
 }
 
+/// First and last filing date of an EDGAR submissions JSON (`filings.recent` plus the older
+/// `filings.files` pages); `None` without a date.
+#[must_use]
+pub fn submissions_span(body: &[u8]) -> Option<(NaiveDate, NaiveDate)> {
+    let v: Value = serde_json::from_slice(body).ok()?;
+    let f = v.get("filings")?;
+    let date = |s: &Value| NaiveDate::parse_from_str(s.as_str()?, "%Y-%m-%d").ok();
+    let recent = f
+        .pointer("/recent/filingDate")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(date);
+    let pages = f
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|p| [p.get("filingFrom"), p.get("filingTo")])
+        .flatten()
+        .filter_map(date);
+    let all: Vec<NaiveDate> = recent.chain(pages).collect();
+    Some((*all.iter().min()?, *all.iter().max()?))
+}
+
+/// A CIK found by name is kept only when the filer's filings overlap the price history, with
+/// a year of slack each side: an unrelated filer that shares the name filed in another era.
+/// Either span unknown: not confirmed.
+#[must_use]
+pub fn cik_confirmed(
+    prices: Option<(NaiveDate, NaiveDate)>,
+    filings: Option<(NaiveDate, NaiveDate)>,
+) -> bool {
+    let (Some((p0, p1)), Some((f0, f1))) = (prices, filings) else {
+        return false;
+    };
+    let slack = chrono::Days::new(365);
+    p0 <= f1.checked_add_days(slack).unwrap_or(NaiveDate::MAX)
+        && f0.checked_sub_days(slack).unwrap_or(NaiveDate::MIN) <= p1
+}
+
 /// `security_master` rows, one per FIGI. When several codes share a FIGI (a vendor rename),
 /// the active code wins, then the plain code over an `_old` one. The CIK is the current
 /// ticker's for an active security, else the one CIK whose EDGAR name or former name has the
-/// security's [`name_key`] (`cik_by_name`, from [`parse_cik_lookup`]); an ambiguous name stays
-/// null.
+/// security's [`name_key`] (`cik_by_name`, from [`parse_cik_lookup`]) that `confirm` accepts
+/// (see [`cik_confirmed`]); an ambiguous or unconfirmed name stays null.
 ///
 /// # Errors
 ///
@@ -518,6 +563,7 @@ pub fn master_batch(
     resolved: &[Resolved],
     cik_by_ticker: &BTreeMap<String, String>,
     cik_by_name: &BTreeMap<String, Option<String>>,
+    confirm: &dyn Fn(&Resolved, &str) -> bool,
     now: DateTime<Utc>,
 ) -> Result<RecordBatch, arrow::error::ArrowError> {
     let mut by_figi: BTreeMap<&str, Vec<&Resolved>> = BTreeMap::new();
@@ -555,6 +601,7 @@ pub fn master_batch(
                 .get(&name_key(&r.code.name))
                 .cloned()
                 .flatten()
+                .filter(|c| confirm(r, c))
                 .map(|c| (c, true))
         })
     };
@@ -942,6 +989,10 @@ mod tests {
         let by_isin = BTreeMap::from([
             ("US61166W1018".to_owned(), f("BBG000BFWKC0", "MONSANTO CO")),
             ("US0000000001".to_owned(), adr),
+            (
+                "US0000000002".to_owned(),
+                f("BBG_SPAC", "GOLDEN PATH ACQUISITION CORP"),
+            ),
         ]);
         let by_cusip = BTreeMap::from([
             (
@@ -960,6 +1011,7 @@ mod tests {
             code("GM_old", "General Motors Corp", None),
             code("ZZZ", "Nobody Inc", None),
             code("ADRX", "Some ADR", Some("US0000000001")),
+            code("GPCO", "Golden Path Acquisition Corp", Some("US0000000002")),
         ];
         let (ok, bad) = resolve(&codes, &by_isin, &by_cusip);
         assert_eq!(ok.len(), 2);
@@ -978,8 +1030,13 @@ mod tests {
             Unresolved::OutOfScope("Depositary Receipt".into()),
             "found but not common stock"
         );
+        assert_eq!(
+            bad[3].1,
+            Unresolved::OutOfScope("SPAC shell (name, D19)".into()),
+            "a SPAC is out of scope even when its ISIN resolves"
+        );
         let now = Utc::now();
-        let m = master_batch(&ok, &BTreeMap::new(), &BTreeMap::new(), now).unwrap();
+        let m = master_batch(&ok, &BTreeMap::new(), &BTreeMap::new(), &|_, _| true, now).unwrap();
         assert_eq!(m.num_rows(), 2);
         let names = parse_cik_lookup(
             "MONSANTO CO:0001110783:\nMONSANTO CO /NEW/:0001110783:\n\
@@ -1007,7 +1064,7 @@ mod tests {
                 .map(|i| a.is_valid(i).then(|| a.value(i).to_owned()))
                 .collect::<Vec<_>>()
         };
-        let m = master_batch(&ok, &BTreeMap::new(), &names, now).unwrap();
+        let m = master_batch(&ok, &BTreeMap::new(), &names, &|_, _| true, now).unwrap();
         assert_eq!(
             col(&m, "cik"),
             [Some("0001110783".into()), None],
@@ -1022,11 +1079,40 @@ mod tests {
         let mut active = ok[0].clone();
         active.code.delisted = false;
         let tickers = BTreeMap::from([("MON_old".to_owned(), "0000000001".to_owned())]);
-        let m = master_batch(&[active], &tickers, &names, now).unwrap();
+        let m = master_batch(&[active], &tickers, &names, &|_, _| true, now).unwrap();
         assert_eq!(
             col(&m, "cik"),
             [Some("0000000001".into())],
             "the current ticker's CIK wins"
+        );
+        let m = master_batch(&ok, &BTreeMap::new(), &names, &|_, _| false, now).unwrap();
+        assert_eq!(
+            col(&m, "cik"),
+            [None, None],
+            "an unconfirmed name match stays null"
+        );
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let sub = br#"{"filings":{"recent":{"filingDate":["2018-03-01","2009-05-04"]},"files":[{"filingFrom":"1996-01-02","filingTo":"2009-05-01"}]}}"#;
+        assert_eq!(
+            submissions_span(sub),
+            Some((d("1996-01-02"), d("2018-03-01")))
+        );
+        assert_eq!(
+            submissions_span(br#"{"filings":{"recent":{"filingDate":[]},"files":[]}}"#),
+            None
+        );
+        let filed = Some((d("2019-01-01"), d("2021-12-31")));
+        assert!(
+            cik_confirmed(Some((d("2005-01-03"), d("2018-06-01"))), filed),
+            "within the slack year"
+        );
+        assert!(
+            !cik_confirmed(Some((d("2005-01-03"), d("2017-06-01"))), filed),
+            "another era"
+        );
+        assert!(
+            !cik_confirmed(None, filed)
+                && !cik_confirmed(Some((d("2020-01-02"), d("2020-02-03"))), None)
         );
         assert!(
             !col(&m, "resolution_note")[0]
@@ -1308,6 +1394,36 @@ pub mod run {
         )
     }
 
+    /// First and last filing date of `cik` from its EDGAR submissions JSON, landed once a month.
+    async fn filing_span(
+        job: &Job,
+        cik: &str,
+        today: NaiveDate,
+    ) -> Result<Option<(NaiveDate, NaiveDate)>, RunError> {
+        let (entity, chunk) = (
+            format!("CIK{cik}"),
+            format!("submissions-{}", today.format("%Y-%m")),
+        );
+        let url = format!("https://data.sec.gov/submissions/CIK{cik}.json");
+        let r = Request {
+            entity: &entity,
+            chunk: &chunk,
+            url: &url,
+            ext: "json",
+            cost: 1,
+            dataset: "security_master",
+            empty_is_gone: false,
+        };
+        if matches!(
+            job.sec.fetch(&r).await?,
+            Outcome::Failed(_) | Outcome::Gone(_)
+        ) {
+            return Ok(None);
+        }
+        Ok(body(&job.manifest, (job.sec.spec.id, &entity, &chunk))?
+            .and_then(|b| super::submissions_span(&b)))
+    }
+
     /// Run J4a: resolve `codes` (all in-scope codes when `None`) and write #31 and #36.
     ///
     /// # Errors
@@ -1431,7 +1547,46 @@ pub mod run {
         }
         let cik = ciks(job, today).await?;
         let names = cik_names(job, today).await?;
-        let master = super::master_batch(&ok, &cik, &names, Utc::now())?;
+        // Each CIK found by name must have filed while the security traded (`cik_confirmed`).
+        // shortcut: one request at a time (about 25 minutes the first run of a month, then
+        // landed); run them concurrently if this ever runs daily.
+        let (mut priced, mut filed) = (BTreeMap::new(), BTreeMap::new());
+        for r in &ok {
+            if !r.code.delisted && cik.contains_key(&r.code.ticker) {
+                continue;
+            }
+            let Some(Some(c)) = names.get(&super::name_key(&r.code.name)) else {
+                continue;
+            };
+            if !filed.contains_key(c) {
+                filed.insert(c.clone(), filing_span(job, c, today).await?);
+            }
+            let span =
+                bars(&r.code.code).and_then(|b| Some((*b.keys().next()?, *b.keys().next_back()?)));
+            priced.insert(r.code.code.clone(), span);
+        }
+        let confirm = |r: &super::Resolved, c: &str| {
+            super::cik_confirmed(
+                priced.get(&r.code.code).copied().flatten(),
+                filed.get(c).copied().flatten(),
+            )
+        };
+        let rejected = ok
+            .iter()
+            .filter(|r| priced.contains_key(&r.code.code))
+            .filter(|r| {
+                names
+                    .get(&super::name_key(&r.code.name))
+                    .cloned()
+                    .flatten()
+                    .is_some_and(|c| !confirm(r, &c))
+            })
+            .count();
+        println!(
+            "identity: {} name-matched codes, {rejected} CIKs rejected (no filings while priced)",
+            priced.len()
+        );
+        let master = super::master_batch(&ok, &cik, &names, &confirm, Utc::now())?;
         s.securities = master.num_rows();
         lake.write_dataset("security_master", &master, lake::Mode::Replace)?;
         lake.write_dataset(

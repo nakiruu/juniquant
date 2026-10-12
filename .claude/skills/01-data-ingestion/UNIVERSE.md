@@ -165,8 +165,10 @@ current `company_tickers_exchange.json` (a delisted symbol may now belong to ano
 issuer). Rule 3 for every other security, from EDGAR's `cik-lookup-data.txt` (current and
 former names of every filer, no dates): the security's normalized name must equal the
 names of exactly one CIK. `resolution` keeps the FIGI path; the name method is recorded as
-`; cik:name` at the end of `resolution_note`. The date-window check of rule 3 is not
-applied: a random sample of 15 matches was all correct, and an ambiguous name stays null.
+`; cik:name` at the end of `resolution_note`. The date window of rule 3 is checked on the filer's whole filing history: the CIK is kept
+only when the filings in its EDGAR submissions JSON (`data.sec.gov/submissions`, landed once
+a month) overlap the security's price span, with a year of slack each side; an unrelated
+filer with the same name filed in another era. No price span or no filings: null.
 Rule 1 is not implemented yet. First run: securities without a CIK fell from 5,165 to 956.
 
 **Renames.** The same CIK appears under ticker X before a date and ticker Y
@@ -241,9 +243,13 @@ about an operating business, so:
   EDGAR name change that ends the shell name (`formerNames`), or the filing date
   of the 8-K with Item 2.01 (completion of acquisition) in `filing_events`,
   whichever is earlier. Until the EDGAR worker (W6) provides SIC and filings, a
-  name rule marks shells for reporting only (`ACQUISITION` or `BLANK CHECK` in the
-  normalized name; `ingest::identity::is_spac_name`); training waits for the
-  EDGAR rule.
+  name rule **bans shells outright** (owner, 2026-10-11): `ACQUISITION` or `BLANK CHECK`
+  in the normalized name (`ingest::identity::is_spac_name`). J4a applies it before every
+  route (ISIN, 13(f) name, rename), so such a code gets no FIGI, hence no prices, no
+  `universe` row and no training rows. A de-SPACed company listed under its operating
+  name is unaffected; one that kept the shell word in its name (Navios Maritime
+  Acquisition, NNA) is banned with the shells and needs an identifier override to come
+  back.
 
 ## 6. Sector and CIK
 
