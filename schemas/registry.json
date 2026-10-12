@@ -3670,6 +3670,11 @@
             "schemas_md": "#34",
             "fields": [
                 {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
                     "name": "ticker",
                     "type": "utf8",
                     "nullable": false
@@ -3746,13 +3751,16 @@
                 }
             ],
             "primary_key": [
+                "figi",
                 "ticker"
             ],
             "sort_key": [
+                "figi",
                 "ticker"
             ],
             "merge": "overwrite",
             "columns": [
+                "figi:VARCHAR",
                 "ticker:VARCHAR",
                 "cik:VARCHAR",
                 "first_member_date:DATE",
@@ -3769,7 +3777,7 @@
                 "data_end:DATE",
                 "built_at:TIMESTAMP WITH TIME ZONE"
             ],
-            "hash": "9412033242cbfae0bb483112541769eb4988fcc6c495da1b736d5e37320029d8",
+            "hash": "e755a0488d2270668a7e71b9d2b009604925f80554bd4b56540922b725c61841",
             "last_migration": "2026-10-10-initial"
         },
         "listings": {

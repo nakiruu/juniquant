@@ -1018,7 +1018,7 @@ Primary key: `(accession, item, ticker)`. New dataset: register it in `schemas/r
 
 ## 34. `price_coverage`
 
-Rows: ~2,500 (one per ticker that was ever a member; estimate). Writer: Julia (universe builder). Update: daily, after the universe; rewritten in full. Partitioned: no.
+Rows: ~2,500 (one per security that was ever a member of a membership universe; estimate). Writer: Julia (universe builder). Update: daily, after the universe; rewritten in full. Partitioned: no.
 
 The survivorship coverage report in data form
 (`01-data-ingestion/SURVIVORSHIP.md` §4). It is derived and may be rebuilt at
@@ -1027,9 +1027,10 @@ dataset (`QUERY-PATTERNS.md`).
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `ticker` | `utf8` | no | Canonical symbol |
+| `figi` | `utf8` | yes | US composite FIGI (D17); null for a member the identity job could not resolve (`gap_reason = identity_unresolved`) |
+| `ticker` | `utf8` | no | Canonical symbol: the latest one for a FIGI, the holdings symbol when `figi` is null |
 | `cik` | `utf8` | yes | |
-| `first_member_date` | `date32` | no | First `universe` date as a member of IWF or IWP |
+| `first_member_date` | `date32` | no | First trading day as a member of IWF or IWP, from `etf_holdings` (`available_date`); a member without a FIGI has no `universe` row |
 | `last_member_date` | `date32` | no | Last such date |
 | `first_price_date` | `date32` | yes | Null if no prices |
 | `last_price_date` | `date32` | yes | |
@@ -1043,7 +1044,7 @@ dataset (`QUERY-PATTERNS.md`).
 | `data_end` | `date32` | no | Last price date the report is computed against |
 | `built_at` | `timestamp[ns, UTC]` | no | |
 
-Primary key: `ticker`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
+Primary key: `(figi, ticker)`: one row per FIGI, and per ticker among members without one (nulls compare equal, `IO-CONTRACT.md` §3). Re-keyed from `ticker` 2026-10-11, before first write (D17, D20). New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 
 
 ---
