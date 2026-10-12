@@ -160,7 +160,7 @@ DuckDB `ASOF JOIN`: for each price row, the latest filing with
 SELECT p.ticker, p.date, f.revenue_ttm, f.shares_outstanding
 FROM read_parquet('$LAKE/prices/**/data.parquet', hive_partitioning = true) p
 ASOF LEFT JOIN read_parquet('$LAKE/fundamentals.parquet') f
-  ON p.ticker = f.ticker AND p.date >= f.filing_date
+  ON p.figi = f.figi AND p.date >= f.filing_date
 WHERE p.date BETWEEN DATE '2024-06-01' AND DATE '2024-06-14';
 ```
 

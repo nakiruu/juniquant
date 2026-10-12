@@ -177,13 +177,13 @@ availability date:
 SELECT p.ticker, p.date, f.revenue_ttm
 FROM prices p
 ASOF LEFT JOIN fundamentals f
-  ON p.ticker = f.ticker AND p.date >= f.filing_date;
+  ON p.figi = f.figi AND p.date >= f.filing_date;
 
 -- Equivalent, portable form
 SELECT p.ticker, p.date, f.revenue_ttm
 FROM prices p
 LEFT JOIN fundamentals f
-  ON p.ticker = f.ticker AND f.filing_date <= p.date
+  ON p.figi = f.figi AND f.filing_date <= p.date
 QUALIFY ROW_NUMBER() OVER (
   PARTITION BY p.ticker, p.date
   ORDER BY f.filing_date DESC, f.accession DESC
@@ -193,7 +193,7 @@ QUALIFY ROW_NUMBER() OVER (
 SELECT p.ticker, p.date, f.revenue_ttm
 FROM prices p
 LEFT JOIN fundamentals f
-  ON p.ticker = f.ticker AND f.period_end = p.date;
+  ON p.figi = f.figi AND f.period_end = p.date;
 ```
 
 The third query is a lookahead violation. It uses data that was not public on
@@ -220,7 +220,7 @@ severities and exit codes are in the script header and `QUALITY-GATES.md`):
 - Every row has a non-null `filing_date` and `period_end` (checked first)
 - Every row has `filing_date >= period_end`
 - No `filing_date` is after the validation date
-- `(ticker, accession)` is unique; `amends_accession` points at an existing
+- `(figi, accession)` is unique; `amends_accession` points at an existing
   accession
 - `acceptance_datetime` falls on `filing_date` or the business day before
   (warning)

@@ -103,6 +103,14 @@ impl SourceSpec {
         daily_cap: None,
         timeout: Duration::from_secs(30),
     };
+    /// SEC bulk zips (`submissions.zip`, `companyfacts.zip`, about 1.5 GB each) and the
+    /// quarterly `form.idx` files: one at a time, a timeout long enough for a whole zip.
+    pub const SEC_BULK: Self = Self {
+        id: "sec_bulk",
+        concurrency: 1,
+        timeout: Duration::from_secs(3600),
+        ..Self::SEC_API
+    };
     /// SEC 13(f) securities lists (`www.sec.gov/files/investment/...`), SEC fair-access pacing.
     pub const SEC_13F: Self = Self {
         id: "sec_13f_list",

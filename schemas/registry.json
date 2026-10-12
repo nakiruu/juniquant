@@ -421,14 +421,19 @@
                     "name": "prior_shares_outstanding",
                     "type": "float64",
                     "nullable": true
+                },
+                {
+                    "name": "figi",
+                    "type": "utf8",
+                    "nullable": false
                 }
             ],
             "primary_key": [
-                "ticker",
+                "figi",
                 "accession"
             ],
             "sort_key": [
-                "ticker",
+                "figi",
                 "accession"
             ],
             "merge": "overwrite",
@@ -468,9 +473,10 @@
                 "prior_current_ratio:DOUBLE",
                 "prior_gross_margin:DOUBLE",
                 "prior_asset_turnover:DOUBLE",
-                "prior_shares_outstanding:DOUBLE"
+                "prior_shares_outstanding:DOUBLE",
+                "figi:VARCHAR"
             ],
-            "hash": "e1a11f399bf35637a6a6ece4b964ea8e094fae33b9caa485f46cb3f724aac237",
+            "hash": "9b98e22742c7a1bab78e6571c5f3422bab86e72e6219df02bc5126cfa87deac9",
             "last_migration": "2026-10-10-initial"
         },
         "macro": {

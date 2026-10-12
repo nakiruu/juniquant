@@ -136,10 +136,11 @@ pub fn land(
         "bytes": bytes,
         "body": body_name,
     });
-    let encoded = if ext == "zip" {
-        body.to_vec()
+    // A zip is already compressed; borrowing it avoids a second copy of a 1.5 GB body.
+    let encoded: std::borrow::Cow<'_, [u8]> = if ext == "zip" {
+        body.into()
     } else {
-        zstd::encode_all(body, 3)?
+        zstd::encode_all(body, 3)?.into()
     };
     write_atomic(
         &dir.join(format!("{stem}.{ext}.meta.json")),

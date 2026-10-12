@@ -93,7 +93,7 @@ Filing staleness (G7):
 SELECT COUNT(*) FILTER (WHERE date_diff('day', f.filing_date, u.date) <= 135)::DOUBLE
        / COUNT(*) AS fresh_share
 FROM universe u
-ASOF LEFT JOIN fundamentals f ON u.ticker = f.ticker AND u.date >= f.filing_date
+ASOF LEFT JOIN fundamentals f ON u.figi = f.figi AND u.date >= f.filing_date
 WHERE u.eligible AND u.date >= DATE '2011-07-01';
 ```
 
@@ -122,7 +122,7 @@ meets a `missing`. Exit status: 1 if any FAIL rule fires, 0 otherwise
 | 1 | `filing_date` and `period_end` are non-null | FAIL |
 | 2 | `filing_date >= period_end` | FAIL |
 | 3 | No `filing_date` after the validation date (default today) | FAIL |
-| 4 | `(ticker, accession)` unique | FAIL |
+| 4 | `(figi, accession)` unique | FAIL |
 | 5 | `amends_accession` is null or an existing `accession` | FAIL |
 | 6 | `fiscal_period` in `Q1`, `Q2`, `Q3`, `FY` (or null) | FAIL |
 | 7 | `acceptance_datetime`, when present, falls on `filing_date` or the business day before | WARN |

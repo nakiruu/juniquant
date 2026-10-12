@@ -118,9 +118,9 @@ zone (`01-data-ingestion/SURVIVORSHIP.md` §2).
 Rows: ~150K (about 2,500 companies x about 60 periodic filings over 15+ years, plus amendments and one copy per listed share class; estimate). Writer: Rust (ingest). Update: on filing. Partitioned: no.
 Specification of every derivation below: `01-data-ingestion/SOURCES.md` (EDGAR) and `01-data-ingestion/POINT-IN-TIME.md`.
 
-One row per `(ticker, accession)`: one periodic filing (10-K, 10-Q or an
+One row per `(figi, accession)`: one periodic filing (10-K, 10-Q or an
 amendment). A company with several listed share classes has one row per
-class ticker (identical numbers). 8-K events are **not** here; they are in
+class security (identical numbers). 8-K events are **not** here; they are in
 `filing_events` (#33). **Rows are never updated.** A restatement is either a
 new amendment row with its own `filing_date`, or a later filing's
 comparative figures, which are used only inside later TTM and prior-period
@@ -165,8 +165,10 @@ own primary period, as first reported there.
 | `prior_gross_margin` | `float64` | yes | Appended. `gross_profit_ttm / revenue_ttm`, same prior row |
 | `prior_asset_turnover` | `float64` | yes | Appended. `revenue_ttm / total_assets`, same prior row |
 | `prior_shares_outstanding` | `float64` | yes | Appended. `shares_outstanding` of the same prior row, as stored (not split-adjusted) |
+| `figi` | `utf8` | no | Appended 2026-10-11 (D17). Composite FIGI of the security (`security_master`); one row per security of a multi-class filer. Primary-key part |
 
-Primary key: `(ticker, accession)`. The earlier key `(ticker, filing_date,
+Primary key: `(figi, accession)` (D17: a ticker can name several securities over time;
+`security_master` has 216 such tickers). The earlier key `(ticker, filing_date,
 form_type)` could not distinguish two filings of one form on one day or an
 amendment and its original filed the same day.
 

@@ -7,6 +7,8 @@
 //! quant-ingest eodhd backfill [--codes A,B] [--limit N]   W5, BACKFILL.md §5.1
 //! quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]   J4a, ADR 0001
 //! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
+//! quant-ingest edgar fetch                              J2, BACKFILL.md §5.2
+//! quant-ingest edgar fundamentals                       J7, from the landed zips
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -38,6 +40,8 @@ fn main() -> ExitCode {
         ["eodhd", "backfill", rest @ ..] => backfill(rest),
         ["identity", rest @ ..] => identity(rest),
         ["ishares", "snapshot"] => ishares_snapshot(),
+        ["edgar", "fetch"] => edgar_fetch(),
+        ["edgar", "fundamentals"] => edgar_fundamentals(),
         _ => {
             eprintln!(
                 "usage: quant-ingest probe <p1..p6|y1..y4>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]"
@@ -505,5 +509,179 @@ fn ishares_snapshot() -> Result<(), String> {
     manifest.compacted("ishares").map_err(|e| e.to_string())?;
     quality.write(&lake).map_err(|e| e.to_string())?;
     println!("ishares: compaction {c:?}");
+    Ok(())
+}
+
+/// The SEC fetcher: `User-Agent` with the contact email (`SOURCES.md` SEC EDGAR).
+fn sec_fetcher(s: &Setup, spec: SourceSpec) -> Result<Fetcher, String> {
+    let email = std::env::var("SEC_EDGAR_EMAIL")
+        .ok()
+        .filter(|e| !e.is_empty())
+        .ok_or("SEC_EDGAR_EMAIL is not set")?;
+    Fetcher::new(
+        spec,
+        &format!("juniquant research {email}"),
+        s.manifest.clone(),
+        s.paths.raw.clone(),
+        s.quality.clone(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// J2: land `submissions.zip`, `companyfacts.zip` and the quarterly `form.idx` files.
+fn edgar_fetch() -> Result<(), String> {
+    let s = setup("edgar")?;
+    let sec = sec_fetcher(&s, SourceSpec::SEC_BULK)?;
+    let first = (s.ctx.from.year(), (s.ctx.from.month() - 1) / 3 + 1);
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let result = rt.block_on(ingest::edgar::fetch(&sec, s.today, first));
+    s.quality.write(&s.lake).map_err(|e| e.to_string())?;
+    let out = result.map_err(|e| e.to_string())?;
+    let failed: Vec<_> = out
+        .iter()
+        .filter(|(_, o)| matches!(o, ingest::infra::fetch::Outcome::Failed(_)))
+        .collect();
+    println!(
+        "edgar: {} chunks ({} skipped as already landed), {} failed {failed:?}",
+        out.len(),
+        out.values()
+            .filter(|o| matches!(o, ingest::infra::fetch::Outcome::Skipped))
+            .count(),
+        failed.len()
+    );
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err("some chunks failed (re-run resumes)".into())
+    }
+}
+
+/// J7: `fundamentals` from the latest landed zips, for the CIKs of `security_master`.
+fn edgar_fundamentals() -> Result<(), String> {
+    use arrow::array::{Array, AsArray};
+    use ingest::edgar::{self, Security};
+    use ingest::infra::quality::{Level, Row};
+    let s = setup("fundamentals")?;
+    let mut by_cik: std::collections::BTreeMap<String, Vec<Security>> = Default::default();
+    let b = s
+        .lake
+        .read_dataset(
+            "security_master",
+            Some(&["figi", "ticker", "cik"]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let (f, t, c) = (
+        b.column(0).as_string::<i32>(),
+        b.column(1).as_string::<i32>(),
+        b.column(2).as_string::<i32>(),
+    );
+    for i in (0..b.num_rows()).filter(|&i| c.is_valid(i)) {
+        by_cik
+            .entry(c.value(i).to_owned())
+            .or_default()
+            .push(Security {
+                figi: f.value(i).to_owned(),
+                ticker: t.value(i).to_owned(),
+            });
+    }
+    // The newest landed chunk (a fetch date) of a zip.
+    let latest = |entity: &str| -> Result<(String, std::path::PathBuf), String> {
+        let dir = s.paths.raw.join("sec_bulk").join(entity);
+        let mut chunks: Vec<String> = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e} (run `quant-ingest edgar fetch`)", dir.display()))?
+            .filter_map(|d| d.ok()?.file_name().into_string().ok())
+            .collect();
+        chunks.sort();
+        for chunk in chunks.into_iter().rev() {
+            if let Some((p, _, _)) = s
+                .manifest
+                .landed(("sec_bulk", entity, &chunk))
+                .map_err(|e| e.to_string())?
+            {
+                return Ok((chunk, p.into()));
+            }
+        }
+        Err(format!(
+            "{entity}: nothing landed (run `quant-ingest edgar fetch`)"
+        ))
+    };
+    let (chunk, facts_path) = latest("companyfacts_zip")?;
+    let (subs_chunk, subs_path) = latest("submissions_zip")?;
+    println!(
+        "fundamentals: {} CIKs, companyfacts {chunk}, submissions {subs_chunk}",
+        by_cik.len()
+    );
+    let open = |p: &std::path::Path| edgar::open(p).map_err(|e| format!("{}: {e}", p.display()));
+    let built = edgar::build(
+        &mut open(&subs_path)?,
+        &mut open(&facts_path)?,
+        &by_cik,
+        s.today,
+    )
+    .map_err(|e| e.to_string())?;
+    let key = ("sec_bulk", "companyfacts_zip", chunk.as_str());
+    ingest::infra::stage::write_stage(
+        &s.paths.stage,
+        &s.manifest,
+        "fundamentals",
+        key,
+        edgar::facts::PARSE_VERSION,
+        &built.batch,
+    )
+    .map_err(|e| e.to_string())?;
+    let compacted = ingest::infra::stage::compact(
+        &s.lake,
+        &s.manifest,
+        &s.paths.stage,
+        "sec_bulk",
+        "fundamentals",
+    )
+    .map_err(|e| e.to_string())?;
+    s.manifest
+        .compacted("sec_bulk")
+        .map_err(|e| e.to_string())?;
+    let notes = format!(
+        "{} rows; {} of {} CIKs with rows; dropped: {:?}",
+        built.batch.num_rows(),
+        built.with_rows,
+        by_cik.len(),
+        built.dropped
+    );
+    let row = |entity: String, level, notes: String| Row {
+        source: "SEC",
+        dataset: "fundamentals".into(),
+        entity,
+        chunk: chunk.clone(),
+        level,
+        attempts: 1,
+        notes: Some(notes),
+    };
+    s.quality
+        .push(row("companyfacts_zip".into(), Level::Ok, notes.clone()));
+    for cik in &built.no_submissions {
+        s.quality.push(row(
+            cik.clone(),
+            Level::Warn,
+            "CIK not in submissions.zip".into(),
+        ));
+    }
+    for cik in &built.no_rows {
+        s.quality.push(row(
+            cik.clone(),
+            Level::Warn,
+            "10-K/10-Q filed since 2011-07-01 but no fundamentals row (no XBRL facts)".into(),
+        ));
+    }
+    s.quality.write(&s.lake).map_err(|e| e.to_string())?;
+    println!(
+        "fundamentals: {notes}; {} CIKs not in submissions, {} without rows since 2011-07; compaction {compacted:?}",
+        built.no_submissions.len(),
+        built.no_rows.len()
+    );
     Ok(())
 }
