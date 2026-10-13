@@ -121,6 +121,29 @@ Two FIGI routes were also fixed: a when-issued line (`RBC-W`, `NEOGEN CORP-WI`) 
 an ISIN ambiguous (Regal Rexnord had no FIGI), and an OpenFIGI name cut at 28 characters
 matches a code whose name starts with it (never a name with an instrument word).
 
+## Amendment 2026-10-13: a security's filers over time
+
+Gate G7 failed (94.07% of eligible days with a filing under 135 days old, against 97%), and
+the stale days were mostly identity, not missing filings:
+- **Point 2 assumed one CIK per security for its life.** A new holding company or a
+  redomicile gives the issuer a new CIK while the vendor's series runs on under the new FIGI:
+  Exxon Mobil's history since 2005 sits under ExxonMobil Holdings (CIK 2115436, July 2026),
+  so the security had one fundamentals row. The CIK in `security_master` stays the current
+  filer; a predecessor filer becomes a `cik` row of `security_spells`, valid to the day before
+  the successor's 8-K12B or 8-K12G3, and `fundamentals` and `filing_events` take its filings
+  up to then (`UNIVERSE.md` §4). 76 predecessors of 75 securities, among them Exxon,
+  BlackRock (2024 and 2006), Medtronic, Eaton, Accenture, Broadcom, Disney and Xerox.
+- **The name match (point 4) had three faults:** jurisdiction tags, confirmation by any
+  filing, and ties. They are fixed as `UNIVERSE.md` §4 states. Wrong CIKs replaced included
+  Sealed Air, Dow, Jacobs, Cypress, Westar, Lexmark, Aetna and Cott.
+- **Two FIGIs can carry one history.** The vendor kept an old code and copied its history to
+  the new one: HollyFrontier and HF Sinclair, WWE and TKO, Mylan and Viatris, Praxair and
+  Linde, 137 pairs, 47.8k eligible rows since 2011 seen twice. Identity keeps both FIGIs;
+  G2 rejects the copy (`twin`, `QUALITY-GATES.md` §2a, owner 2026-10-13).
+
+The identity job no longer requests each name-matched filer's submissions JSON: every filer is
+read from the landed submissions zip.
+
 ## Alternatives considered
 
 - **An internal permanent id with a ledger** (the earlier draft): complete coverage, but its own

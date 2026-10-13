@@ -44,3 +44,250 @@ figi = "BBG000C1TJH2"
 from = "2005-01-03"
 to   = "2018-08-14"
 note = "Depomed history mis-scaled by the vendor"
+
+# Owner review 2026-10-13: approved as proposed (evidence from the lake, facts from memory marked
+# unverified; ranges from the bars; gate run 20261013T112944Z-gates).
+
+[[exclude]]  # CXR: Cox Radio went private in 2009 (last bar 2009-05-29); later bars are other holders'
+figi = "BBG000BBM7F6"
+from = "2009-12-17"
+to   = "2018-09-14"
+note = "Cox Radio private 2009; later CXR bars are not Cox Radio"
+
+[[exclude]]  # WDR: acquired 2021-04-30; the bars after (~$0.3) are another security's
+figi = "BBG000BD6SQ2"
+from = "2021-05-07"
+to   = "2021-06-18"
+note = "Waddell & Reed acquired 2021-04-30"
+
+[[exclude]]  # IVT: the 1:10 split of 2021-08-06 reaches the quotes only on 2021-09-24
+figi = "BBG000BJSP36"
+from = "2021-08-06"
+to   = "2021-09-23"
+note = "stale pre-split quotes after the split ex-date"
+
+[[exclude]]  # FNCX: closes before 2016-06-13 are vendor-adjusted (x20 for the 2016-09-16 1:20 split)
+figi = "BBG000BKPRR6"
+from = "2005-01-03"
+to   = "2016-06-10"
+note = "vendor-adjusted block, not as traded"
+
+[[exclude]]  # HH: pre-2016 closes are ~1,300x the 2016 level; no split explains it
+figi = "BBG000BL3L82"
+from = "2005-01-03"
+to   = "2015-12-30"
+note = "mis-scaled pre-2016 history"
+
+[[exclude]]  # BSY: Bentley listed 2020-09-23; the bars before are another security's
+figi = "BBG000BMSRR9"
+from = "2005-01-03"
+to   = "2020-09-22"
+note = "Bentley direct listing 2020-09-23"
+
+[[exclude]]  # PGE: Prime Group Realty acquired July 2005; bars from 2006-09 are a mixed series
+figi = "BBG000BWDQS4"
+from = "2006-09-14"
+to   = "2018-08-07"
+note = "after the 2005 acquisition; other holders' bars"
+
+[[exclude]]  # CHAI: absurd volumes (bns of shares/day) then a frozen 1.9841 to 2022-01-06
+figi = "BBG000BXPF58"
+from = "2015-07-30"
+to   = "2022-01-06"
+note = "vendor volume errors and a stale price"
+
+[[exclude]]  # HRH: a zero-volume block at 0.065 between closes of ~43
+figi = "BBG000C6GLH0"
+from = "2007-05-16"
+to   = "2007-12-17"
+note = "bad block"
+
+[[exclude]]  # SSP: owner: no return across the SNI spin-off day (the stored closes look vendor-scaled)
+figi = "BBG000C78J55"
+from = "2008-07-01"
+to   = "2008-07-01"
+note = "owner: exclude the SNI spin-off day"
+
+[[exclude]]  # TNM: Thomas Nelson went private in 2006; bars from 2010-12 swing 22-2,851
+figi = "BBG000C9N5T8"
+from = "2010-12-15"
+to   = "2022-03-02"
+note = "after the 2006 going-private; other holders' bars"
+
+[[exclude]]  # LJPC: placeholder closes (999,999.9999, then 220k-296k) at zero volume
+figi = "BBG000CJLRK9"
+from = "2007-12-18"
+to   = "2008-12-17"
+note = "placeholder block"
+
+[[exclude]]  # UCAP: from 2013-01-15 another security (~$1-14 on millions of shares a day)
+figi = "BBG000CZ1S23"
+from = "2013-01-15"
+to   = "2022-03-02"
+note = "not United Capital after 2012"
+
+[[exclude]]  # BABY: from 2019-07-26 the bars are not Natus Medical's (0.3-3.3)
+figi = "BBG000DPZHS3"
+from = "2019-07-26"
+to   = "2020-10-08"
+note = "other holder's bars"
+
+[[exclude]]  # SCU: closes x100 and volume /100 from 2014-12-16 to the move back on 2018-12-17
+figi = "BBG000N08GQ1"
+from = "2014-12-16"
+to   = "2018-12-14"
+note = "vendor-scaled block"
+
+[[exclude]]  # KNL: acquired by Herman Miller 2021-07-19; bars after are another security's
+figi = "BBG000N7N3S6"
+from = "2021-07-20"
+to   = "2021-12-20"
+note = "Knoll acquired"
+
+[[exclude]]  # LEAF: acquired by Graham Holdings 2021-06-14; bars after are another security's
+figi = "BBG000PBV0M8"
+from = "2021-06-14"
+to   = "2021-12-08"
+note = "Leaf Group acquired"
+
+[[exclude]]  # WLL: pre-2016 closes are ~100-250x Whiting's level
+figi = "BBG000PX3XC0"
+from = "2005-01-03"
+to   = "2015-12-16"
+note = "mis-scaled pre-2016 history"
+
+[[exclude]]  # WLL: new equity on the Chapter 11 exit; no return across
+figi = "BBG000PX3XC0"
+from = "2020-09-02"
+to   = "2020-09-02"
+note = "old equity cancelled, new equity listed"
+
+[[exclude]]  # SOA: new equity on the Chapter 11 exit; no return across
+figi = "BBG000QF18M4"
+from = "2008-03-03"
+to   = "2008-03-03"
+note = "old equity cancelled, new equity listed"
+
+[[exclude]]  # CZZ: last trade 2021-03-05; later prints are not Cosan Ltd
+figi = "BBG000RKPRS8"
+from = "2021-03-29"
+to   = "2021-11-12"
+note = "after the Cosan merger"
+
+[[exclude]]  # CCME: one 0.01 OTC print between 0.09 and 0.11
+figi = "BBG000TQ14B8"
+from = "2011-11-23"
+to   = "2011-11-23"
+note = "bad print"
+
+[[exclude]]  # MRIN: closes ~1 jump to ~2,500 before the Chapter 11
+figi = "BBG001M6NQK4"
+from = "2025-06-23"
+to   = "2026-06-01"
+note = "bad bars"
+
+[[exclude]]  # TRMR: FIGI is Telaria; from 2017-09-20 the bars are London quotes in pence
+figi = "BBG0022FSWP1"
+from = "2017-09-20"
+to   = "2020-10-08"
+note = "Taptica / Tremor International quotes, not Telaria"
+
+[[exclude]]  # HAWK: 2013-2015 closes are 0.01-0.1 at zero volume
+figi = "BBG004BDQXV5"
+from = "2013-04-19"
+to   = "2015-12-31"
+note = "junk before 2016"
+
+[[exclude]]  # HAWK: acquired 2018-06-15; bars after are pennies
+figi = "BBG004BDQXV5"
+from = "2018-06-15"
+to   = "2024-06-26"
+note = "Blackhawk acquired"
+
+[[exclude]]  # JONE: pre-2016 closes are vendor-adjusted (x20 for the 2018-09-10 1:20 split)
+figi = "BBG004MKGTW6"
+from = "2013-07-24"
+to   = "2015-12-31"
+note = "vendor-adjusted block, not as traded"
+
+[[exclude]]  # RXRX: placeholders before the 2021-04-16 IPO
+figi = "BBG00PQ4XJ45"
+from = "2005-01-03"
+to   = "2021-04-15"
+note = "pre-IPO placeholders"
+
+[[exclude]]  # WFRD: new equity on the Chapter 11 exit; no return across
+figi = "BBG00R4SQJ13"
+from = "2019-12-20"
+to   = "2019-12-20"
+note = "old equity cancelled, new equity issued"
+
+[[exclude]]  # CHRD: new Oasis equity on the Chapter 11 exit; no return across
+figi = "BBG00Y7BLHL9"
+from = "2020-11-20"
+to   = "2020-11-20"
+note = "old equity cancelled, new equity listed"
+
+[[exclude]]  # DPM: FIGI is Desert Peak Minerals, never listed; every bar is another issuer's
+figi = "BBG012X4VCV4"
+from = "2005-01-04"
+to   = "2021-10-29"
+note = "whole series misattributed"
+
+[[exclude]]  # SSN: after the 2017-11-16 Form 25 the closes run 2,300-21,400
+figi = "EOD:SSN"
+from = "2017-11-17"
+to   = "2020-10-08"
+note = "bad bars after the delisting"
+
+[[exclude]]  # WISH: penny quotes before ContextLogic's 2020-12-16 IPO
+figi = "EOD:WISH_old"
+from = "2005-01-03"
+to   = "2020-12-17"
+note = "pre-IPO quotes of another security"
+
+[[accept]]  # DBD: Chapter 11 on 2023-06-01; old equity fell to ~$0.015
+figi = "BBG000BGYDX9"
+date = "2023-06-05"
+note = "bankruptcy crash"
+
+[[accept]]  # EQC: $19.00 liquidating distribution (in dividends) on 2024-12-09
+figi = "BBG000BLG1L7"
+date = "2024-12-09"
+note = "liquidating distribution"
+
+[[accept]]  # MIC: $37.39 special dividend (in dividends) on 2021-10-08
+figi = "BBG000M34GG1"
+date = "2021-10-08"
+note = "special dividend after the Atlantic Aviation sale"
+
+[[accept]]  # LJPC: crash on the 2009-02-12 trial news (8-K 8.01 that day)
+figi = "BBG000CJLRK9"
+date = "2009-02-12"
+note = "trial failure"
+
+[[accept]]  # BRLCQ: Chapter 11 on 2008-07-08
+figi = "BBG000Q0L5D1"
+date = "2008-07-08"
+note = "bankruptcy crash"
+
+[[accept]]  # TCDA: crash on the 2022-10-24 trial news (8-K 8.01 that day)
+figi = "BBG007318S26"
+date = "2022-10-24"
+note = "trial failure"
+
+[[accept]]  # NOVA: Chapter 11 on 2025-06-09
+figi = "BBG00PLQ1JR1"
+date = "2025-06-10"
+note = "bankruptcy crash"
+
+[[accept]]  # GTXI: crash on trial news, 185M shares traded, no share-count change (the GTx history is
+# ONCT's series since the 2019 merger, one filer, CIK 1260990)
+figi = "BBG000BX50F2"
+date = "2018-09-21"
+note = "trial failure"
+
+[[accept]]  # ORBS: squeeze on the PIPE / Worldcoin treasury news, 205M shares traded
+figi = "BBG013FD1NQ7"
+date = "2025-09-08"
+note = "real squeeze"

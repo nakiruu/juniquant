@@ -49,6 +49,14 @@ the `vendor_wrong_holder` pattern of `SURVIVORSHIP.md` §4), unexplained jumps 0
 595 inconsistent splits, reconciliation 99.26%. G2 offenders are `data_quality` rows
 (`entity` = FIGI, `chunk` = `{check} {date} {why}`).
 
+**Both HARD gates pass (2026-10-13).** G7 staleness rose from 94.07% to 97.15% of 6.85M
+eligible days. Of the stale days, 2.3 points were securities with no CIK and 2.2 a CIK younger
+than the price history; the fixes were predecessor filers and the CIK name-match fixes
+(`UNIVERSE.md` §4), with the `twin` rule (§2a) taking duplicate rows out of the count. G2
+`ten_fold` is 0 after owner review 2. Still stale: business development companies whose XBRL
+lacks the revenue tags (ARCC, PSEC, MAIN), banks that file with the FDIC (Bank OZK, Cadence),
+and successors whose predecessor has another name (Bunge, Apache, Paramount).
+
 ### 2a. G2 jump classification (owner decision, 2026-10-12)
 
 A ten-fold jump is a data error until a rule explains it; the explanation is a **span**, a
@@ -60,6 +68,7 @@ them from `universe` (`exclusion_reason = data_quality`, with the per-row failur
 | Reason | Rule | Evidence |
 |---|---|---|
 | `reviewed` | The owner excluded the range in `config/price_reviews.toml` | owner |
+| `twin` | Two securities close at the same price (to $0.0001, over $0.50) on 120 days or more, 90% of the bars of each between the first and last such day: the vendor kept an old code and copied its history to the new one. The copy held by the code that trades on past the shared range is rejected (the successor's), else by the one whose filer filed less there, else by the later name (owner, 2026-10-13) | prices, `filing_events` |
 | `vendor_adjusted` | The size of the jump equals the product of the security's later split ratios within 8% (in log): the vendor scaled a block by it, up or down. The block runs from the jump to the move back by the same factor (within 16%, so not always ten-fold); without one, it is the block before the jump when the split shows in the closes (the bars up to the split are as traded), else from the jump to the split | `splits` |
 | `foreign_quotes` | A jump undone by an opposite one within 20 bars: the bars between | prices |
 | `vendor_wrong_holder` | Two or more such flips (a mixed series): the segments between jumps priced more than 3.16x off the segment with the most `filing_events` of the security's filer (then the longest) | prices, `filing_events` |
@@ -91,6 +100,17 @@ ASRT showed that the first `vendor_adjusted` rule assumed the vendor always scal
 rejected Assertio's as-traded 2018-2023 and kept the scaled block. The rule now finds the
 side from the move back or the split; `vendor_adjusted` fell from 104K to 41K rejected bars
 (TRQ: the 2009 block only, not 2009-2020). After the review: 65 HARD, 340 WARN.
+
+Owner review 2 (2026-10-13), after the P0 rebuild left 48 HARD: 33 `exclude` entries and 9
+`accept` entries, proposed from the bars and approved as a set. Excluded: another holder's bars
+after an acquisition or a going-private (CXR, WDR, KNL, LEAF, HAWK, TNM, UCAP, PGE, CZZ),
+pre-IPO placeholders (BSY, RXRX, WISH), blocks the vendor scaled (FNCX, JONE, SCU, HH, WLL
+before 2016), the first bar of new equity after Chapter 11 on the same ticker (WLL 2020, SOA,
+WFRD, CHRD: the `relisted` treatment without its 30-day gap) and SSP's 2008-07-01 spin-off
+bar. Accepted as real: the DBD, BRLCQ and NOVA bankruptcies, the TCDA, GTXI (now ONCT's
+series) and LJPC trial failures, the ORBS squeeze, and the EQC and MIC distributions. No jump
+was a split missing from `splits`. The same day the owner added the `twin` rule: 137 pairs,
+158,500 rejected bars. After both: 0 HARD.
 
 ## 3. Sketch SQL
 

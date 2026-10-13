@@ -621,6 +621,95 @@ pub struct JumpContext {
     pub shares: HashMap<u32, Vec<(NaiveDate, f64)>>,
 }
 
+/// Days on which two securities close at the same price that make them twins.
+const TWIN_DAYS: usize = 120;
+
+/// Share of either twin's bars in the shared range that must close at the same price.
+const TWIN_SHARE: f64 = 0.9;
+
+/// Twins (owner, 2026-10-13): two securities that close at the same price (to $0.0001, over
+/// $0.50) on `TWIN_DAYS` days or more, `TWIN_SHARE` of the bars of each between the first
+/// and last such day. The vendor kept an old code and copied its history to the new one
+/// (HollyFrontier HFC and HF Sinclair DINO, 2011-2022), so training would see those days twice.
+/// Per security index, the ranges G2 rejects (`twin`): the copy held by the code that trades on
+/// past the shared range (the successor's), else by the one whose filer filed less there
+/// (`filed`), else by the later name.
+#[must_use]
+pub fn twins(
+    bars: &[Bar],
+    names: &[String],
+    filed: &HashMap<u32, Vec<NaiveDate>>,
+) -> HashMap<u32, Vec<(NaiveDate, NaiveDate)>> {
+    let mut keys: Vec<(NaiveDate, i64, u32)> = bars
+        .iter()
+        .filter(|b| b.close.is_finite() && b.close > 0.5)
+        .map(|b| (b.date, (b.close * 1e4).round() as i64, b.sec))
+        .collect();
+    keys.sort_unstable();
+    let mut pairs: HashMap<(u32, u32), (usize, NaiveDate, NaiveDate)> = HashMap::new();
+    // shortcut: a price eight securities share that day is a round number, not a twin.
+    for g in keys
+        .chunk_by(|a, b| a.0 == b.0 && a.1 == b.1)
+        .filter(|g| (2..=8).contains(&g.len()))
+    {
+        for (i, a) in g.iter().enumerate() {
+            for b in g.iter().skip(i + 1) {
+                let e = pairs
+                    .entry((a.2.min(b.2), a.2.max(b.2)))
+                    .or_insert((0, a.0, a.0));
+                e.0 += 1;
+                e.1 = e.1.min(a.0);
+                e.2 = e.2.max(a.0);
+            }
+        }
+    }
+    let series: HashMap<u32, &[Bar]> = bars
+        .chunk_by(|a, b| a.sec == b.sec)
+        .filter_map(|c| Some((c.first()?.sec, c)))
+        .collect();
+    let within = |s: &[Bar], a: NaiveDate, z: NaiveDate| {
+        s.partition_point(|x| x.date <= z) - s.partition_point(|x| x.date < a)
+    };
+    let mut out: HashMap<u32, Vec<(NaiveDate, NaiveDate)>> = HashMap::new();
+    for (&(a, b), &(n, d0, d1)) in &pairs {
+        let (Some(sa), Some(sb)) = (series.get(&a), series.get(&b)) else {
+            continue;
+        };
+        let most = within(sa, d0, d1).max(within(sb, d0, d1));
+        if n < TWIN_DAYS || (n as f64) < TWIN_SHARE * most as f64 {
+            continue;
+        }
+        let last = |s: &[Bar]| s.last().map_or(NaiveDate::MIN, |x| x.date);
+        let filings = |sec: u32| {
+            filed.get(&sec).map_or(0, |v| {
+                v.partition_point(|x| *x <= d1) - v.partition_point(|x| *x < d0)
+            })
+        };
+        let name = |sec: u32| names.get(sec as usize).map_or("", String::as_str);
+        let on = (last(sa) - last(sb)).num_days();
+        let copy = if on.abs() > 5 {
+            if on > 0 { a } else { b }
+        } else {
+            match filings(a).cmp(&filings(b)) {
+                std::cmp::Ordering::Less => a,
+                std::cmp::Ordering::Greater => b,
+                std::cmp::Ordering::Equal => {
+                    if name(a) > name(b) {
+                        a
+                    } else {
+                        b
+                    }
+                }
+            }
+        };
+        out.entry(copy).or_default().push((d0, d1));
+    }
+    for v in out.values_mut() {
+        v.sort_unstable();
+    }
+    out
+}
+
 /// An inclusive range of bar indices G2 rejects, with its reason.
 type Span = (usize, usize, &'static str);
 
@@ -651,7 +740,8 @@ fn covering(spans: &[Span], k: usize) -> Option<&'static str> {
 
 /// The rejected spans of one security and its jumps (`ten_fold_jumps` less the accepted ones),
 /// each with the reason of the span that explains it, if any. Rules, in order: owner
-/// exclusions (`reviewed`); blocks the vendor scaled for later splits (the size of the jump
+/// exclusions (`reviewed`); the copy of a twin's history (`twin`, the ranges [`twins`] gives);
+/// blocks the vendor scaled for later splits (the size of the jump
 /// equals their product within 8%, `vendor_adjusted`: up to the move back by the same factor,
 /// else before the jump when the split shows in the closes, else from the jump to the split); a jump undone by an opposite one within 20 bars
 /// marks the bars between (`foreign_quotes`), and with two such flips the series is mixed:
@@ -665,17 +755,22 @@ fn classify(
     sp: &[(NaiveDate, f64)],
     sec: u32,
     cx: &JumpContext,
+    twin: &[(NaiveDate, NaiveDate)],
 ) -> (Vec<Span>, Vec<Jump>) {
     let n = s.len();
     let at = |k: usize| s.get(k).map_or_else(NaiveDate::default, |b| b.date);
     let mut spans: Vec<Span> = Vec::new();
-    for (a, b) in cx.excluded.get(&sec).into_iter().flatten() {
+    let reviewed = cx.excluded.get(&sec).into_iter().flatten();
+    for (&(a, b), why) in reviewed
+        .map(|r| (r, "reviewed"))
+        .chain(twin.iter().map(|r| (r, "twin")))
+    {
         let (i, j) = (
-            s.partition_point(|x| x.date < *a),
-            s.partition_point(|x| x.date <= *b),
+            s.partition_point(|x| x.date < a),
+            s.partition_point(|x| x.date <= b),
         );
         if i < j {
-            spans.push((i, j - 1, "reviewed"));
+            spans.push((i, j - 1, why));
         }
     }
     let jumps: Vec<(usize, f64)> = ten_fold_jumps(s, sp)
@@ -844,11 +939,13 @@ pub fn price_sanity(
     let (mut pairs, mut windows, mut within) = (0usize, 0usize, 0usize);
     let (mut recon, mut rejected) = (Vec::new(), Vec::new());
     let mut by_reason: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    let twin = twins(bars, names, &cx.filed);
     for s in bars.chunk_by(|a, b| a.sec == b.sec) {
         let sec = s.first().map_or(0, |b| b.sec);
         let sp = splits.get(&sec).unwrap_or(&none);
         let dv = divs.get(&sec).unwrap_or(&none);
-        let (spans, ten_fold) = classify(s, sp, sec, cx);
+        let tw = twin.get(&sec).map(Vec::as_slice).unwrap_or_default();
+        let (spans, ten_fold) = classify(s, sp, sec, cx, tw);
         let mut masked = vec![false; s.len()];
         for &(a, b, why) in &spans {
             masked
@@ -1268,6 +1365,53 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["A"],
             "A's dividend differs from the vendor; C's rejected bars are skipped"
+        );
+    }
+
+    #[test]
+    fn twins_keep_the_old_code_and_reject_the_copy() {
+        let day = |k: u64| d("2011-07-01") + chrono::Days::new(k);
+        let bar = |sec, k, close: f64| Bar {
+            sec,
+            date: day(k),
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 100,
+            adj: close,
+        };
+        let px = |k: u64| 20.0 + (k % 37) as f64 * 0.37 + (k / 37) as f64 * 0.01;
+        let mut bars = Vec::new();
+        for k in 0..300 {
+            if k < 200 {
+                bars.push(bar(0, k, px(k)));
+            }
+            // DINO: HFC's 200 days, then its own prices.
+            bars.push(bar(1, k, if k < 200 { px(k) } else { px(k) * 1.1 }));
+            bars.push(bar(2, k, px(k) + 3.0));
+            // Two codes with one series to the end.
+            bars.push(bar(3, k, px(k) + 7.0));
+            bars.push(bar(4, k, px(k) + 7.0));
+        }
+        bars.sort_by_key(|b| (b.sec, b.date));
+        let names: Vec<String> = ["HFC", "DINO", "X", "AD", "AD2"].map(String::from).to_vec();
+        let filed = HashMap::from([(4, vec![day(50), day(150)])]);
+        let t = twins(&bars, &names, &filed);
+        assert_eq!(
+            t.get(&1),
+            Some(&vec![(day(0), day(199))]),
+            "DINO trades on, so its copy goes"
+        );
+        assert_eq!(
+            t.get(&3),
+            Some(&vec![(day(0), day(299))]),
+            "same end: the one whose filer filed less"
+        );
+        assert_eq!(
+            t.len(),
+            2,
+            "HFC, the unrelated X and the filing AD2 keep their bars"
         );
     }
 
