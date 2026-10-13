@@ -9,7 +9,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 
 /// Bumped when the parser's output changes.
-pub const PARSE_VERSION: &str = "1";
+pub const PARSE_VERSION: &str = "2";
 
 /// One filing from `submissions`.
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +141,8 @@ const INSTANTS: &[(&str, &[&str])] = &[
 
 const COVER_SHARES: &str = "dei:EntityCommonStockSharesOutstanding";
 const BALANCE_SHARES: &str = "CommonStockSharesOutstanding";
+/// All classes together, the fallback for a multi-class filer (D4).
+const WEIGHTED_SHARES: &str = "WeightedAverageNumberOfSharesOutstandingBasic";
 /// Inputs of the two recorded fallbacks.
 const EXTRA: &[&str] = &[
     "CostOfRevenue",
@@ -160,6 +162,7 @@ pub fn parse_facts(body: &Value) -> Facts {
             .chain(INSTANTS)
             .any(|(_, ts)| ts.contains(&tag))
             || tag == BALANCE_SHARES
+            || tag == WEIGHTED_SHARES
             || EXTRA.contains(&tag)
     };
     let mut out = Facts::new();
@@ -175,7 +178,7 @@ pub fn parse_facts(body: &Value) -> Facts {
             if !((wanted(tag) && prefix.is_empty()) || key == COVER_SHARES) {
                 continue;
             }
-            let unit = if key == COVER_SHARES || tag == BALANCE_SHARES {
+            let unit = if key == COVER_SHARES || tag == BALANCE_SHARES || tag == WEIGHTED_SHARES {
                 "shares"
             } else {
                 "USD"
@@ -484,27 +487,47 @@ pub fn rows(filings: &[Filing], facts: &Facts, today: NaiveDate) -> (Vec<Row>, D
     (out, dropped)
 }
 
-/// Cover-page shares of this accession (several values on the latest cover date are summed:
-/// one per class), else the balance-sheet count at the period end (`SOURCES.md` step 7).
+/// The filing's share count (`SOURCES.md` step 7): the cover-page shares of this accession
+/// (several values on the latest cover date are summed: one per class), else the balance-sheet
+/// count at the period end, else the basic weighted-average shares of the filing's shortest
+/// period ending at the period end. A count of zero or less is no count. A cover or balance
+/// count under half the weighted average is one class of several (`companyfacts` leaves out the
+/// classes a filer tags by class: DDOG, SPG, META), so the weighted average replaces it. The
+/// cover count is stated as of its cover date; the other two as of the filing date, because
+/// statements give a split before their issue retroactive effect.
 fn shares(facts: &Facts, f: &Filing, pe: NaiveDate, r: &mut Row) {
     let cover: Vec<&Fact> = facts
         .get(COVER_SHARES)
         .map(|v| {
             v.iter()
-                .filter(|x| x.accn == f.accession && x.end <= f.filing_date)
+                .filter(|x| x.accn == f.accession && x.end <= f.filing_date && x.val > 0.0)
                 .collect()
         })
         .unwrap_or_default();
-    if let Some(asof) = cover.iter().map(|x| x.end).max() {
-        let sum = cover.iter().filter(|x| x.end == asof).map(|x| x.val).sum();
-        r.values.insert("shares_outstanding", sum);
-        r.tag_used.insert("shares_outstanding", COVER_SHARES.into());
-        r.shares_asof_date = Some(asof);
-    } else if let Some(v) = instant(facts, BALANCE_SHARES, f, pe) {
+    let cover = cover.iter().map(|x| x.end).max().map(|asof| {
+        let sum: f64 = cover.iter().filter(|x| x.end == asof).map(|x| x.val).sum();
+        (sum, asof, COVER_SHARES)
+    });
+    let balance = instant(facts, BALANCE_SHARES, f, pe)
+        .filter(|v| *v > 0.0)
+        .map(|v| (v, f.filing_date, BALANCE_SHARES));
+    let weighted = facts
+        .get(WEIGHTED_SHARES)
+        .into_iter()
+        .flatten()
+        .filter(|x| x.accn == f.accession && x.end == pe && x.val > 0.0)
+        .filter_map(|x| Some((days(pe, x.start?), x.val)))
+        .filter(|(d, _)| *d >= 80)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, v)| (v, f.filing_date, WEIGHTED_SHARES));
+    let best = match (cover.or(balance), weighted) {
+        (Some(p), Some(w)) if p.0 < 0.5 * w.0 => Some(w),
+        (p, w) => p.or(w),
+    };
+    if let Some((v, asof, tag)) = best {
         r.values.insert("shares_outstanding", v);
-        r.tag_used
-            .insert("shares_outstanding", BALANCE_SHARES.into());
-        r.shares_asof_date = Some(pe);
+        r.tag_used.insert("shares_outstanding", tag.into());
+        r.shares_asof_date = Some(asof);
     }
 }
 
@@ -720,6 +743,58 @@ mod tests {
         );
         assert!(!a.values.contains_key("total_assets"));
         assert!(k.tag_used["revenues"] == "Revenues");
+    }
+
+    #[test]
+    fn multi_class_filers_fall_back_to_the_weighted_average() {
+        let subs = json!({
+            "accessionNumber": ["zero", "one-class", "plain"],
+            "filingDate": ["2020-02-20", "2020-05-07", "2020-08-06"],
+            "reportDate": ["2019-12-31", "2020-03-31", "2020-06-30"],
+            "acceptanceDateTime": ["", "", ""],
+            "form": ["10-K", "10-Q", "10-Q"],
+        });
+        let fact = |s: Option<&str>, e: &str, v: f64, a: &str, filed: &str| json!({"start": s, "end": e, "val": v, "accn": a, "filed": filed});
+        let body = json!({"facts": {
+            "us-gaap": {
+                "Assets": {"units": {"USD": [
+                    fact(None, "2019-12-31", 1.0, "zero", "2020-02-20"),
+                    fact(None, "2020-03-31", 1.0, "one-class", "2020-05-07"),
+                    fact(None, "2020-06-30", 1.0, "plain", "2020-08-06"),
+                ]}},
+                "WeightedAverageNumberOfSharesOutstandingBasic": {"units": {"shares": [
+                    fact(Some("2019-01-01"), "2019-12-31", 300e6, "zero", "2020-02-20"),
+                    fact(Some("2020-01-01"), "2020-03-31", 324e6, "one-class", "2020-05-07"),
+                    fact(Some("2019-01-01"), "2020-03-31", 999e6, "one-class", "2020-05-07"),
+                ]}},
+            },
+            "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                fact(None, "2020-02-14", 0.0, "zero", "2020-02-20"),
+                fact(None, "2020-05-01", 8000.0, "one-class", "2020-05-07"),
+                fact(None, "2020-08-01", 7.0, "plain", "2020-08-06"),
+            ]}}},
+        }});
+        let (rows, _) = rows(&filings(&subs), &parse_facts(&body), d("2026-01-01"));
+        let got: Vec<(f64, &str, Option<NaiveDate>)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.values["shares_outstanding"],
+                    r.tag_used["shares_outstanding"].as_str(),
+                    r.shares_asof_date,
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (300e6, WEIGHTED_SHARES, Some(d("2020-02-20"))),
+                (324e6, WEIGHTED_SHARES, Some(d("2020-05-07"))),
+                (7.0, COVER_SHARES, Some(d("2020-08-01"))),
+            ],
+            "a zero cover is no count; one class of 8,000 shares gives way to the quarter's \
+             weighted average; a plain cover count stays"
+        );
     }
 
     #[test]

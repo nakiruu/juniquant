@@ -541,6 +541,12 @@ pub struct Bar {
 /// `(ex_date, value)` per security index: split ratios or dividends as paid, sorted.
 pub type Events = HashMap<u32, Vec<(NaiveDate, f64)>>;
 
+/// A day traded above this many dollars is a vendor unit error: over three times the largest real
+/// one in the data (Tesla's S&P inclusion, 2020-12-18, $154bn).
+///
+/// shortcut: a fixed dollar level; raise it if real days approach it.
+const MAX_DOLLAR_VOLUME: f64 = 5e11;
+
 fn bad_row(b: &Bar) -> Option<&'static str> {
     let pos = [b.open, b.high, b.low, b.close]
         .iter()
@@ -553,6 +559,8 @@ fn bad_row(b: &Bar) -> Option<&'static str> {
         Some("close outside [low, high]")
     } else if b.volume < 0 {
         Some("volume negative or null")
+    } else if b.close * b.volume as f64 > MAX_DOLLAR_VOLUME {
+        Some("dollar volume over $500bn")
     } else {
         None
     }
@@ -1179,6 +1187,29 @@ mod tests {
         assert_eq!(o.offenders.len(), 2);
         let none = calendar_match(&cal, &Default::default(), from, to);
         assert_eq!((none.level, none.measured), (Level::Fail, None));
+    }
+
+    #[test]
+    fn a_day_over_500bn_is_a_bad_row() {
+        let b = |volume| Bar {
+            sec: 0,
+            date: d("2024-01-02"),
+            open: 100.0,
+            high: 100.0,
+            low: 100.0,
+            close: 100.0,
+            volume,
+            adj: 100.0,
+        };
+        assert_eq!(
+            bad_row(&b(1_000_000_000)),
+            None,
+            "$100bn: Tesla traded $154bn one day"
+        );
+        assert_eq!(
+            bad_row(&b(10_000_000_000)),
+            Some("dollar volume over $500bn")
+        );
     }
 
     #[test]

@@ -145,6 +145,7 @@ pub struct Fetcher {
     manifest: Arc<Manifest>,
     raw: PathBuf,
     quality: QualityLog,
+    offline: bool,
 }
 
 impl Fetcher {
@@ -172,7 +173,14 @@ impl Fetcher {
             manifest,
             raw,
             quality,
+            offline: false,
         })
+    }
+
+    /// Never send a request: a chunk that is not done comes back [`Outcome::Failed`] untouched
+    /// in the manifest (a re-parse of the landing zone that must not reach the source).
+    pub fn set_offline(&mut self) {
+        self.offline = true;
     }
 
     /// The same fetcher sending `name: value` on every request (an API key header). The value
@@ -224,6 +232,10 @@ impl Fetcher {
         let key = (id, r.entity, r.chunk);
         if self.manifest.status(key)?.is_some_and(Status::is_done) {
             return Ok(Outcome::Skipped);
+        }
+        if self.offline {
+            self.log(r, Level::Warn, 0, Some("offline run: not fetched".into()));
+            return Ok(Outcome::Failed("offline".into()));
         }
         self.manifest.begin_fetch(key)?;
         let mut backoff = self.spec.base_backoff;

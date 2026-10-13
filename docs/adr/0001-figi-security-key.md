@@ -100,6 +100,27 @@ CUSIP, ISIN and FIGI per code; HTTP 403 on the current plan; option A, kept for 
   BACKFILL §5.1, §5.5, §8, SOURCES identifiers, QUALITY-GATES G5), the key columns in `02`-`07`,
   `16` and `18`.
 
+## Amendment 2026-10-12: training-only keys (owner)
+
+The audit of 2026-10-12 found that most of the survivorship gap was this decision's, not the
+vendor's: 6,124 landed EODHD common-stock codes (9.5M bars, 5,287 delisted) had no FIGI, and
+against EDGAR the lake held only 41-55% of the operating companies that delisted in 2006-2017.
+OpenFIGI has no FIGI for many retired identifiers (Bear Stearns, Wachovia, National City,
+Ambac), and the dropped names delisted almost four times as often as the kept ones.
+
+So a delisted code that no FIGI route reaches is keyed `EOD:<EODHD code>` when one EDGAR filer
+with its name (`cik-lookup-data.txt`) filed a 10-K or 10-Q (the landed submissions zip) while
+the code traded (`cik_confirmed`); of several such filers, the one that filed between its first
+and last bar (Bear Stearns Companies Inc, not the LLC that filed after the merger). The same
+choice gives a FIGI security whose name several filers share its CIK: 589 had none, Lehman
+Brothers Holdings among them, so no filings, fundamentals or delisting record. The key enters `prices`, the universe
+and training like a FIGI (`resolution = eod_code`); it is never bought, since it is delisted and
+in no IWF/IWP snapshot. Left out and counted as before: an active code, a filer that a FIGI
+security already has (a twin or another class), and codes of one filer whose prices overlap.
+Two FIGI routes were also fixed: a when-issued line (`RBC-W`, `NEOGEN CORP-WI`) no longer makes
+an ISIN ambiguous (Regal Rexnord had no FIGI), and an OpenFIGI name cut at 28 characters
+matches a code whose name starts with it (never a name with an instrument word).
+
 ## Alternatives considered
 
 - **An internal permanent id with a ledger** (the earlier draft): complete coverage, but its own

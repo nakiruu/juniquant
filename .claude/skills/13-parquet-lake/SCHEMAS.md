@@ -144,7 +144,7 @@ own primary period, as first reported there.
 | `long_term_debt` | `float64` | yes | USD, instant |
 | `retained_earnings` | `float64` | yes | USD, instant |
 | `ebit` | `float64` | yes | USD, same duration rule as `revenues` |
-| `shares_outstanding` | `float64` | yes | Count from the cover page (`dei:EntityCommonStockSharesOutstanding`), stated as of `shares_asof_date`; not `us-gaap` (verify). Not adjusted for later splits |
+| `shares_outstanding` | `float64` | yes | Count from the cover page (`dei:EntityCommonStockSharesOutstanding`, classes summed), else `us-gaap:CommonStockSharesOutstanding`, else `us-gaap:WeightedAverageNumberOfSharesOutstandingBasic` (all classes; it also replaces a cover or balance count under half of it, one class of several), stated as of `shares_asof_date`; a count of zero or less is null (`01-data-ingestion/SOURCES.md` step 7). Not adjusted for later splits |
 | `accession` | `utf8` | no | Appended. EDGAR accession number, `0000320193-24-000006` form. Primary-key part |
 | `cik` | `utf8` | no | Appended. 10-digit zero-padded |
 | `fiscal_year` | `int32` | yes | Appended. Fiscal year of the filing's own period, from the filer's DEI data (`fy`), checked against the period; null if inconsistent |
@@ -153,7 +153,7 @@ own primary period, as first reported there.
 | `acceptance_datetime` | `timestamp[ns, UTC]` | yes | Appended. EDGAR acceptance timestamp (`acceptanceDateTime` in submissions); null when unavailable |
 | `amends_accession` | `utf8` | yes | Appended. For `/A` forms, the accession of the filing being amended; null otherwise |
 | `tag_used` | `utf8` | yes | Appended. JSON object `{field: xbrl_tag}` recording which candidate tag supplied each non-null field (for example `{"revenues":"Revenues","shares_outstanding":"dei:EntityCommonStockSharesOutstanding"}`) |
-| `shares_asof_date` | `date32` | yes | Appended. The date the cover-page share count is stated for (at or before `filing_date`). Used to align splits to the share count; not a decision date |
+| `shares_asof_date` | `date32` | yes | Appended. The date the share count is stated for: the cover date of a cover-page count (at or before `filing_date`), the `filing_date` of a balance-sheet or weighted-average count (statements give a split before their issue retroactive effect). Used to align splits to the share count; not a decision date |
 | `revenue_ttm` | `float64` | yes | Appended. Trailing four discrete fiscal quarters ending at this filing's period, using values known at `filing_date`; null unless four consecutive quarters are available |
 | `net_income_ttm` | `float64` | yes | Appended. Same rule |
 | `operating_cash_flow_ttm` | `float64` | yes | Appended. Same rule |
@@ -946,9 +946,9 @@ class on US venues) over its whole life. Redefined before first write on
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `figi` | `utf8` | no | US composite FIGI (`BBG` + 9 characters), from OpenFIGI |
+| `figi` | `utf8` | no | US composite FIGI (`BBG` + 9 characters), from OpenFIGI; or the training-only key `EOD:<EODHD code>` of a delisted code without one (D17 amended 2026-10-12, `resolution = eod_code`) |
 | `share_class_figi` | `utf8` | yes | OpenFIGI share-class FIGI |
-| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK; null until resolved. Active: the current ticker in the SEC ticker file. Otherwise (every delisted security): the one CIK whose EDGAR name or former name (`cik-lookup-data.txt`) has the same normalized name and whose filings overlap the price span within a year; a name of two CIKs stays null. `resolution_note` ends `; cik:name` for those (J4a, `BACKFILL.md` §5) |
+| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK; null until resolved. Active: the current ticker in the SEC ticker file. Otherwise (every delisted security): the one CIK whose EDGAR name or former name (`cik-lookup-data.txt`) has the same normalized name and whose filings overlap the price span within a year; of several CIKs with that name, the one that filed a 10-K or 10-Q between the first and last bar (2026-10-12), else null. `resolution_note` ends `; cik:name` for those (J4a, `BACKFILL.md` §5) |
 | `ticker` | `utf8` | no | Canonical form of the latest ticker (from the latest EODHD code) |
 | `name` | `utf8` | no | EODHD `Name` of the latest code |
 | `eodhd_code` | `utf8` | no | The latest EODHD code without `.US` (`MON_old`, `BRK-B`) |
@@ -956,7 +956,7 @@ class on US venues) over its whole life. Redefined before first write on
 | `delisted` | `bool` | no | True if every code of the security is in the delisted list |
 | `security_type` | `utf8` | yes | OpenFIGI `securityType` (`Common Stock`, `REIT`, ...) |
 | `figi_name` | `utf8` | yes | OpenFIGI `name` |
-| `resolution` | `utf8` | no | How the FIGI was found: `override` / `isin` / `cusip_13f` / `rename` (a renamed code or vendor twin of a resolved code, `01-data-ingestion/SOURCES.md` Identifiers) |
+| `resolution` | `utf8` | no | How the FIGI was found: `override` / `isin` / `cusip_13f` (also a name OpenFIGI cut at 28 characters that starts the code's name) / `rename` (a renamed code or vendor twin of a resolved code, `01-data-ingestion/SOURCES.md` Identifiers) / `eod_code` (no FIGI: the key `EOD:<code>`, D17) |
 | `resolution_note` | `utf8` | yes | Evidence: the ISIN or CUSIP used, the normalized names compared |
 | `updated_at` | `timestamp[ns, UTC]` | no | |
 | `sic` | `utf8` | yes | 4-digit SIC code of the issuer (CIK) from EDGAR submissions `sic`; null if unresolved or absent. Current value only (`UNIVERSE.md` §6) |
@@ -981,7 +981,7 @@ and is combined in `price_coverage`.
 |---|---|---|---|
 | `ticker` | `utf8` | no | Canonical symbol |
 | `cik` | `utf8` | no | |
-| `delist_class` | `utf8` | no | `bankruptcy` / `acquired` / `delisted_other` / `deregistered` |
+| `delist_class` | `utf8` | no | `bankruptcy` / `acquired` / `delisted_performance` (rule D3b: an 8-K Item 3.01 in the year before the Form 25, no acquisition) / `delisted_other` / `deregistered` |
 | `confidence` | `utf8` | no | `high` / `medium` / `low` |
 | `rule_id` | `utf8` | no | The classification rule that fired (`SURVIVORSHIP.md` §3) |
 | `form25_filing_date` | `date32` | yes | Form 25 / 25-NSE filing date |
@@ -1012,10 +1012,10 @@ item `-`. Usable from `filing_date` (the same point-in-time rule as
 | `item` | `utf8` | no | 8-K item number (`2.02`) or `-` |
 | `ticker` | `utf8` | no | Canonical symbol, via `security_master` (one row per listed class) |
 | `cik` | `utf8` | no | |
-| `form_type` | `utf8` | no | `8-K`, `8-K/A`, `25`, `25-NSE`, `15-12B`, `15-12G`, `15-15D`, `NT 10-K`, `NT 10-Q` |
+| `form_type` | `utf8` | no | `8-K`, `8-K/A`, `25`, `25-NSE`, `15-12B`, `15-12G`, `15-15D`, `NT 10-K`, `NT 10-Q`, and the annual reports `10-K`, `10-KT`, `10-K405`, `10-KSB`, `20-F`, `40-F` (2026-10-12: domestic or foreign filer as of each filing, the D12 scope) |
 | `filing_date` | `date32` | no | **Point-in-time stamp** |
 | `acceptance_datetime` | `timestamp[ns, UTC]` | yes | |
-| `event_type` | `utf8` | no | `earnings_release` (2.02) / `delisting_notice` (3.01) / `bankruptcy` (1.03) / `acquisition_completed` (2.01) / `change_in_control` (5.01) / `auditor_change` (4.01) / `non_reliance_restatement` (4.02) / `obligation_acceleration` (2.04) / `delisting_filing` (Form 25) / `deregistration` (Form 15) / `late_filing_notice` (NT) / `other` |
+| `event_type` | `utf8` | no | `earnings_release` (2.02) / `delisting_notice` (3.01) / `bankruptcy` (1.03) / `acquisition_completed` (2.01) / `change_in_control` (5.01) / `auditor_change` (4.01) / `non_reliance_restatement` (4.02) / `obligation_acceleration` (2.04) / `delisting_filing` (Form 25) / `deregistration` (Form 15) / `late_filing_notice` (NT) / `annual_report` (10-K, 20-F, 40-F) / `other` |
 | `figi` | `utf8` | no | Appended 2026-10-12 before first write (D17). Composite FIGI of the security (`security_master`) |
 
 Primary key: `(accession, item, figi)` (re-keyed from `ticker` 2026-10-12, before first write, D17: one ticker and CIK can name two securities). New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).

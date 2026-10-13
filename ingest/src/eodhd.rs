@@ -14,7 +14,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc, Weekday};
 use serde_json::Value;
 
 /// Bumped when a parser's output changes; recorded per stage file.
-pub const PARSE_VERSION: &str = "1";
+pub const PARSE_VERSION: &str = "2";
 
 /// Exchanges in the D12 scope (as the symbol list names them).
 const EXCHANGES: &[&str] = &["NYSE", "NASDAQ", "AMEX", "NYSE MKT"];
@@ -32,6 +32,8 @@ pub struct Code {
     pub name: String,
     /// `Isin` in the symbol list, when it has one.
     pub isin: Option<String>,
+    /// `Exchange` in the symbol list (`NYSE`, `NASDAQ`, `AMEX`, `NYSE MKT`); empty when unknown.
+    pub exchange: String,
 }
 
 /// The canonical ticker of an EODHD code: the `_old`, `_old1`, ... suffix of an earlier
@@ -81,6 +83,7 @@ pub fn parse_symbols(body: &[u8], delisted: bool) -> (Vec<Code>, Vec<String>) {
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty())
                     .map(str::to_owned),
+                exchange: ex.to_owned(),
             }),
             None => bad.push(code.to_owned()),
         }
@@ -170,10 +173,95 @@ fn ts() -> DataType {
     DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()))
 }
 
+/// A split this large either way is tested for the vendor's volume step ([`volume_factors`]);
+/// below it, ordinary changes in trading around a split hide the step.
+const VOLUME_TEST_RATIO: f64 = 9.0;
+/// Bars each side of an ex-date in the volume step test.
+const VOLUME_WINDOW: usize = 20;
+
+/// Median vendor volume of the [`VOLUME_WINDOW`] bars from `ex_date` over that of the ones
+/// before it (each side needs half of them with volume); `None` when untestable.
+fn volume_step(bars: &[(NaiveDate, f64, f64)], ex_date: NaiveDate) -> Option<f64> {
+    let i = bars.partition_point(|b| b.0 < ex_date);
+    let median = |w: Option<&[(NaiveDate, f64, f64)]>| {
+        let mut v: Vec<f64> = w
+            .unwrap_or_default()
+            .iter()
+            .map(|b| b.2)
+            .filter(|v| *v > 0.0)
+            .collect();
+        v.sort_by(f64::total_cmp);
+        (v.len() * 2 >= VOLUME_WINDOW)
+            .then(|| v.get(v.len() / 2).copied())
+            .flatten()
+    };
+    let pre = median(bars.get(i.saturating_sub(VOLUME_WINDOW)..i))?;
+    let post = median(bars.get(i..(i + VOLUME_WINDOW).min(bars.len())))?;
+    Some(post / pre)
+}
+
+/// The raw closes move by the split at `ex_date`: the first close on or after it over the last
+/// one before it, times `ratio`, in `[0.4, 2.5]` (G2's split test). A split they do not show
+/// is not in the vendor's raw prices: a phantom (Noble's "1:500" of 2009, a 1:1 redomicile)
+/// or prices the vendor adjusted, whose volume it adjusted with them.
+fn split_shows(bars: &[(NaiveDate, f64, f64)], ex_date: NaiveDate, ratio: f64) -> bool {
+    let i = bars.partition_point(|b| b.0 < ex_date);
+    match (i.checked_sub(1).and_then(|p| bars.get(p)), bars.get(i)) {
+        (Some(p), Some(b)) if p.1 > 0.0 => (0.4..=2.5).contains(&(b.1 / p.1 * ratio)),
+        _ => false,
+    }
+}
+
+/// `(ex_date, F)` from the latest split back: the vendor volume of a bar before `ex_date`
+/// (and on or after the previous split's) is `F` times the volume as traded. EODHD documents
+/// split-adjusted volume, but not every history is (CHK before its 2020 1:200 split was raw;
+/// Key Energy before 2016 was raw for its 2020 split too): between two splits the vendor's
+/// factor is constant, so at each split of at least [`VOLUME_TEST_RATIO`] either way the step
+/// of its volume picks the nearest of: adjusted for this split (`F` of the later segment times
+/// the ratio), not for this one (the later `F`), or for none (1). A smaller split counts as
+/// adjusted, the documented behaviour; an untestable large one, and a split the raw closes do
+/// not show ([`split_shows`]), count as not adjusted. `bars` are `(date, close, vendor
+/// volume)` in date order; `splits` `(ex_date, ratio)` in date order, none after the last bar.
+///
+/// shortcut: a window can straddle a neighbouring split less than 20 bars away; bound the
+/// windows by the neighbours if such pairs matter.
+fn volume_factors(
+    bars: &[(NaiveDate, f64, f64)],
+    splits: &[(NaiveDate, f64)],
+) -> Vec<(NaiveDate, f64)> {
+    let mut out = Vec::new();
+    let mut later = 1.0;
+    for &(x, r) in splits.iter().rev() {
+        if !split_shows(bars, x, r) {
+            continue;
+        }
+        let f = if r.ln().abs() < VOLUME_TEST_RATIO.ln() {
+            later * r
+        } else {
+            match volume_step(bars, x) {
+                Some(s) => {
+                    let seen = later * r / s;
+                    [later * r, later, 1.0]
+                        .into_iter()
+                        .min_by(|a, b| (a / seen).ln().abs().total_cmp(&(b / seen).ln().abs()))
+                        .unwrap_or(later)
+                }
+                None => later,
+            }
+        };
+        out.push((x, f));
+        later = f;
+    }
+    out.reverse();
+    out
+}
+
 /// `prices` rows from an `/api/eod` body (`SOURCES.md` EODHD normalization): OHLC as returned
-/// (raw), volume divided by `F(d)`, the product of the split ratios with `d < ex_date <=`
-/// the fetch date. Dropped: a null field, `high < low`, a close outside `[low, high]`, a
-/// negative volume, a bar after the fetch date (ET), and today's bar fetched before 16:05 ET.
+/// (raw), volume divided by `F(d)`, the product of the ratios of the splits with
+/// `d < ex_date <=` the fetch date and the last bar, as far as the vendor applied them to its
+/// volume (`volume_factors`). Dropped: a null field, `high < low`, a close outside `[low, high]`,
+/// a negative volume, a bar after the fetch date (ET), today's bar fetched before 16:05 ET,
+/// and a bar on a day that is not a session of `cal` (the vendor has a few holiday bars).
 ///
 /// # Errors
 ///
@@ -181,6 +269,7 @@ fn ts() -> DataType {
 pub fn prices(
     body: &[u8],
     splits: &[(NaiveDate, f64, f64)],
+    cal: &calendar::Calendar,
     o: &Origin,
 ) -> Result<(RecordBatch, Dropped), arrow::error::ArrowError> {
     let rows: Vec<Value> = serde_json::from_slice(body).unwrap_or_default();
@@ -188,10 +277,8 @@ pub fn prices(
     let today = et.date();
     let session_done = et.time() >= chrono::NaiveTime::from_hms_opt(16, 5, 0).unwrap_or_default();
     let mut dropped = Dropped::new();
-    let mut dates: Vec<i32> = Vec::new();
-    let mut ohlc: [Vec<f64>; 4] = Default::default();
-    let mut vols: Vec<i64> = Vec::new();
-    let mut adj: Vec<Option<f64>> = Vec::new();
+    // (date, [open, high, low, close], vendor volume, adjusted close)
+    let mut bars: Vec<(NaiveDate, [f64; 4], f64, Option<f64>)> = Vec::new();
     for r in &rows {
         let num = |k: &str| r.get(k).and_then(Value::as_f64);
         let Some(d) = r
@@ -216,6 +303,8 @@ pub fn prices(
             Some("future_bar")
         } else if d == today && !session_done {
             Some("partial_bar")
+        } else if !cal.is_trading_day(d) {
+            Some("non_session")
         } else if hi < lo || cl < lo || cl > hi || vol < 0.0 {
             Some("sanity")
         } else {
@@ -225,25 +314,40 @@ pub fn prices(
             *dropped.entry(why).or_default() += 1;
             continue;
         }
-        let f: f64 = splits
-            .iter()
-            .filter(|(x, _, _)| *x > d && *x <= today)
-            .map(|(_, n, m)| n / m)
-            .product();
-        dates.push(days(d));
-        for (i, v) in [op, hi, lo, cl].into_iter().enumerate() {
-            if let Some(col) = ohlc.get_mut(i) {
-                col.push(round4(v));
-            }
-        }
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "share counts are far below 2^53"
-        )]
-        vols.push((vol / f).round() as i64);
-        adj.push(num("adjusted_close"));
+        bars.push((d, [op, hi, lo, cl], vol, num("adjusted_close")));
     }
-    let n = dates.len();
+    bars.sort_by_key(|b| b.0);
+    let series: Vec<(NaiveDate, f64, f64)> = bars.iter().map(|b| (b.0, b.1[3], b.2)).collect();
+    // A split after the last bar is a later holder's of the code (SunEdison's SUNE, 2022-2025).
+    let last = bars.last().map_or(NaiveDate::MIN, |b| b.0);
+    let mut own: Vec<(NaiveDate, f64)> = splits
+        .iter()
+        .filter(|(x, _, _)| *x <= today && *x <= last)
+        .map(|(x, n, m)| (*x, n / m))
+        .collect();
+    own.sort_by_key(|s| s.0);
+    let factors = volume_factors(&series, &own);
+    let n = bars.len();
+    let mut ohlc: [Vec<f64>; 4] = Default::default();
+    for b in &bars {
+        for (col, v) in ohlc.iter_mut().zip(b.1) {
+            col.push(round4(v));
+        }
+    }
+    let dates: Vec<i32> = bars.iter().map(|b| days(b.0)).collect();
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "share counts are far below 2^53"
+    )]
+    let vols: Vec<i64> = bars
+        .iter()
+        .map(|(d, _, vol, _)| {
+            // The factor of the segment the bar is in: the first split after it, else 1.
+            let f = factors.iter().find(|(x, _)| x > d).map_or(1.0, |s| s.1);
+            (vol / f).round() as i64
+        })
+        .collect();
+    let adj: Vec<Option<f64>> = bars.iter().map(|b| b.3).collect();
     let [op, hi, lo, cl] = ohlc;
     let cols: Vec<ArrayRef> = vec![
         Arc::new(StringArray::from(vec![o.figi.as_str(); n])),
@@ -276,7 +380,8 @@ pub fn prices(
     Ok((RecordBatch::try_new(s, cols)?, dropped))
 }
 
-/// `splits` rows.
+/// `splits` rows; a split dated after the fetch date (ET) is dropped (announced, not yet
+/// effective: it returns with a later fetch).
 ///
 /// # Errors
 ///
@@ -284,7 +389,13 @@ pub fn prices(
 pub fn splits_batch(
     splits: &[(NaiveDate, f64, f64)],
     o: &Origin,
-) -> Result<RecordBatch, arrow::error::ArrowError> {
+) -> Result<(RecordBatch, Dropped), arrow::error::ArrowError> {
+    let today = eastern(o.fetched_at).date();
+    let (splits, future): (Vec<_>, Vec<_>) = splits.iter().copied().partition(|s| s.0 <= today);
+    let mut dropped = Dropped::new();
+    if !future.is_empty() {
+        dropped.insert("future_event", future.len());
+    }
     let n = splits.len();
     let col = |f: fn(&(NaiveDate, f64, f64)) -> f64| -> ArrayRef {
         Arc::new(Float64Array::from(splits.iter().map(f).collect::<Vec<_>>()))
@@ -313,12 +424,13 @@ pub fn splits_batch(
         ("fetched_at", ts()),
         ("raw_sha256", DataType::Utf8),
     ]);
-    RecordBatch::try_new(s, cols)
+    Ok((RecordBatch::try_new(s, cols)?, dropped))
 }
 
 /// `dividends` rows from an `/api/div` body: `amount` = `unadjustedValue` (as paid); a row
-/// without it is dropped. Two rows on one ex-date are summed (a regular and a special
-/// dividend on the same day keep the key unique).
+/// without it is dropped, and so is one dated after the fetch date (ET: declared, not yet
+/// paid). Two rows on one ex-date are summed (a regular and a special dividend on the same
+/// day keep the key unique).
 ///
 /// # Errors
 ///
@@ -328,6 +440,7 @@ pub fn dividends(
     o: &Origin,
 ) -> Result<(RecordBatch, Dropped), arrow::error::ArrowError> {
     let rows: Vec<Value> = serde_json::from_slice(body).unwrap_or_default();
+    let today = eastern(o.fetched_at).date();
     let mut dropped = Dropped::new();
     let mut by_date: BTreeMap<NaiveDate, (f64, Option<String>)> = BTreeMap::new();
     for r in &rows {
@@ -340,6 +453,10 @@ pub fn dividends(
             *dropped.entry("null_field").or_default() += 1;
             continue;
         };
+        if d > today {
+            *dropped.entry("future_event").or_default() += 1;
+            continue;
+        }
         let e = by_date.entry(d).or_insert((
             0.0,
             r.get("currency").and_then(Value::as_str).map(str::to_owned),
@@ -411,6 +528,107 @@ mod tests {
         }
     }
 
+    fn cal() -> calendar::Calendar {
+        calendar::Calendar::rules_only()
+    }
+
+    /// An `/api/eod` body of `n` sessions from `from` (holidays skipped) with the close
+    /// `close(i)` and the volume `vol(i)` of the i-th bar.
+    fn series(
+        from: NaiveDate,
+        n: usize,
+        close: impl Fn(usize) -> f64,
+        vol: impl Fn(usize) -> f64,
+    ) -> (Vec<u8>, Vec<NaiveDate>) {
+        let days: Vec<NaiveDate> = from
+            .iter_days()
+            .filter(|d| cal().is_trading_day(*d))
+            .take(n)
+            .collect();
+        let rows: Vec<String> = days
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let c = close(i);
+                format!(
+                    r#"{{"date":"{d}","open":{c},"high":{c},"low":{c},"close":{c},"volume":{}}}"#,
+                    vol(i)
+                )
+            })
+            .collect();
+        (format!("[{}]", rows.join(",")).into_bytes(), days)
+    }
+
+    #[test]
+    fn volume_is_undone_only_as_far_as_the_vendor_adjusted_it() {
+        let volumes = |body: &[u8], splits: &[(NaiveDate, f64, f64)]| {
+            let (b, _) = prices(body, splits, &cal(), &origin("2021-01-04T22:00:00Z")).unwrap();
+            b.column(7).as_primitive::<Int64Type>().values().to_vec()
+        };
+        let start = NaiveDate::from_ymd_opt(2020, 3, 2).unwrap();
+        // A 1:200 reverse split on bar 20: the raw close goes from 1 to 200.
+        let px = |i: usize| if i < 20 { 1.0 } else { 200.0 };
+        // Raw vendor volume (CHK 2020-04-15): 40M shares a day before, 200k after.
+        let (raw, days) = series(start, 40, px, |i| if i < 20 { 4e7 } else { 2e5 });
+        let split = [(days[20], 1.0, 200.0)];
+        let v = volumes(&raw, &split);
+        assert_eq!((v[0], v[39]), (40_000_000, 200_000), "raw: left as traded");
+        // Adjusted vendor volume (no step): undone to 40M before the split.
+        let (adjusted, _) = series(start, 40, px, |_| 2e5);
+        let v = volumes(&adjusted, &split);
+        assert_eq!((v[0], v[39]), (40_000_000, 200_000), "adjusted: undone");
+        // A 2:1 split is too small to test and is undone, the documented default.
+        let (two, days2) = series(start, 40, |i| if i < 20 { 2.0 } else { 1.0 }, |_| 4e7);
+        assert_eq!(volumes(&two, &[(days2[20], 2.0, 1.0)])[0], 20_000_000);
+        // A split the raw closes do not show (a phantom, or prices the vendor adjusted).
+        let (flat, _) = series(start, 40, |_| 1.0, |_| 2e5);
+        assert_eq!(volumes(&flat, &split)[0], 200_000, "phantom: not undone");
+        // Too few bars before the split to test it: left as the vendor gave it.
+        let (short, days3) = series(start, 40, |i| if i < 3 { 1.0 } else { 200.0 }, |_| 2e5);
+        assert_eq!(volumes(&short, &[(days3[3], 1.0, 200.0)])[0], 200_000);
+        // A split after the last bar belongs to a later holder of the code: not undone.
+        let after = days[39] + chrono::Days::new(30);
+        assert_eq!(volumes(&raw, &[(after, 1.0, 200.0)])[0], 40_000_000);
+        // Key Energy: raw before its 2016 1:200 split even for the later 1:50 one, adjusted
+        // for the 1:50 between the two. Raw volume 10M, then 50k, then 1k shares a day.
+        let (keg, d4) = series(
+            start,
+            60,
+            |i| match i {
+                0..20 => 1.0,
+                20..40 => 200.0,
+                _ => 10_000.0,
+            },
+            |i| match i {
+                0..20 => 1e7,
+                20..40 => 5e4 * 0.02,
+                _ => 1e3,
+            },
+        );
+        let v = volumes(&keg, &[(d4[20], 1.0, 200.0), (d4[40], 1.0, 50.0)]);
+        assert_eq!((v[0], v[20], v[59]), (10_000_000, 50_000, 1_000));
+    }
+
+    #[test]
+    fn holiday_bars_and_future_events_are_dropped() {
+        let body = br#"[{"date":"2026-09-04","open":1,"high":1,"low":1,"close":1,"volume":5},
+            {"date":"2026-09-07","open":1,"high":1,"low":1,"close":1,"volume":5}]"#;
+        let (b, dropped) = prices(body, &[], &cal(), &origin("2026-10-12T22:00:00Z")).unwrap();
+        assert_eq!(b.num_rows(), 1);
+        assert_eq!(dropped, BTreeMap::from([("non_session", 1)]), "Labor Day");
+        let at = origin("2026-10-12T22:00:00Z");
+        let (d, dropped) = dividends(
+            br#"[{"date":"2026-09-01","unadjustedValue":0.5},{"date":"2026-12-01","unadjustedValue":0.5}]"#,
+            &at,
+        )
+        .unwrap();
+        assert_eq!((d.num_rows(), dropped.get("future_event")), (1, Some(&1)));
+        let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        let (s, dropped) =
+            splits_batch(&[(day(9, 1), 2.0, 1.0), (day(10, 28), 2.0, 1.0)], &at).unwrap();
+        assert_eq!((s.num_rows(), dropped.get("future_event")), (1, Some(&1)));
+    }
+
     #[test]
     fn codes_map_to_canonical_tickers() {
         assert_eq!(code_ticker("BRK-B").as_deref(), Some("BRK.B"));
@@ -472,7 +690,7 @@ mod tests {
         ]"#;
         let splits = [(NaiveDate::from_ymd_opt(2020, 8, 31).unwrap(), 4.0, 1.0)];
         // Fetched 2020-09-03 at 15:00 ET: the 09-03 bar is partial.
-        let (b, dropped) = prices(body, &splits, &origin("2020-09-03T19:00:00Z")).unwrap();
+        let (b, dropped) = prices(body, &splits, &cal(), &origin("2020-09-03T19:00:00Z")).unwrap();
         assert_eq!(b.num_rows(), 2);
         assert_eq!(
             b.column(6).as_primitive::<Float64Type>().values().to_vec(),
@@ -490,7 +708,7 @@ mod tests {
         );
         // A split after the fetch date is not in that response's adjustment.
         let later = [(NaiveDate::from_ymd_opt(2030, 1, 2).unwrap(), 2.0, 1.0)];
-        let (b, _) = prices(body, &later, &origin("2020-09-04T00:00:00Z")).unwrap();
+        let (b, _) = prices(body, &later, &cal(), &origin("2020-09-04T00:00:00Z")).unwrap();
         assert_eq!(
             b.column(7).as_primitive::<Int64Type>().value(0),
             187_629_916
@@ -545,6 +763,7 @@ mod tests {
         assert_eq!(
             splits_batch(&s, &origin("2026-01-01T00:00:00Z"))
                 .unwrap()
+                .0
                 .column(5)
                 .as_primitive::<Float64Type>()
                 .value(0),
@@ -634,6 +853,8 @@ pub mod run {
         pub base: String,
         /// EODHD code (without `.US`) -> US composite FIGI, from `security_spells` (J4a).
         pub figis: BTreeMap<String, String>,
+        /// The NYSE calendar (holiday bars are dropped at parse).
+        pub cal: calendar::Calendar,
     }
 
     impl Ctx {
@@ -786,7 +1007,7 @@ pub mod run {
         let Some((body, sha, at)) = read_landed(&ctx.manifest, key("eod-full"))? else {
             return Ok(result);
         };
-        let (batch, dropped) = super::prices(&body, &splits, &origin(sha, at))?;
+        let (batch, dropped) = super::prices(&body, &splits, &ctx.cal, &origin(sha, at))?;
         result.bars = batch.num_rows();
         result.span = span(&batch);
         if figi.is_none() {
@@ -809,14 +1030,23 @@ pub mod run {
             batch.num_rows(),
         );
         if let Some((sha, at)) = splits_origin {
+            let (batch, dropped) = super::splits_batch(&splits, &origin(sha, at))?;
             stage::write_stage(
                 &ctx.stage,
                 &ctx.manifest,
                 "splits",
                 key("splits-full"),
                 PARSE_VERSION,
-                &super::splits_batch(&splits, &origin(sha, at))?,
+                &batch,
             )?;
+            note_dropped(
+                ctx,
+                &entity,
+                "splits-full",
+                "splits",
+                &dropped,
+                batch.num_rows(),
+            );
         }
         if let Some((body, sha, at)) = read_landed(&ctx.manifest, key("div-full"))? {
             let (batch, dropped) = super::dividends(&body, &origin(sha, at))?;

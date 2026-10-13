@@ -73,11 +73,21 @@ per request whatever the range, except bulk):
 Volume is undone with the splits fetched in the same run:
 
     F(d)      = product of ratio_s over splits s with ex_date_s > d and ex_date_s <= eod fetch date
+                that the vendor applied to its volume
     volume_d  = round(vendor_volume_d / F(d))
 
 The splits request is made right after the eod request; a split whose ex-date
 falls after the eod fetch date is not in that eod response's adjustment and is
-excluded from `F`.
+excluded from `F`. **The volume is not always adjusted** (found 2026-10-12): CHK's
+volume before its 2020 1:200 split is raw, so undoing it made 2008-2019 volume
+200 times too large. A split of at least 9 to 1 either way is tested: the median
+vendor volume of the 20 bars from the ex-date against the 20 before it; adjusted
+volume has no step there, raw volume steps by about the ratio, and a step of more
+than half the ratio (in logs) means raw, so that split stays out of `F`. A smaller
+split is not tested (ordinary changes in trading around a split hide the step) and
+counts as adjusted. A bar on a day that is not a session (the vendor has a few on
+holidays, 49 dates in 2015-2026) is dropped, and so are a split or a dividend dated
+after the fetch date (announced, not yet effective).
 
 **Usage.** 100,000 calls per day and 1,000 per minute on this plan (pricing
 page, 2026-10-11). Measured costs (P4): eod, splits and dividends 1 call each,
@@ -353,8 +363,16 @@ Rows are built per accession of form `10-K`, `10-Q`, `10-K/A`, `10-Q/A`
    `filing_date`), not a `us-gaap` tag (verify the tag). If the cover reports
    several classes, the per-class values are summed; the multi-class
    treatment of market cap is OPEN (`FEATURES.md` §3). Fallback when absent:
-   `us-gaap:CommonStockSharesOutstanding` at `period_end`, recorded in
-   `tag_used`.
+   `us-gaap:CommonStockSharesOutstanding` at `period_end`, then
+   `us-gaap:WeightedAverageNumberOfSharesOutstandingBasic` of the filing's
+   shortest period ending at `period_end`, recorded in `tag_used`. A count of
+   zero or less is no count. `companyfacts` holds only facts without a dimension,
+   so a filer that tags its cover page by class (DDOG, HOOD, SPG, META, V, BRK)
+   has no cover count, or one class's (SPG: its 8,000 class B shares): a cover
+   or balance count under half the weighted average is replaced by it
+   (2026-10-12; before, such filers had no count or a wrong one carried for
+   years). The two fallbacks are stated as of `filing_date`, since statements
+   give a split before their issue retroactive effect.
 8. **Restatements.** Never overwrite. A row is what its accession reported
    for its own period. An amendment (`10-K/A`, `10-Q/A`) is a separate row
    with its own `filing_date` and `amends_accession`. A restated
@@ -378,7 +396,7 @@ Rows are built per accession of form `10-K`, `10-Q`, `10-K/A`, `10-Q/A`
 | `long_term_debt` | `LongTermDebtNoncurrent`, `LongTermDebt` |
 | `retained_earnings` | `RetainedEarningsAccumulatedDeficit` |
 | `ebit` | `OperatingIncomeLoss` |
-| `shares_outstanding` | `dei:EntityCommonStockSharesOutstanding`, then `CommonStockSharesOutstanding` |
+| `shares_outstanding` | `dei:EntityCommonStockSharesOutstanding`, then `CommonStockSharesOutstanding`, then `WeightedAverageNumberOfSharesOutstandingBasic` (also over a count under half of it) |
 
 **Revenue tag precedence (verify).** `SalesRevenueNet` is the pre-2018
 (pre-ASC 606) tag and `RevenueFromContractWithCustomerExcludingAssessedTax`
@@ -580,8 +598,11 @@ The security key is the **US composite FIGI**, the issuer code the **CIK**
 with the key 25 requests per 6 s and 100 jobs each, without it 25 per minute
 and 10 jobs). Jobs `{idType: ID_ISIN | ID_CUSIP, idValue, includeUnlistedEquities: true}`;
 the answer kept is the single US composite (`exchCode = US`, `marketSector =
-Equity`, `securityType2 = Common Stock`); more than one is ambiguous. A ticker
-lookup reaches only the current holder, so tickers are never mapped. Each
+Equity`, `securityType2 = Common Stock`); more than one is ambiguous. A when-issued or
+when-distributed line of the same stock (ticker `X/WI`, `X/WD`, `X-W`, or a name ending
+`WI`, `W/I`, `WD`, `W/D`) is not a second composite (2026-10-12: Regal Rexnord's ISIN also
+answers `RBC-W`, so RRX had no FIGI). A ticker lookup reaches only the current holder, so
+tickers are never mapped. Each
 batch is landed under `raw/openfigi/{id_isin|id_cusip}/{hash of the batch}`.
 
 **SEC Official List of Section 13(f) Securities**, quarterly from 1996:
@@ -597,8 +618,10 @@ characters and abbreviated, so names are compared on OpenFIGI's side.
 **Resolution**, first that applies: an override row; the code's EODHD ISIN ->
 FIGI; otherwise a 13(f) CUSIP whose OpenFIGI name equals the code's EODHD name
 after `identity::normalize_name` (upper case, punctuation and legal-form and
-share-class words dropped), when exactly one FIGI has that name. Two more
-rules, before and after the name match: a code that is another in-scope code plus a
+share-class words dropped), when exactly one FIGI has that name; or, when OpenFIGI cut its
+name at 28 characters, one whose cut name starts the code's name, when exactly one FIGI
+does and the code's name has no instrument word (`WARRANT`, `UNITS`, `PREFERRED`, `NOTES`,
+...). Two more rules, before and after the name match: a code that is another in-scope code plus a
 warrant, unit or right suffix (`-WT`, `-WS`, `-U`, `-UN`, `-RT`, `-R`, or a fifth letter `W`
 / `U` / `R` / `Z`) with the same name is out of scope; and a still-unresolved code whose
 name equals exactly one resolved security's takes its FIGI when its landed prices
@@ -606,14 +629,20 @@ continue that series (last bar at most 10 days before the other's first: a ticke
 change) or repeat it (20 or more common dates, closes within 0.5% on 95%: a vendor
 twin), recorded as `rename`. Anything else
 is unresolved (`identity_unresolved` in `data_quality`, gate G5), never a
-guess. A pre-merger SPAC shell is out of scope, not unresolved (D19,
-`UNIVERSE.md` §5a).
+guess, except the training-only key: a delisted code that no route reaches is keyed
+`EOD:<code>` when one EDGAR filer with its name filed a 10-K or 10-Q while it traded
+(of several, the one that filed between its first and last bar; checked in the landed
+submissions zip), unless a resolved security already has that filer or two such codes
+of the filer overlap (D17 amended 2026-10-12, `resolution = eod_code`). A pre-merger SPAC
+shell is out of scope, not unresolved (D19, `UNIVERSE.md` §5a).
 
 
 **CIK.** `company_tickers_exchange.json` maps **current** tickers to CIKs; it
 has no history. Delisted issuers get their CIK from the submissions
 `name`/`formerNames` and the name lookup file in the EDGAR worker (W6), with
-the override table `config/identifier_overrides.csv` (`UNIVERSE.md` §4).
+the override table `config/identifier_overrides.csv` (`UNIVERSE.md` §4). A name that
+several filers share goes to the one that filed a 10-K or 10-Q between the security's first
+and last bar, if exactly one did (2026-10-12).
 
 ---
 

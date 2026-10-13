@@ -207,6 +207,23 @@ pub fn jobs_json(id_type: &str, values: &[String]) -> String {
     Value::Array(jobs).to_string()
 }
 
+/// A when-issued or when-distributed line of a stock, which OpenFIGI lists under the same
+/// ISIN with its own composite: the ticker `SWC/WD`, `X/WI` or `RBC-W` (a class share is also
+/// written with a slash, `BRK/B`, and is kept), or the name's last word `WI`, `W/I`, `WD` or
+/// `W/D` (`NEOGEN CORP-WI` for `NEOGV`).
+fn when_issued(r: &Value) -> bool {
+    let text = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default();
+    let ticker = text("ticker");
+    ticker
+        .rsplit_once('/')
+        .is_some_and(|(_, s)| matches!(s, "WI" | "WD"))
+        || ticker.ends_with("-W")
+        || text("name")
+            .rsplit([' ', '-'])
+            .next()
+            .is_some_and(|w| matches!(w, "WI" | "W/I" | "WD" | "W/D"))
+}
+
 /// One answer per job: the US composite equity listing, or `None` (no match, an error,
 /// or more than one US composite, which is ambiguous).
 #[must_use]
@@ -221,9 +238,7 @@ pub fn parse_mapping(body: &[u8]) -> Vec<Option<Figi>> {
                 .filter(|r| {
                     r.get("exchCode").and_then(Value::as_str) == Some("US")
                         && r.get("marketSector").and_then(Value::as_str) == Some("Equity")
-                        // `SWC/WD`, `X/WI`: when-distributed and when-issued lines of the same stock
-                        // (a class share is also written with a slash, `BRK/B`, and is kept).
-                        && !r.get("ticker").and_then(Value::as_str).unwrap_or_default().rsplit_once('/').is_some_and(|(_, s)| matches!(s, "WI" | "WD"))
+                        && !when_issued(r)
                 })
                 .collect();
             let composites: BTreeSet<&str> = us
@@ -266,9 +281,15 @@ pub enum Resolution {
     Isin(String),
     /// Through a 13(f) CUSIP whose OpenFIGI name equals the code's name.
     Cusip13f(String),
+    /// Through a 13(f) CUSIP whose OpenFIGI name, cut at 28 characters (`FIGI_NAME_MAX`), starts
+    /// the code's name.
+    Cusip13fCut(String),
     /// A rename or vendor twin of the resolved code given (same name, continuous or identical
     /// price series); the string is the evidence.
     Rename(String),
+    /// No FIGI exists: the training-only key `EOD:<code>` of a delisted code whose name names one
+    /// domestic EDGAR filer (D17, amended 2026-10-12): that filer's CIK and the evidence.
+    EodCode(String, String),
 }
 
 /// A resolved code.
@@ -298,6 +319,32 @@ pub enum Unresolved {
 /// units, warrants, rights and partnership units are not).
 const IN_SCOPE: &[&str] = &["Common Stock", "REIT"];
 
+/// OpenFIGI cuts `name` at this many characters (`PREFERRED APARTMENT COMMUNIT`).
+const FIGI_NAME_MAX: usize = 28;
+
+/// A cut name matches by its start only with a key this long (shorter starts are generic).
+const MIN_CUT_KEY: usize = 12;
+
+/// Words of an EODHD name that mark an instrument beside a stock: such a code never matches a
+/// cut OpenFIGI name by its start (the stock's name starts the warrant's).
+const INSTRUMENT_WORDS: &[&str] = &[
+    "WARRANT",
+    "WARRANTS",
+    "UNIT",
+    "UNITS",
+    "RIGHT",
+    "RIGHTS",
+    "PREFERRED",
+    "PFD",
+    "NOTE",
+    "NOTES",
+    "DEBENTURE",
+    "DEBENTURES",
+    "DEPOSITARY",
+    "SERIES",
+    "SUBORDINATED",
+];
+
 /// Resolve every code (ADR 0001 decision 3): ISIN first, then a unique name match against the
 /// FIGIs reached from 13(f) CUSIPs.
 #[must_use]
@@ -316,6 +363,14 @@ pub fn resolve(
             .or_default()
             .insert(f.figi.clone(), (f, cusip.as_str()));
     }
+    let cut: Vec<(String, &Figi, &str)> = by_cusip
+        .iter()
+        .filter(|(_, f)| {
+            IN_SCOPE.contains(&f.security_type2.as_str()) && f.name.chars().count() >= FIGI_NAME_MAX
+        })
+        .map(|(cusip, f)| (name_key(&f.name), f, cusip.as_str()))
+        .filter(|(k, _, _)| k.len() >= MIN_CUT_KEY)
+        .collect();
     let by_code: BTreeMap<&str, &Code> = codes.iter().map(|c| (c.code.as_str(), c)).collect();
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for c in codes {
@@ -364,7 +419,29 @@ pub fn resolve(
                 c.clone(),
                 Unresolved::Ambiguous(m.keys().cloned().collect()),
             )),
-            None => bad.push((c.clone(), Unresolved::NoMatch)),
+            None => {
+                // A name OpenFIGI cut short: the code's name must start with it.
+                let instrument = normalize_name(&c.name)
+                    .split_whitespace()
+                    .any(|w| INSTRUMENT_WORDS.contains(&w));
+                let hits: BTreeMap<&str, (&Figi, &str)> = cut
+                    .iter()
+                    .filter(|(k, _, _)| !instrument && name.starts_with(k.as_str()))
+                    .map(|(_, f, cusip)| (f.figi.as_str(), (*f, *cusip)))
+                    .collect();
+                match (hits.len(), hits.values().next()) {
+                    (1, Some((f, cusip))) => ok.push(Resolved {
+                        code: c.clone(),
+                        figi: (*f).clone(),
+                        how: Resolution::Cusip13fCut((*cusip).to_owned()),
+                    }),
+                    (0, _) => bad.push((c.clone(), Unresolved::NoMatch)),
+                    _ => bad.push((
+                        c.clone(),
+                        Unresolved::Ambiguous(hits.keys().map(|f| (*f).to_owned()).collect()),
+                    )),
+                }
+            }
         }
     }
     (ok, bad)
@@ -472,6 +549,168 @@ pub fn rename_links(
     out
 }
 
+/// The periodic report forms of a domestic filer (a foreign private issuer files 20-F / 40-F).
+const DOMESTIC_FORMS: &[&str] = &["10-K", "10-K405", "10-KSB", "10-KT", "10-Q", "10-QSB"];
+
+/// A filer's `(form, filing_date)` list.
+pub type Forms = Vec<(String, NaiveDate)>;
+
+/// A filer's 10-K/10-Q filing dates and its first and last filing of any form.
+pub type Filer = (Vec<NaiveDate>, (NaiveDate, NaiveDate));
+
+/// The [`Filer`] of a `(form, filing_date)` list; `None` without a filing.
+#[must_use]
+pub fn filer(forms: &Forms) -> Option<Filer> {
+    let periodic = forms
+        .iter()
+        .filter(|(form, _)| DOMESTIC_FORMS.contains(&form.as_str()))
+        .map(|x| x.1)
+        .collect();
+    let first = forms.iter().map(|x| x.1).min()?;
+    let last = forms.iter().map(|x| x.1).max()?;
+    Some((periodic, (first, last)))
+}
+
+/// Of the EDGAR filers `ciks` with a security's name, the one that filed a 10-K or 10-Q
+/// (`DOMESTIC_FORMS`) while the security traded (`priced`, a year of slack each side,
+/// [`cik_confirmed`]); of several, the one that filed one between its first and last bar
+/// (Bear Stearns Companies Inc, not the LLC that filed after the merger); `None` for none or
+/// a tie. Returns the CIK and the filer's filing span.
+pub fn pick_filer<'a>(
+    ciks: impl IntoIterator<Item = &'a String>,
+    priced: (NaiveDate, NaiveDate),
+    filers: &mut dyn FnMut(&str) -> Option<Filer>,
+) -> Option<(String, (NaiveDate, NaiveDate))> {
+    let mut ok: Vec<(String, Filer)> = Vec::new();
+    for cik in ciks {
+        let Some((periodic, span)) = filers(cik) else {
+            continue;
+        };
+        let range = periodic
+            .iter()
+            .min()
+            .copied()
+            .zip(periodic.iter().max().copied());
+        if cik_confirmed(Some(priced), range) {
+            ok.push((cik.clone(), (periodic, span)));
+        }
+    }
+    if ok.len() > 1 {
+        ok.retain(|(_, (p, _))| p.iter().any(|d| priced.0 <= *d && *d <= priced.1));
+    }
+    match ok.as_slice() {
+        [(cik, (_, span))] => Some((cik.clone(), *span)),
+        _ => None,
+    }
+}
+
+/// `(CIK, filing span, price span)` of a security whose name several filers share.
+pub type SharedCik = (String, (NaiveDate, NaiveDate), (NaiveDate, NaiveDate));
+
+/// The CIK of each delisted resolved code whose name several EDGAR filers share
+/// ([`pick_filer`]; a name of one filer goes through `cik_by_name` in [`master_batch`]):
+/// EODHD code -> [`SharedCik`]. Lehman Brothers Holdings and Fannie Mae had no CIK, so no
+/// filings, no fundamentals and no delisting record.
+pub fn shared_name_ciks(
+    resolved: &[Resolved],
+    candidates: &BTreeMap<String, BTreeSet<String>>,
+    spans: &mut dyn FnMut(&str) -> Option<(NaiveDate, NaiveDate)>,
+    filers: &mut dyn FnMut(&str) -> Option<Filer>,
+) -> BTreeMap<String, SharedCik> {
+    resolved
+        .iter()
+        .filter(|r| r.code.delisted)
+        .filter_map(|r| {
+            let ciks = candidates
+                .get(&name_key(&r.code.name))
+                .filter(|c| c.len() > 1)?;
+            let priced = spans(&r.code.code)?;
+            let (cik, filed) = pick_filer(ciks, priced, filers)?;
+            Some((r.code.code.clone(), (cik, filed, priced)))
+        })
+        .collect()
+}
+
+/// A code given a training-only key by [`eod_keys`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EodKeyed {
+    /// The code, its key `EOD:<code>` and the evidence.
+    pub resolved: Resolved,
+    /// The filer found by name.
+    pub cik: String,
+    /// First and last bar of the code.
+    pub priced: (NaiveDate, NaiveDate),
+    /// First and last filing of the filer.
+    pub filed: (NaiveDate, NaiveDate),
+}
+
+/// Training-only keys (DECISIONS D17, amended 2026-10-12) for delisted codes no FIGI route
+/// reached: the key is `EOD:<code>` when [`pick_filer`] finds the code's EDGAR filer among
+/// those with its name (`candidates`, [`cik_candidates`]). Left out, never guessed: a code
+/// without bars, a filer a resolved security already has (`taken`: a twin or another class),
+/// and every code of a filer whose candidate codes trade over overlapping dates. `spans`
+/// gives a code's first and last bar, `filers` a filer's [`Filer`].
+pub fn eod_keys(
+    unresolved: &[Code],
+    candidates: &BTreeMap<String, BTreeSet<String>>,
+    taken: &BTreeSet<String>,
+    spans: &mut dyn FnMut(&str) -> Option<(NaiveDate, NaiveDate)>,
+    filers: &mut dyn FnMut(&str) -> Option<Filer>,
+) -> Vec<EodKeyed> {
+    let mut by_cik: BTreeMap<String, Vec<EodKeyed>> = BTreeMap::new();
+    for c in unresolved.iter().filter(|c| c.delisted) {
+        let Some(ciks) = candidates.get(&name_key(&c.name)) else {
+            continue;
+        };
+        let Some(priced) = spans(&c.code) else {
+            continue;
+        };
+        let free = ciks.iter().filter(|k| !taken.contains(*k));
+        let Some((cik, filed)) = pick_filer(free, priced, filers) else {
+            continue;
+        };
+        by_cik.entry(cik.clone()).or_default().push(EodKeyed {
+            resolved: Resolved {
+                code: c.clone(),
+                figi: Figi {
+                    figi: format!("EOD:{}", c.code),
+                    share_class: None,
+                    name: c.name.clone(),
+                    security_type: Some("Common Stock".into()),
+                    security_type2: "Common Stock".into(),
+                },
+                how: Resolution::EodCode(
+                    cik.clone(),
+                    format!(
+                        "no FIGI; CIK {cik} by name {:?} ({} filers of that name), 10-K/10-Q filer, \
+                         filed {}..{}, priced {}..{}",
+                        normalize_name(&c.name),
+                        ciks.len(),
+                        filed.0,
+                        filed.1,
+                        priced.0,
+                        priced.1
+                    ),
+                ),
+            },
+            cik,
+            priced,
+            filed,
+        });
+    }
+    by_cik
+        .into_values()
+        .filter(|g| {
+            g.iter().enumerate().all(|(i, a)| {
+                g.iter()
+                    .skip(i + 1)
+                    .all(|b| a.priced.1 < b.priced.0 || b.priced.1 < a.priced.0)
+            })
+        })
+        .flatten()
+        .collect()
+}
+
 fn nullable(fields: &[(&str, DataType)]) -> Arc<Schema> {
     Arc::new(Schema::new(
         fields
@@ -482,10 +721,10 @@ fn nullable(fields: &[(&str, DataType)]) -> Arc<Schema> {
 }
 
 /// EDGAR's `cik-lookup-data.txt` (`NAME:CIK:` per line, current and former names of every
-/// filer) as [`name_key`] -> CIK; `None` when the key belongs to more than one CIK.
+/// filer) as [`name_key`] -> every CIK with that key.
 #[must_use]
-pub fn parse_cik_lookup(text: &str) -> BTreeMap<String, Option<String>> {
-    let mut out: BTreeMap<String, Option<String>> = BTreeMap::new();
+pub fn cik_candidates(text: &str) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for line in text.lines() {
         let Some((name, cik)) = line
             .trim_end()
@@ -498,15 +737,24 @@ pub fn parse_cik_lookup(text: &str) -> BTreeMap<String, Option<String>> {
         if key.is_empty() || cik.len() != 10 || !cik.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }
-        out.entry(key)
-            .and_modify(|v| {
-                if v.as_deref() != Some(cik) {
-                    *v = None;
-                }
-            })
-            .or_insert_with(|| Some(cik.to_owned()));
+        out.entry(key).or_default().insert(cik.to_owned());
     }
     out
+}
+
+/// [`cik_candidates`] with one CIK per key; `None` when the key belongs to more than one.
+#[must_use]
+pub fn unique_ciks(c: &BTreeMap<String, BTreeSet<String>>) -> BTreeMap<String, Option<String>> {
+    c.iter()
+        .map(|(k, v)| (k.clone(), v.first().filter(|_| v.len() == 1).cloned()))
+        .collect()
+}
+
+/// EDGAR's `cik-lookup-data.txt` as [`name_key`] -> CIK; `None` when the key belongs to more
+/// than one CIK.
+#[must_use]
+pub fn parse_cik_lookup(text: &str) -> BTreeMap<String, Option<String>> {
+    unique_ciks(&cik_candidates(text))
 }
 
 /// First and last filing date of an EDGAR submissions JSON (`filings.recent` plus the older
@@ -554,7 +802,8 @@ pub fn cik_confirmed(
 /// the active code wins, then the plain code over an `_old` one. The CIK is the current
 /// ticker's for an active security, else the one CIK whose EDGAR name or former name has the
 /// security's [`name_key`] (`cik_by_name`, from [`parse_cik_lookup`]) that `confirm` accepts
-/// (see [`cik_confirmed`]); an ambiguous or unconfirmed name stays null.
+/// (see [`cik_confirmed`]), or for a name several filers share the one [`shared_name_ciks`]
+/// chose (`chosen`, by EODHD code); otherwise null. A training-only key carries its CIK.
 ///
 /// # Errors
 ///
@@ -563,6 +812,7 @@ pub fn master_batch(
     resolved: &[Resolved],
     cik_by_ticker: &BTreeMap<String, String>,
     cik_by_name: &BTreeMap<String, Option<String>>,
+    chosen: &BTreeMap<String, String>,
     confirm: &dyn Fn(&Resolved, &str) -> bool,
     now: DateTime<Utc>,
 ) -> Result<RecordBatch, arrow::error::ArrowError> {
@@ -591,19 +841,25 @@ pub fn master_batch(
     let n = rows.len();
     // `(cik, by name)`; a delisted ticker may now belong to another issuer, so only its name counts.
     let cik = |(r, d): &(&Resolved, bool)| {
+        if let Resolution::EodCode(c, _) = &r.how {
+            return Some((c.clone(), true));
+        }
         let by_ticker = if *d {
             None
         } else {
             cik_by_ticker.get(&r.code.ticker)
         };
-        by_ticker.map(|c| (c.clone(), false)).or_else(|| {
-            cik_by_name
-                .get(&name_key(&r.code.name))
-                .cloned()
-                .flatten()
-                .filter(|c| confirm(r, c))
-                .map(|c| (c, true))
-        })
+        by_ticker
+            .map(|c| (c.clone(), false))
+            .or_else(|| chosen.get(&r.code.code).map(|c| (c.clone(), true)))
+            .or_else(|| {
+                cik_by_name
+                    .get(&name_key(&r.code.name))
+                    .cloned()
+                    .flatten()
+                    .filter(|c| confirm(r, c))
+                    .map(|c| (c, true))
+            })
     };
     let note = |r: &Resolved| match &r.how {
         Resolution::Isin(i) => ("isin", format!("ISIN {i}")),
@@ -615,7 +871,16 @@ pub fn master_batch(
                 normalize_name(&r.figi.name)
             ),
         ),
+        Resolution::Cusip13fCut(c) => (
+            "cusip_13f",
+            format!(
+                "CUSIP {c}; name {:?} starts with the cut OpenFIGI name {:?}",
+                normalize_name(&r.code.name),
+                normalize_name(&r.figi.name)
+            ),
+        ),
         Resolution::Rename(e) => ("rename", e.clone()),
+        Resolution::EodCode(_, e) => ("eod_code", e.clone()),
     };
     let cols: Vec<ArrayRef> = vec![
         s(&|(r, _)| Some(r.figi.figi.clone())),
@@ -624,7 +889,7 @@ pub fn master_batch(
         s(&|(r, _)| Some(r.code.ticker.clone())),
         s(&|(r, _)| Some(r.code.name.clone())),
         s(&|(r, _)| Some(r.code.code.clone())),
-        s(&|_| None),
+        s(&|(r, _)| Some(r.code.exchange.clone()).filter(|e| !e.is_empty())),
         Arc::new(BooleanArray::from(
             rows.iter().map(|(_, d)| *d).collect::<Vec<_>>(),
         )),
@@ -779,8 +1044,8 @@ pub fn spells_batch(
         }
         let cusip = match &r.how {
             Resolution::Isin(i) => isin_cusip(i).map(|c| (c.to_owned(), "eodhd_symbols")),
-            Resolution::Cusip13f(c) => Some((c.clone(), "sec_13f")),
-            Resolution::Rename(_) => None,
+            Resolution::Cusip13f(c) | Resolution::Cusip13fCut(c) => Some((c.clone(), "sec_13f")),
+            Resolution::Rename(_) | Resolution::EodCode(..) => None,
         };
         if let Some((c, src)) = cusip {
             let span = cusip_span.get(&c);
@@ -1018,6 +1283,23 @@ mod tests {
             Some("BBG000HYNVL9"),
             "a /WD line is not a second security"
         );
+        // Regal Rexnord's ISIN also answers Regal Beloit's when-issued line; NEOGV is named -WI.
+        let line = |id: &str, ticker: &str, name: &str| json!({"figi": id, "compositeFIGI": id, "ticker": ticker, "name": name, "exchCode": "US", "marketSector": "Equity", "securityType2": "Common Stock"});
+        let m = parse_mapping(
+            json!([
+                {"data": [line("BBG000BRRG02", "RRX", "REGAL REXNORD CORP"), line("BBG_RBCW", "RBC-W", "REGAL BELOIT CORP - W/I")]},
+                {"data": [line("BBG000BZPV39", "NEOG", "NEOGEN CORP"), line("BBG_NEOGV", "NEOGV", "NEOGEN CORP-WI")]},
+            ])
+            .to_string()
+            .as_bytes(),
+        );
+        assert_eq!(
+            m.iter()
+                .map(|f| f.as_ref().map(|f| f.figi.as_str()))
+                .collect::<Vec<_>>(),
+            [Some("BBG000BRRG02"), Some("BBG000BZPV39")],
+            "a when-issued line is not a second security"
+        );
         let brk = json!({"figi": "BBG000DWG505", "compositeFIGI": "BBG000DWG505", "ticker": "BRK/B", "name": "BERKSHIRE HATHAWAY INC-CL B", "exchCode": "US", "marketSector": "Equity", "securityType2": "Common Stock"});
         let class = parse_mapping(json!([{"data": [brk]}]).to_string().as_bytes());
         assert_eq!(
@@ -1043,6 +1325,138 @@ mod tests {
     }
 
     #[test]
+    fn cut_names_match_by_their_start_and_never_an_instrument() {
+        let code = |c: &str, name: &str| Code {
+            code: c.into(),
+            ticker: c.into(),
+            delisted: true,
+            name: name.into(),
+            ..Code::default()
+        };
+        let f = |id: &str, name: &str| Figi {
+            figi: id.into(),
+            share_class: None,
+            name: name.into(),
+            security_type: None,
+            security_type2: "Common Stock".into(),
+        };
+        let by_cusip = BTreeMap::from([
+            (
+                "693718108".to_owned(),
+                f("BBG_PSUN", "PACIFIC SUNWEAR OF CALIFORNI"),
+            ),
+            (
+                "629337106".to_owned(),
+                f("BBG_NETD", "NABORS ENERGY TRANSITION C-A"),
+            ),
+            (
+                "320000001".to_owned(),
+                f("BBG_FNB1", "FIRST NATIONAL BANCORP OF IN"),
+            ),
+        ]);
+        let codes = [
+            code("PSUNQ", "Pacific Sunwear Of California Inc"),
+            code("NETDW", "Nabors Energy Transition Corp. II Warrant"),
+            code("FNBO", "First National Bancorp of Ohio"),
+        ];
+        let (ok, bad) = resolve(&codes, &BTreeMap::new(), &by_cusip);
+        assert_eq!(
+            ok.iter()
+                .map(|r| (r.code.code.as_str(), r.figi.figi.as_str()))
+                .collect::<Vec<_>>(),
+            [("PSUNQ", "BBG_PSUN")]
+        );
+        assert_eq!(ok[0].how, Resolution::Cusip13fCut("693718108".into()));
+        assert_eq!(bad.len(), 2, "a warrant and another bank stay unresolved");
+    }
+
+    #[test]
+    fn training_only_keys_need_one_domestic_filer_that_filed_while_priced() {
+        let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        let code = |c: &str, name: &str| Code {
+            code: c.into(),
+            ticker: c.into(),
+            delisted: true,
+            name: name.into(),
+            ..Code::default()
+        };
+        // Bear Stearns shares its name with the LLC that filed after the 2008 merger.
+        let names = cik_candidates(
+            "BEAR STEARNS COMPANIES INC:0000777001:\nBEAR STEARNS COMPANIES LLC:0001442180:\n\
+             NATIONAL CITY CORP:0000069970:\nSOME FOREIGN CO:0000000003:\nTAKEN CORP:0000000004:\n\
+             TWIN CORP:0000000005:\nTWO FILERS INC:0000000006:\nTWO FILERS CORP:0000000007:\n",
+        );
+        let codes = [
+            code("BSC_old", "Bear Stearns Companies Inc"),
+            code("NCC_old", "National City Corp"),
+            code("SFC", "Some Foreign Co"),
+            code("TKN", "Taken Corp"),
+            code("TWN", "Twin Corp"),
+            code("TWN_old", "Twin Corp"),
+            code("TWO", "Two Filers Inc"),
+            Code {
+                delisted: false,
+                ..code("LIVE", "Bear Stearns Companies Inc")
+            },
+        ];
+        let taken = BTreeSet::from(["0000000004".to_owned()]);
+        let mut spans = |c: &str| match c {
+            "NCC_old" => Some((d(2005, 1), d(2008, 12))),
+            _ => Some((d(2005, 1), d(2008, 3))),
+        };
+        let mut filers = |cik: &str| {
+            filer(&match cik {
+                "0000000003" => vec![("20-F".to_owned(), d(2006, 6))],
+                "0000069970" => vec![("10-K".to_owned(), d(2001, 3))],
+                "0001442180" => vec![("10-K".to_owned(), d(2009, 2))],
+                _ => vec![
+                    ("10-Q".to_owned(), d(2007, 10)),
+                    ("8-K".to_owned(), d(2008, 3)),
+                ],
+            })
+        };
+        let keyed = eod_keys(&codes, &names, &taken, &mut spans, &mut filers);
+        // A FIGI security whose name two filers share takes the one that filed while priced.
+        let lehman = Resolved {
+            code: code("LEH", "Bear Stearns Companies Inc"),
+            figi: keyed[0].resolved.figi.clone(),
+            how: Resolution::Cusip13f("524908100".into()),
+        };
+        let shared = shared_name_ciks(&[lehman], &names, &mut spans, &mut filers);
+        assert_eq!(shared.get("LEH").map(|s| s.0.as_str()), Some("0000777001"));
+        assert_eq!(
+            keyed
+                .iter()
+                .map(|k| k.resolved.figi.figi.as_str())
+                .collect::<Vec<_>>(),
+            ["EOD:BSC_old"],
+            "National City stopped filing years before it was priced; a 20-F filer, a taken \
+             filer, overlapping twins, two filers that both filed while priced and an active \
+             code get no key"
+        );
+        assert_eq!(
+            keyed[0].cik, "0000777001",
+            "the filer that filed while priced"
+        );
+        assert!(matches!(&keyed[0].resolved.how, Resolution::EodCode(c, _) if c == "0000777001"));
+        let m = master_batch(
+            &[keyed[0].resolved.clone()],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &|_, _| false,
+            Utc::now(),
+        )
+        .unwrap();
+        let cik = m.column_by_name("cik").unwrap();
+        assert_eq!(
+            cik.as_any().downcast_ref::<StringArray>().unwrap().value(0),
+            "0000777001",
+            "the master row takes the filer even when its name is shared"
+        );
+    }
+
+    #[test]
     fn resolution_prefers_isin_then_a_unique_name() {
         let code = |c: &str, name: &str, isin: Option<&str>| Code {
             code: c.into(),
@@ -1050,6 +1464,7 @@ mod tests {
             delisted: true,
             name: name.into(),
             isin: isin.map(Into::into),
+            exchange: "NYSE".into(),
         };
         let f = |id: &str, name: &str| Figi {
             figi: id.into(),
@@ -1112,7 +1527,15 @@ mod tests {
             "a SPAC is out of scope even when its ISIN resolves"
         );
         let now = Utc::now();
-        let m = master_batch(&ok, &BTreeMap::new(), &BTreeMap::new(), &|_, _| true, now).unwrap();
+        let m = master_batch(
+            &ok,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &|_, _| true,
+            now,
+        )
+        .unwrap();
         assert_eq!(m.num_rows(), 2);
         let names = parse_cik_lookup(
             "MONSANTO CO:0001110783:\nMONSANTO CO /NEW/:0001110783:\n\
@@ -1140,7 +1563,15 @@ mod tests {
                 .map(|i| a.is_valid(i).then(|| a.value(i).to_owned()))
                 .collect::<Vec<_>>()
         };
-        let m = master_batch(&ok, &BTreeMap::new(), &names, &|_, _| true, now).unwrap();
+        let m = master_batch(
+            &ok,
+            &BTreeMap::new(),
+            &names,
+            &BTreeMap::new(),
+            &|_, _| true,
+            now,
+        )
+        .unwrap();
         assert_eq!(
             col(&m, "cik"),
             [Some("0001110783".into()), None],
@@ -1155,7 +1586,15 @@ mod tests {
         let mut active = ok[0].clone();
         active.code.delisted = false;
         let tickers = BTreeMap::from([("MON_old".to_owned(), "0000000001".to_owned())]);
-        let m = master_batch(&[active], &tickers, &names, &|_, _| true, now).unwrap();
+        let m = master_batch(
+            &[active],
+            &tickers,
+            &names,
+            &BTreeMap::new(),
+            &|_, _| true,
+            now,
+        )
+        .unwrap();
         assert_eq!(
             col(&m, "cik"),
             [Some("0000000001".into())],
@@ -1170,7 +1609,15 @@ mod tests {
         assert_eq!(col(&with, "sic"), [Some("2800".into())]);
         assert_eq!(sic_by_cik(&with), sic, "SIC survives a rebuild by CIK");
         assert_eq!(col(&with_sic(&m, &BTreeMap::new()).unwrap(), "sic"), [None]);
-        let m = master_batch(&ok, &BTreeMap::new(), &names, &|_, _| false, now).unwrap();
+        let m = master_batch(
+            &ok,
+            &BTreeMap::new(),
+            &names,
+            &BTreeMap::new(),
+            &|_, _| false,
+            now,
+        )
+        .unwrap();
         assert_eq!(
             col(&m, "cik"),
             [None, None],
@@ -1225,6 +1672,8 @@ mod tests {
 pub mod run {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
+
+    use arrow::array::AsArray;
 
     use chrono::{Datelike, NaiveDate, Utc};
 
@@ -1281,6 +1730,9 @@ pub mod run {
         pub last_quarter: Option<(i32, u32)>,
         /// Without an OpenFIGI key, refuse a mapping larger than this many lookups.
         pub keyless_limit: Option<usize>,
+        /// The landed EDGAR submissions zip (the filers of the training-only keys, D17); `None`
+        /// gives no such key.
+        pub submissions: Option<std::path::PathBuf>,
     }
 
     /// What a run produced.
@@ -1294,6 +1746,8 @@ pub mod run {
         pub by_cusip: usize,
         /// Resolved as a rename or vendor twin of a resolved code.
         pub by_rename: usize,
+        /// Given a training-only key `EOD:<code>` (no FIGI, D17).
+        pub by_eod_code: usize,
         /// Unresolved: no match.
         pub no_match: usize,
         /// Unresolved: ambiguous.
@@ -1456,11 +1910,11 @@ pub mod run {
         Ok(out)
     }
 
-    /// EDGAR name -> CIK from `cik-lookup-data.txt`, landed once a month (it changes slowly).
+    /// EDGAR name -> its CIKs from `cik-lookup-data.txt`, landed once a month (it changes slowly).
     async fn cik_names(
         job: &Job,
         today: NaiveDate,
-    ) -> Result<BTreeMap<String, Option<String>>, RunError> {
+    ) -> Result<BTreeMap<String, BTreeSet<String>>, RunError> {
         let chunk = format!("cik-lookup-data-{}", today.format("%Y-%m"));
         let r = Request {
             entity: "cik_lookup",
@@ -1474,7 +1928,7 @@ pub mod run {
         job.sec.fetch(&r).await?;
         Ok(
             body(&job.manifest, (job.sec.spec.id, "cik_lookup", &chunk))?
-                .map(|b| super::parse_cik_lookup(&String::from_utf8_lossy(&b)))
+                .map(|b| super::cik_candidates(&String::from_utf8_lossy(&b)))
                 .unwrap_or_default(),
         )
     }
@@ -1532,6 +1986,7 @@ pub mod run {
                     name: (*code).into(),
                     isin: Some((*isin).into()),
                     delisted: false,
+                    exchange: String::new(),
                 });
             }
         }
@@ -1585,13 +2040,123 @@ pub mod run {
         let links = super::rename_links(&unresolved, &ok, &mut bars);
         let linked: BTreeSet<String> = links.iter().map(|r| r.code.code.clone()).collect();
         bad.retain(|(c, _)| !linked.contains(&c.code));
-        s.by_rename = links.len();
         ok.extend(links);
-        s.by_isin = ok
+        let cik = ciks(job, today).await?;
+        let candidates = cik_names(job, today).await?;
+        let names = super::unique_ciks(&candidates);
+        // Each CIK found by name must have filed while the security traded (`cik_confirmed`).
+        // shortcut: one request at a time (about 25 minutes the first run of a month, then
+        // landed); run them concurrently if this ever runs daily.
+        let (mut priced, mut filed) = (BTreeMap::new(), BTreeMap::new());
+        for r in &ok {
+            if !r.code.delisted && cik.contains_key(&r.code.ticker) {
+                continue;
+            }
+            let Some(Some(c)) = names.get(&super::name_key(&r.code.name)) else {
+                continue;
+            };
+            if !filed.contains_key(c) {
+                filed.insert(c.clone(), filing_span(job, c, today).await?);
+            }
+            let span =
+                bars(&r.code.code).and_then(|b| Some((*b.keys().next()?, *b.keys().next_back()?)));
+            priced.insert(r.code.code.clone(), span);
+        }
+        // Names several EDGAR filers share, and the D17 training-only keys: both checked against
+        // the landed submissions zip (no requests).
+        let mut subs = match &job.submissions {
+            Some(p) => Some(crate::edgar::open(p).map_err(|e| RunError::Other(e.to_string()))?),
+            None => None,
+        };
+        if subs.is_none() {
+            println!(
+                "identity: no submissions zip landed, no shared-name CIKs or training-only keys"
+            );
+        }
+        let mut zip_error = None;
+        let mut cache: BTreeMap<String, Option<super::Filer>> = BTreeMap::new();
+        let mut filers = |c: &str| {
+            cache
+                .entry(c.to_owned())
+                .or_insert_with(
+                    || match subs.as_mut().map(|z| crate::edgar::filer_filings(z, c)) {
+                        Some(Ok(f)) => f.and_then(|f| {
+                            super::filer(&f.into_iter().map(|x| (x.form, x.filing_date)).collect())
+                        }),
+                        Some(Err(e)) => {
+                            zip_error.get_or_insert(e.to_string());
+                            None
+                        }
+                        None => None,
+                    },
+                )
+                .clone()
+        };
+        let mut spans =
+            |code: &str| bars(code).and_then(|b| Some((*b.keys().next()?, *b.keys().next_back()?)));
+        let shared = super::shared_name_ciks(&ok, &candidates, &mut spans, &mut filers);
+        let mut chosen: BTreeMap<String, String> = BTreeMap::new();
+        for (code, (c, f, p)) in shared {
+            priced.insert(code.clone(), Some(p));
+            filed.insert(c.clone(), Some(f));
+            chosen.insert(code, c);
+        }
+        println!(
+            "identity: {} CIKs of names several filers share",
+            chosen.len()
+        );
+        let taken: BTreeSet<String> = {
+            let confirm = |r: &super::Resolved, c: &str| {
+                super::cik_confirmed(
+                    priced.get(&r.code.code).copied().flatten(),
+                    filed.get(c).copied().flatten(),
+                )
+            };
+            let m = super::master_batch(&ok, &cik, &names, &chosen, &confirm, Utc::now())?;
+            let col = m.column_by_name("cik").map(|c| {
+                c.as_string::<i32>()
+                    .iter()
+                    .flatten()
+                    .map(str::to_owned)
+                    .collect()
+            });
+            col.unwrap_or_default()
+        };
+        let unresolved_now: Vec<Code> = bad
             .iter()
-            .filter(|r| matches!(r.how, super::Resolution::Isin(_)))
-            .count();
-        s.by_cusip = ok.len() - s.by_isin - s.by_rename;
+            .filter(|(_, w)| matches!(w, Unresolved::NoMatch))
+            .map(|(c, _)| c.clone())
+            .collect();
+        let keyed = super::eod_keys(
+            &unresolved_now,
+            &candidates,
+            &taken,
+            &mut spans,
+            &mut filers,
+        );
+        if let Some(e) = zip_error {
+            return Err(RunError::Other(format!("submissions zip: {e}")));
+        }
+        for k in &keyed {
+            priced.insert(k.resolved.code.code.clone(), Some(k.priced));
+            filed.insert(k.cik.clone(), Some(k.filed));
+        }
+        let keyed_codes: BTreeSet<&str> = keyed
+            .iter()
+            .map(|k| k.resolved.code.code.as_str())
+            .collect();
+        bad.retain(|(c, _)| !keyed_codes.contains(c.code.as_str()));
+        ok.extend(keyed.into_iter().map(|k| k.resolved));
+        let count = |f: fn(&super::Resolution) -> bool| ok.iter().filter(|r| f(&r.how)).count();
+        s.by_isin = count(|h| matches!(h, super::Resolution::Isin(_)));
+        s.by_cusip = count(|h| {
+            matches!(
+                h,
+                super::Resolution::Cusip13f(_) | super::Resolution::Cusip13fCut(_)
+            )
+        });
+        s.by_rename = count(|h| matches!(h, super::Resolution::Rename(_)));
+        s.by_eod_code = count(|h| matches!(h, super::Resolution::EodCode(..)));
         for (c, why) in &bad {
             let note = match why {
                 Unresolved::NoMatch => {
@@ -1630,26 +2195,6 @@ pub mod run {
                 notes: Some(note),
             });
         }
-        let cik = ciks(job, today).await?;
-        let names = cik_names(job, today).await?;
-        // Each CIK found by name must have filed while the security traded (`cik_confirmed`).
-        // shortcut: one request at a time (about 25 minutes the first run of a month, then
-        // landed); run them concurrently if this ever runs daily.
-        let (mut priced, mut filed) = (BTreeMap::new(), BTreeMap::new());
-        for r in &ok {
-            if !r.code.delisted && cik.contains_key(&r.code.ticker) {
-                continue;
-            }
-            let Some(Some(c)) = names.get(&super::name_key(&r.code.name)) else {
-                continue;
-            };
-            if !filed.contains_key(c) {
-                filed.insert(c.clone(), filing_span(job, c, today).await?);
-            }
-            let span =
-                bars(&r.code.code).and_then(|b| Some((*b.keys().next()?, *b.keys().next_back()?)));
-            priced.insert(r.code.code.clone(), span);
-        }
         let confirm = |r: &super::Resolved, c: &str| {
             super::cik_confirmed(
                 priced.get(&r.code.code).copied().flatten(),
@@ -1671,7 +2216,7 @@ pub mod run {
             "identity: {} name-matched codes, {rejected} CIKs rejected (no filings while priced)",
             priced.len()
         );
-        let master = super::master_batch(&ok, &cik, &names, &confirm, Utc::now())?;
+        let master = super::master_batch(&ok, &cik, &names, &chosen, &confirm, Utc::now())?;
         // J4 owns the SIC columns (`quant-ingest edgar sic`): keep them across a rebuild.
         let old = lake.read_dataset("security_master", None, &[], None)?;
         let master = super::with_sic(&master, &super::sic_by_cik(&old))?;

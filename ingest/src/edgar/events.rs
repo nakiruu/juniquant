@@ -11,11 +11,13 @@ use super::Security;
 use super::facts::Filing;
 
 /// Bumped when the parser's output changes.
-pub const PARSE_VERSION: &str = "1";
+pub const PARSE_VERSION: &str = "2";
 
-/// The event forms (`SCHEMAS.md` #33 `form_type`).
-pub const FORMS: [&str; 9] = [
-    "8-K", "8-K/A", "25", "25-NSE", "15-12B", "15-12G", "15-15D", "NT 10-K", "NT 10-Q",
+/// The event forms (`SCHEMAS.md` #33 `form_type`). The annual reports say whether the filer is
+/// domestic (10-K) or a foreign private issuer (20-F, 40-F) as of each filing (D12 scope).
+pub const FORMS: [&str; 15] = [
+    "8-K", "8-K/A", "25", "25-NSE", "15-12B", "15-12G", "15-15D", "NT 10-K", "NT 10-Q", "10-K",
+    "10-KT", "10-K405", "10-KSB", "20-F", "40-F",
 ];
 
 /// One `filing_events` row of a filer, before it is copied to each of its securities.
@@ -42,6 +44,7 @@ pub fn event_type(form: &str, item: &str) -> &'static str {
         ("25" | "25-NSE", _) => "delisting_filing",
         ("15-12B" | "15-12G" | "15-15D", _) => "deregistration",
         ("NT 10-K" | "NT 10-Q", _) => "late_filing_notice",
+        ("10-K" | "10-KT" | "10-K405" | "10-KSB" | "20-F" | "40-F", _) => "annual_report",
         (_, "2.02") => "earnings_release",
         (_, "3.01") => "delisting_notice",
         (_, "1.03") => "bankruptcy",
@@ -253,6 +256,20 @@ pub fn classify(events: &[Event], last_price: Option<NaiveDate>) -> Option<Delis
         {
             return Some(row("acquired", "medium", "D3", est, None, Some(a)));
         }
+        // A continued-listing notice in the year before, and no acquisition: the exchange
+        // removed it for failing its standards (TARGETS.md §3 `performance_delist`).
+        if first(&["delisting_notice"], minus(e25, 365), e25).is_some()
+            && first(acq, minus(e25, 90), plus(e25, 90)).is_none()
+        {
+            return Some(row(
+                "delisted_performance",
+                "medium",
+                "D3b",
+                est,
+                None,
+                None,
+            ));
+        }
         return Some(row("delisted_other", "medium", "D4", est, None, None));
     }
     if let Some(b) = last_price.and_then(|lp| first(&["bankruptcy"], minus(lp, 365), lp)) {
@@ -266,11 +283,16 @@ pub fn classify(events: &[Event], last_price: Option<NaiveDate>) -> Option<Delis
 /// the same level of trade, so the form delisted another security of the filer (a note, a
 /// preferred, a tracking stock) or moved exchange: more than 10 bars after the anchor, a
 /// median dollar volume over bars 11-70 after it at least half that of the 60 bars to it, and
-/// no ten-fold jump (`jumps`, later-bar indices) after it. `bars` are one security's, sorted.
+/// no ten-fold jump (`jumps`, later-bar indices) among those bars. A series that starts after
+/// the anchor and has more than 10 bars outlives it too (Amazon's Form 15 of 2004 for a
+/// series from 2005). `bars` are one security's, sorted.
 #[must_use]
 pub fn outlived(bars: &[crate::gates::Bar], anchor: NaiveDate, jumps: &[usize]) -> bool {
     let k = bars.partition_point(|b| b.date <= anchor);
-    if k == 0 || k + 10 >= bars.len() || jumps.iter().any(|&j| j >= k) {
+    if k == 0 {
+        return bars.len() > 10;
+    }
+    if k + 10 >= bars.len() || jumps.iter().any(|&j| j >= k && j < k + 70) {
         return false;
     }
     let median = |w: Option<&[crate::gates::Bar]>| {
@@ -365,6 +387,7 @@ mod tests {
             filing("a", "8-K", "2024-02-01", &["2.02", "9.01"]),
             filing("a", "8-K", "2024-02-01", &["2.02", "9.01"]),
             filing("b", "10-Q", "2024-05-01", &[]),
+            filing("k", "20-F", "2024-04-30", &[]),
             filing("c", "25-NSE", "2024-06-01", &[]),
             filing("d", "8-K", "2003-01-01", &[]),
             filing("e", "8-K", "2030-01-01", &["1.03"]),
@@ -381,6 +404,7 @@ mod tests {
                 ("a", "9.01", "other"),
                 ("c", "-", "delisting_filing"),
                 ("d", "-", "other"),
+                ("k", "-", "annual_report"),
             ]
         );
         assert_eq!(future, 1);
@@ -407,9 +431,19 @@ mod tests {
         let r = classify(&ev(&[f25.clone(), acq, f15.clone()]), None).unwrap();
         assert_eq!((r.rule, r.form15), ("D2", Some(d("2023-06-20"))));
 
-        let r = classify(&ev(&[f25.clone(), notice, late_acq.clone()]), None).unwrap();
+        let r = classify(&ev(&[f25.clone(), notice.clone(), late_acq.clone()]), None).unwrap();
         assert_eq!((r.class, r.rule), ("acquired", "D3"));
         assert_eq!(r.acquisition, Some(d("2023-08-01")));
+
+        // A continued-listing notice months before and no acquisition: a performance delisting.
+        let early = filing("e", "8-K", "2022-10-03", &["3.01"]);
+        let r = classify(&ev(&[f25.clone(), early.clone()]), None).unwrap();
+        assert_eq!((r.class, r.rule), ("delisted_performance", "D3b"));
+        let r = classify(&ev(&[f25.clone(), early, late_acq.clone()]), None).unwrap();
+        assert_eq!(
+            r.rule, "D4",
+            "an acquisition nearby: not a performance delisting"
+        );
 
         let r = classify(&ev(&[f25, late_acq]), None).unwrap();
         assert_eq!((r.class, r.rule), ("delisted_other", "D4"));
@@ -461,8 +495,12 @@ mod tests {
             "ends within 10 bars"
         );
         assert!(
-            !outlived(&series(900), d("2023-12-01"), &[]),
-            "no bar on or before the form"
+            outlived(&series(900), d("2023-12-01"), &[]),
+            "the series starts after the form: it outlives it"
+        );
+        assert!(
+            !outlived(&series(900)[..8], d("2023-12-01"), &[]),
+            "a stub of 8 bars after the form does not"
         );
     }
 }

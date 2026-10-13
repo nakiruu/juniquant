@@ -99,10 +99,11 @@ the owner chose `E25` (D22).
 | D1 | 8-K Item 1.03 (bankruptcy or receivership) filed in [`E25` - 365 d, `E25` + 30 d], or, with no Form 25, any time in the 365 days before the last known price | `bankruptcy` | high with a Form 25, medium without |
 | D2 | Form 25 present, and an 8-K Item 5.01 (change in control) or Item 2.01 (completion of an acquisition) by this CIK in [`E25` - 45 d, `E25` + 10 d] | `acquired` | high |
 | D3 | Form 25 present, an Item 3.01 in [`E25` - 45 d, `E25`], and an Item 2.01 or 5.01 by this CIK within 90 days either side | `acquired` | medium |
+| D3b | Form 25 present, an Item 3.01 (continued-listing notice) in [`E25` - 365 d, `E25`], and no Item 2.01 or 5.01 by this CIK within 90 days either side (added 2026-10-12: 439 of 877 `delisted_other` rows since 2008 had such a notice) | `delisted_performance` (the exchange removed it for failing its standards; `TARGETS.md` §3 delisting return) | medium |
 | D4 | Form 25 present, none of the above | `delisted_other` (listing-standard failure, voluntary delisting, exchange transfer) | medium |
 | D5 | Form 15 (15-12B, 15-12G, 15-15D) with no Form 25 | `deregistered` | low |
 | none | No qualifying event | no row | |
-| D0 | Applied last: the security's prices outlive the Form 25 (else the Form 15) at the same level of trade: more than 10 bars after it, the median dollar volume of bars 11-70 after it at least half that of the 60 bars to it, and no ten-fold jump without a split after it | the row is dropped | |
+| D0 | Applied last: the security's prices outlive the Form 25 (else the Form 15) at the same level of trade: more than 10 bars after it, the median dollar volume of bars 11-70 after it at least half that of the 60 bars to it, and no ten-fold jump without a split among bars 1-70 after it; or the series starts after the form and has more than 10 bars | the row is dropped | |
 
 D0 (2026-10-12) catches a Form 25 for another security of the filer (a note, a preferred, a
 tracking stock: Loews' Carolina Group in June 2008) or an exchange transfer, and an Item
@@ -111,7 +112,7 @@ tracking stock: Loews' Carolina Group in June 2008) or an exchange transfer, and
 misses a security whose volume fell by half around the form for other reasons (Take-Two and
 Leidos keep a false row; harmless while the series is live: their coverage stays `complete`)
 and drops a few real ones whose stock traded on at volume (Merrill Lynch 2009: 158 bars of
-another security follow). It needs a bar on or before the form; without one the row stays.
+another security follow). A series that starts after its form outlives it (2026-10-12: Amazon's Form 15 of 2004, Costco's of 2003, CBRE's of 2002 had kept `deregistered` rows on series from 2005); before that change such rows stayed, as did rows with a ten-fold jump anywhere after the form (now only among the 70 bars compared).
 Rebuild alone with `quant-ingest edgar delistings`.
 
 Limits, stated:

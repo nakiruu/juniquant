@@ -4,8 +4,8 @@
 //!
 //! ```text
 //! quant-ingest probe <p1..p6|y1..y4|s1>                   BACKFILL.md §2
-//! quant-ingest eodhd backfill [--codes A,B] [--limit N]   W5, BACKFILL.md §5.1
-//! quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]   J4a, ADR 0001
+//! quant-ingest eodhd backfill [--codes A,B] [--limit N] [--offline DATE]   W5, BACKFILL.md §5.1
+//! quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4] [--offline DATE]   J4a, ADR 0001
 //! quant-ingest ishares snapshot                            W8, today's IWF/IWP holdings
 //! quant-ingest edgar fetch                              J2, BACKFILL.md §5.2
 //! quant-ingest edgar fundamentals                       J7, from the landed zips
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
         ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4|s1>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
+                "usage: quant-ingest probe <p1..p6|y1..y4|s1>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N] [--offline DATE]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4] [--offline DATE]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
             );
             return ExitCode::from(2);
         }
@@ -71,7 +71,7 @@ fn main() -> ExitCode {
 }
 
 fn backfill(rest: &[&str]) -> Result<(), String> {
-    let (mut codes, mut limit) = (None, None);
+    let (mut codes, mut limit, mut offline) = (None, None, None);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match (*a, it.next()) {
@@ -81,6 +81,7 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
             ("--limit", Some(v)) => {
                 limit = Some(v.parse::<usize>().map_err(|e| format!("--limit: {e}"))?)
             }
+            ("--offline", Some(v)) => offline = Some(lists_date(v)?),
             (other, _) => return Err(format!("unknown argument {other}")),
         }
     }
@@ -91,6 +92,9 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
         mut ctx,
         ..
     } = setup("backfill")?;
+    if offline.is_some() {
+        ctx.fetcher.set_offline();
+    }
     ctx.figis = load_figis(&lake)?;
     if ctx.figis.is_empty() {
         return Err(
@@ -116,7 +120,9 @@ fn backfill(rest: &[&str]) -> Result<(), String> {
                     })
                 })
                 .collect(),
-            None => run::symbols(&ctx, today).await.map_err(|e| e.to_string())?,
+            None => run::symbols(&ctx, offline.unwrap_or(today))
+                .await
+                .map_err(|e| e.to_string())?,
         };
         for (r, _) in run::REFERENCE {
             if !list.iter().any(|c| c.code == *r) {
@@ -263,6 +269,7 @@ fn setup(mode: &str) -> Result<Setup, String> {
         quality: quality.clone(),
         base: run::BASE.into(),
         figis: std::collections::BTreeMap::new(),
+        cal: calendar::Calendar::from_env().map_err(|e| e.to_string())?,
     };
     Ok(Setup {
         paths,
@@ -272,6 +279,11 @@ fn setup(mode: &str) -> Result<Setup, String> {
         quality,
         ctx,
     })
+}
+
+/// The `--offline DATE` value: the date of the landed EODHD symbol lists to re-parse from.
+fn lists_date(v: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(v, "%Y-%m-%d").map_err(|e| format!("--offline {v:?}: {e}"))
 }
 
 fn parse_quarter(s: &str) -> Result<(i32, u32), String> {
@@ -291,7 +303,7 @@ fn parse_quarter(s: &str) -> Result<(i32, u32), String> {
 
 fn identity(rest: &[&str]) -> Result<(), String> {
     use ingest::identity::run::{Job, run as run_identity};
-    let (mut codes, mut quarters) = (None::<Vec<String>>, None);
+    let (mut codes, mut quarters, mut offline) = (None::<Vec<String>>, None, None);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match (*a, it.next()) {
@@ -302,17 +314,24 @@ fn identity(rest: &[&str]) -> Result<(), String> {
                     .ok_or("--quarters FROM-TO, e.g. 2008q1-2008q4")?;
                 quarters = Some((parse_quarter(a)?, parse_quarter(b)?));
             }
+            ("--offline", Some(v)) => offline = Some(lists_date(v)?),
             (other, _) => return Err(format!("unknown argument {other}")),
         }
     }
+    let set = setup("identity")?;
+    let submissions = latest_zip(&set, "submissions_zip").ok().map(|(_, p)| p);
     let Setup {
         paths,
         lake,
         manifest,
         today,
         quality,
-        ctx,
-    } = setup("identity")?;
+        mut ctx,
+    } = set;
+    // OpenFIGI and the SEC stay online (free); EODHD answers only from the landed lists.
+    if offline.is_some() {
+        ctx.fetcher.set_offline();
+    }
     let email = std::env::var("SEC_EDGAR_EMAIL")
         .ok()
         .filter(|e| !e.is_empty())
@@ -371,13 +390,14 @@ fn identity(rest: &[&str]) -> Result<(), String> {
         } else {
             Some(2_000)
         },
+        submissions,
     };
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
     let result = rt.block_on(async {
-        let all = run::symbols(&job.eodhd, today)
+        let all = run::symbols(&job.eodhd, offline.unwrap_or(today))
             .await
             .map_err(|e| e.to_string())?;
         let list = match &codes {
@@ -391,12 +411,13 @@ fn identity(rest: &[&str]) -> Result<(), String> {
     quality.write(&lake).map_err(|e| e.to_string())?;
     let s = result?;
     println!(
-        "identity: {} codes -> {} securities (ISIN {}, 13(f) CUSIP {}, rename {}); out of scope {}; unresolved {} (no match {}, ambiguous {})",
+        "identity: {} codes -> {} securities (ISIN {}, 13(f) CUSIP {}, rename {}, training-only key {}); out of scope {}; unresolved {} (no match {}, ambiguous {})",
         s.codes,
         s.securities,
         s.by_isin,
         s.by_cusip,
         s.by_rename,
+        s.by_eod_code,
         s.out_of_scope,
         s.no_match + s.ambiguous,
         s.no_match,
