@@ -117,13 +117,25 @@ pub fn open(path: &Path) -> Result<zip::ZipArchive<std::fs::File>, zip::result::
 /// One output row before batching: the CIK, the security, the filer row.
 type Out<'a> = (&'a str, &'a Security, facts::Row);
 
-/// A listed security of a filer (`security_master`).
+/// A listed security of a filer (`security_master`, or a predecessor filer's `cik` spell in
+/// `security_spells`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Security {
     /// Composite FIGI.
     pub figi: String,
     /// Canonical ticker.
     pub ticker: String,
+    /// The last filing date of the filer that is the security's (a predecessor's spell);
+    /// `None` for its current filer.
+    pub valid_to: Option<NaiveDate>,
+}
+
+impl Security {
+    /// Whether a filing of the filer on `filed` is the security's.
+    #[must_use]
+    pub fn owns(&self, filed: NaiveDate) -> bool {
+        self.valid_to.is_none_or(|v| filed <= v)
+    }
 }
 
 /// What [`build`] produced.
@@ -227,8 +239,9 @@ pub fn filer_sic(
     }))
 }
 
-/// J7: the `fundamentals` rows of every CIK in `by_cik` (10-digit CIK -> its securities), from
-/// the two landed zips. Pure in the zips, the map and `today`.
+/// J7: the `fundamentals` rows of every CIK in `by_cik` (10-digit CIK -> its securities; a
+/// predecessor filer's rows only up to its spell's end, [`Security::owns`]), from the two
+/// landed zips. Pure in the zips, the map and `today`.
 ///
 /// # Errors
 ///
@@ -267,7 +280,11 @@ pub fn build(
         }
         with_rows += 1;
         for s in secs {
-            out.extend(rows.iter().map(|r| (cik.as_str(), s, r.clone())));
+            out.extend(
+                rows.iter()
+                    .filter(|r| s.owns(r.filing_date))
+                    .map(|r| (cik.as_str(), s, r.clone())),
+            );
         }
     }
     Ok(Built {
@@ -405,7 +422,8 @@ fn batch(rows: &[Out<'_>]) -> Result<arrow::array::RecordBatch, arrow::error::Ar
     arrow::array::RecordBatch::try_new(Arc::new(schema), cols)
 }
 
-/// The `fundamentals` rows of one filer, one copy per security.
+/// The `fundamentals` rows of one filer, one copy per security (a predecessor filer's up to
+/// its spell's end, [`Security::owns`]).
 ///
 /// # Errors
 ///
@@ -417,7 +435,11 @@ pub fn filer_batch(
 ) -> Result<arrow::array::RecordBatch, arrow::error::ArrowError> {
     let out: Vec<Out<'_>> = secs
         .iter()
-        .flat_map(|s| rows.iter().map(move |r| (cik, s, r.clone())))
+        .flat_map(|s| {
+            rows.iter()
+                .filter(|r| s.owns(r.filing_date))
+                .map(move |r| (cik, s, r.clone()))
+        })
         .collect();
     batch(&out)
 }
@@ -504,6 +526,24 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
 
     use super::*;
+
+    #[test]
+    fn a_predecessor_owns_its_filings_to_the_end_of_its_spell() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let old = Security {
+            figi: "BBG023CY9MM1".into(),
+            ticker: "XOM".into(),
+            valid_to: Some(d("2026-06-30")),
+        };
+        assert!(old.owns(d("2026-06-30")) && !old.owns(d("2026-07-02")));
+        assert!(
+            Security {
+                valid_to: None,
+                ..old
+            }
+            .owns(d("2030-01-02"))
+        );
+    }
 
     #[test]
     fn quarters_stop_before_the_current_one() {

@@ -268,9 +268,11 @@ final state; a test does exactly that (§12).
   the SEC `company_tickers_exchange.json` for current CIKs, and EDGAR's
   `cik-lookup-data.txt` (every filer's current and former names, landed once a month) for
   the rest: a security without a current-ticker CIK (every delisted one) takes the one CIK
-  whose name or former name has its normalized name; a name shared by two CIKs stays null, and the CIK must have filed (its submissions JSON, one
-  request per candidate CIK, landed once a month) within a year of the security's price span
-  (`resolution_note` ends `; cik:name`). A SPAC name is out of scope before every route (D19). Writes
+  whose name or former name has its normalized name (with or without a jurisdiction tag), and
+  the CIK must have filed a report (10-K, 10-Q, 20-F, 40-F) within a year of the security's
+  price span, read from the landed submissions zip (no request per CIK since 2026-10-13); a
+  name several CIKs share takes the tie rules of `UNIVERSE.md` §4, and an 8-K12B or 8-K12G3
+  successor gets its predecessor filers as `cik` spells (`resolution_note` ends `; cik:name`). A SPAC name is out of scope before every route (D19). Writes
   `security_master` (#31) and `security_spells` (#36); unresolved codes go to
   `data_quality`. Without `OPENFIGI_API_KEY` a mapping of more than 2,000
   lookups is refused (it would take hours). Rules: `SOURCES.md` Identifiers.

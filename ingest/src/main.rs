@@ -766,8 +766,11 @@ fn edgar_events() -> Result<(), String> {
         .iter()
         .flat_map(|(cik, ev)| {
             let secs = by_cik.get(*cik).map(Vec::as_slice).unwrap_or_default();
-            secs.iter()
-                .flat_map(move |sec| ev.iter().map(move |e| (*cik, sec, e)))
+            secs.iter().flat_map(move |sec| {
+                ev.iter()
+                    .filter(move |e| sec.owns(e.filing_date))
+                    .map(move |e| (*cik, sec, e))
+            })
         })
         .collect();
     let batch = events::batch(&rows).map_err(|e| e.to_string())?;
@@ -1130,6 +1133,7 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
                     Security {
                         figi: figi.value(i).to_owned(),
                         ticker: ticker.value(i).to_owned(),
+                        valid_to: None,
                     },
                     Vec::new(),
                 )
@@ -1733,7 +1737,8 @@ fn macro_backfill() -> Result<(), String> {
 /// The stage sources of `fundamentals`, in precedence order: the bulk zip, then the daily API.
 const EDGAR_SOURCES: &[&str] = &["sec_bulk", "sec_api"];
 
-/// 10-digit CIK -> its securities, from `security_master`.
+/// 10-digit CIK -> its securities, from `security_master` and the predecessor filers' `cik`
+/// spells of `security_spells`.
 fn filer_securities(
     lake: &lake::Lake,
 ) -> Result<std::collections::BTreeMap<String, Vec<ingest::edgar::Security>>, String> {
@@ -1753,13 +1758,46 @@ fn filer_securities(
     );
     let mut by_cik: std::collections::BTreeMap<String, Vec<ingest::edgar::Security>> =
         Default::default();
-    for i in (0..b.num_rows()).filter(|&i| c.is_valid(i)) {
+    let mut ticker = std::collections::BTreeMap::new();
+    for i in 0..b.num_rows() {
+        ticker.insert(f.value(i), t.value(i));
+        if c.is_valid(i) {
+            by_cik
+                .entry(c.value(i).to_owned())
+                .or_default()
+                .push(ingest::edgar::Security {
+                    figi: f.value(i).to_owned(),
+                    ticker: t.value(i).to_owned(),
+                    valid_to: None,
+                });
+        }
+    }
+    // A predecessor filer's spell (identity, `edgar_succession`): its filings up to `valid_to`.
+    let sp = lake
+        .read_dataset(
+            "security_spells",
+            Some(&["figi", "id_type", "value", "valid_to"]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let (sf, st, sv) = (
+        sp.column(0).as_string::<i32>(),
+        sp.column(1).as_string::<i32>(),
+        sp.column(2).as_string::<i32>(),
+    );
+    let to = sp.column(3).as_primitive::<arrow::datatypes::Date32Type>();
+    for i in (0..sp.num_rows()).filter(|&i| st.value(i) == "cik" && to.is_valid(i)) {
+        let Some(tk) = ticker.get(sf.value(i)) else {
+            continue;
+        };
         by_cik
-            .entry(c.value(i).to_owned())
+            .entry(sv.value(i).to_owned())
             .or_default()
             .push(ingest::edgar::Security {
-                figi: f.value(i).to_owned(),
-                ticker: t.value(i).to_owned(),
+                figi: sf.value(i).to_owned(),
+                ticker: (*tk).to_owned(),
+                valid_to: Some(from_days(to.value(i))),
             });
     }
     Ok(by_cik)
@@ -1963,7 +2001,7 @@ fn edgar_daily() -> Result<(), String> {
             .iter()
             .flat_map(|sec| {
                 ev.iter()
-                    .filter(|e| e.filing_date >= from)
+                    .filter(move |e| e.filing_date >= from && sec.owns(e.filing_date))
                     .map(move |e| (cik.as_str(), sec, e))
             })
             .collect();

@@ -166,10 +166,37 @@ issuer). Rule 3 for every other security, from EDGAR's `cik-lookup-data.txt` (cu
 former names of every filer, no dates): the security's normalized name must equal the
 names of exactly one CIK. `resolution` keeps the FIGI path; the name method is recorded as
 `; cik:name` at the end of `resolution_note`. The date window of rule 3 is checked on the filer's whole filing history: the CIK is kept
-only when the filings in its EDGAR submissions JSON (`data.sec.gov/submissions`, landed once
-a month) overlap the security's price span, with a year of slack each side; an unrelated
-filer with the same name filed in another era. No price span or no filings: null.
+only when the filer's reports (10-K, 10-Q, 20-F or 40-F; the landed submissions zip) overlap
+the security's price span, with a year of slack each side; an unrelated filer with the same
+name filed in another era. No price span or no report: null.
 Rule 1 is not implemented yet. First run: securities without a CIK fell from 5,165 to 956.
+
+**Amended 2026-10-13 (gate G7, the CIK half of D17).** An audit of the stale eligible days
+found three faults in rule 3, fixed in J4a:
+- *Jurisdiction tags.* EDGAR names often end with a state tag (`ALLEGHANY CORP /DE`,
+  `PLANTRONICS INC /CA/`), so the real filer never matched and an unrelated namesake did (Dow
+  Chemical, Jacobs, Cypress, Westar, Lexmark). A name now counts with and without its tag.
+- *Confirmation.* Any filing confirmed a CIK, so a shell that filed one form while the
+  stock traded won. Now a report must overlap the price span (above).
+- *Ties.* Of several filers with the name, in order: one that reported between the first and
+  last bar; the last of a chain of successions (WestRock 2015 by WestRock 2018); the one whose
+  reports cover a year more of the price history (Cott, renamed Primo Water, not the Primo it
+  bought); the one named exactly as filed (W. R. Grace & Co, not Sealed Air, once `W R GRACE
+  & CO /DE/`); else null. A listed security's tie accepts 20-F and 40-F reports, which the
+  D12 scope test needs; a training-only key still needs a 10-K or 10-Q filer, and a code whose
+  filer a FIGI security already has gets none (old Allergan is not Allergan plc).
+
+**Predecessor filers (2026-10-13).** A company that forms a new holding company or moves its
+domicile files under a new CIK, while the vendor's price series runs on: Exxon Mobil's history
+since 2005 is under the FIGI of ExxonMobil Holdings (CIK 2115436, July 2026), whose single
+CIK left 15 years without fundamentals. When the security's filer filed an 8-K12B or 8-K12G3
+(a successor issuer), the filer with one of the security's names (EODHD, OpenFIGI) that filed
+a Form 25 or 15 within 30 days of it, and a report in the 400 days before, is its
+predecessor: a `cik` spell in `security_spells` valid to the day before the notice (source
+`edgar_succession`), up to three back (BlackRock 2024 and 2006). `fundamentals` and
+`filing_events` then take the predecessor's filings up to that day. Not linked, never guessed:
+two candidates, a filer another security has as its CIK, one two securities would share, and
+a predecessor with another name (Bunge Ltd, Paramount Global, Apache, HollyFrontier).
 
 **Renames.** The same CIK appears under ticker X before a date and ticker Y
 after (a `formerNames` entry bridges them, or a manual row). It is one

@@ -146,7 +146,7 @@ own primary period, as first reported there.
 | `ebit` | `float64` | yes | USD, same duration rule as `revenues` |
 | `shares_outstanding` | `float64` | yes | Count from the cover page (`dei:EntityCommonStockSharesOutstanding`, classes summed), else `us-gaap:CommonStockSharesOutstanding`, else `us-gaap:WeightedAverageNumberOfSharesOutstandingBasic` (all classes; it also replaces a cover or balance count under half of it, one class of several), stated as of `shares_asof_date`; a count of zero or less is null (`01-data-ingestion/SOURCES.md` step 7). Not adjusted for later splits |
 | `accession` | `utf8` | no | Appended. EDGAR accession number, `0000320193-24-000006` form. Primary-key part |
-| `cik` | `utf8` | no | Appended. 10-digit zero-padded |
+| `cik` | `utf8` | no | Appended. 10-digit zero-padded; the filer of the row: the security's current CIK or, for rows filed up to a `cik` spell's `valid_to` (#36), a predecessor's (2026-10-13) |
 | `fiscal_year` | `int32` | yes | Appended. Fiscal year of the filing's own period, from the filer's DEI data (`fy`), checked against the period; null if inconsistent |
 | `fiscal_period` | `utf8` | yes | Appended. `Q1` / `Q2` / `Q3` / `FY` (`fp`). There is no `Q4` row: a 10-K row is `FY`; the discrete Q4 is derived inside ingestion for TTM only |
 | `duration_days` | `int32` | yes | Appended. Length of the primary period for flow items (about 91 for a quarter, about 364 for a year) |
@@ -948,7 +948,7 @@ class on US venues) over its whole life. Redefined before first write on
 |---|---|---|---|
 | `figi` | `utf8` | no | US composite FIGI (`BBG` + 9 characters), from OpenFIGI; or the training-only key `EOD:<EODHD code>` of a delisted code without one (D17 amended 2026-10-12, `resolution = eod_code`) |
 | `share_class_figi` | `utf8` | yes | OpenFIGI share-class FIGI |
-| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK; null until resolved. Active: the current ticker in the SEC ticker file. Otherwise (every delisted security): the one CIK whose EDGAR name or former name (`cik-lookup-data.txt`) has the same normalized name and whose filings overlap the price span within a year; of several CIKs with that name, the one that filed a 10-K or 10-Q between the first and last bar (2026-10-12), else null. `resolution_note` ends `; cik:name` for those (J4a, `BACKFILL.md` §5) |
+| `cik` | `utf8` | yes | 10-digit zero-padded issuer CIK (the current filer); null until resolved. Active: the current ticker in the SEC ticker file. Otherwise (every delisted security, and an active one whose ticker the file lacks): the one CIK whose EDGAR name or former name (`cik-lookup-data.txt`, with or without a trailing jurisdiction tag such as `/DE/`) has the same normalized name and that filed a report (10-K, 10-Q, 20-F, 40-F) within a year of the price span (2026-10-13: any filing before); of several CIKs with that name, the one that filed a 10-K or 10-Q between the first and last bar (2026-10-12), else the last of a chain of 8-K12B/8-K12G3 successions (2026-10-13), else null. `resolution_note` ends `; cik:name` for those (J4a, `BACKFILL.md` §5). Earlier filers of the security are `cik` spells in #36 |
 | `ticker` | `utf8` | no | Canonical form of the latest ticker (from the latest EODHD code) |
 | `name` | `utf8` | no | EODHD `Name` of the latest code |
 | `eodhd_code` | `utf8` | no | The latest EODHD code without `.US` (`MON_old`, `BRK-B`) |
@@ -1011,7 +1011,7 @@ item `-`. Usable from `filing_date` (the same point-in-time rule as
 | `accession` | `utf8` | no | |
 | `item` | `utf8` | no | 8-K item number (`2.02`) or `-` |
 | `ticker` | `utf8` | no | Canonical symbol, via `security_master` (one row per listed class) |
-| `cik` | `utf8` | no | |
+| `cik` | `utf8` | no | The filer: the security's current CIK, or a predecessor's up to its `cik` spell's `valid_to` (#36, 2026-10-13) |
 | `form_type` | `utf8` | no | `8-K`, `8-K/A`, `25`, `25-NSE`, `15-12B`, `15-12G`, `15-15D`, `NT 10-K`, `NT 10-Q`, and the annual reports `10-K`, `10-KT`, `10-K405`, `10-KSB`, `20-F`, `40-F` (2026-10-12: domestic or foreign filer as of each filing, the D12 scope) |
 | `filing_date` | `date32` | no | **Point-in-time stamp** |
 | `acceptance_datetime` | `timestamp[ns, UTC]` | yes | |
@@ -1106,17 +1106,19 @@ Primary key: `(date, source, ticker)`. New dataset: register it in `schemas/regi
 Rows: about 60,000 (several identifiers per security; estimate). Writer: Rust (ingest, identity job J4a). Update: with `security_master`. Partitioned: no.
 
 Dated vendor identifiers of each security (DECISIONS D17): which EODHD code,
-ticker, ISIN or CUSIP pointed at a FIGI, and when. "Which security was `FB` on
+ticker, ISIN or CUSIP pointed at a FIGI, and when. A `cik` row is a predecessor filer: the
+CIK whose filings were the security's until a successor issuer took over its registration
+(8-K12B or 8-K12G3, J4a), so its fundamentals and events join the FIGI up to `valid_to`. "Which security was `FB` on
 2015-06-30" and "which code serves this FIGI" are as-of lookups here. A
 lookup table of existing identifiers, not a new identifier.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `figi` | `utf8` | no | `security_master.figi` |
-| `id_type` | `utf8` | no | `eodhd_code` / `ticker` / `isin` / `cusip` |
+| `id_type` | `utf8` | no | `eodhd_code` / `ticker` / `isin` / `cusip` / `cik` (a predecessor filer, 2026-10-13) |
 | `value` | `utf8` | no | The identifier (an EODHD code without `.US`; a canonical ticker) |
 | `valid_from` | `date32` | yes | First date it is known to apply; null when unknown (symbol lists are snapshots; W5 fills code and ticker spans from the price series) |
-| `valid_to` | `date32` | yes | Last such date; null when open or unknown |
-| `source` | `utf8` | no | `eodhd_symbols` / `openfigi` / `sec_13f` / `override` |
+| `valid_to` | `date32` | yes | Last such date; null when open or unknown. A `cik`: the day before its successor's 8-K12B or 8-K12G3, the last filing date whose `fundamentals` and `filing_events` rows are the security's |
+| `source` | `utf8` | no | `eodhd_symbols` / `openfigi` / `sec_13f` / `override` / `edgar_succession` |
 
 Primary key: `(figi, id_type, value)`. New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).

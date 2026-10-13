@@ -552,6 +552,25 @@ pub fn rename_links(
 /// The periodic report forms of a domestic filer (a foreign private issuer files 20-F / 40-F).
 const DOMESTIC_FORMS: &[&str] = &["10-K", "10-K405", "10-KSB", "10-KT", "10-Q", "10-QSB"];
 
+/// The reports that confirm a filer found by name: a domestic filer's 10-K/10-Q, a foreign
+/// private issuer's 20-F/40-F.
+const REPORT_FORMS: &[&str] = &[
+    "10-K", "10-K405", "10-KSB", "10-KT", "10-Q", "10-QSB", "20-F", "40-F",
+];
+
+/// A successor issuer's notice that it took over another's registration (Rule 12g-3: a new
+/// holding company, a redomicile).
+const SUCCESSION_FORMS: &[&str] = &["8-K12B", "8-K12G3"];
+
+/// The end of a listing (Form 25) or of a registration (Form 15).
+const DEREGISTRATION_FORMS: &[&str] = &["25", "25-NSE", "15-12B", "15-12G", "15-15D"];
+
+/// Days between a successor's notice and the predecessor's Form 25 or 15.
+const SUCCESSION_DAYS: u64 = 30;
+
+/// Days before a succession within which the predecessor still filed a report.
+const SUCCESSION_REPORT_DAYS: u64 = 400;
+
 /// A filer's `(form, filing_date)` list.
 pub type Forms = Vec<(String, NaiveDate)>;
 
@@ -571,61 +590,188 @@ pub fn filer(forms: &Forms) -> Option<Filer> {
     Some((periodic, (first, last)))
 }
 
-/// Of the EDGAR filers `ciks` with a security's name, the one that filed a 10-K or 10-Q
-/// (`DOMESTIC_FORMS`) while the security traded (`priced`, a year of slack each side,
-/// [`cik_confirmed`]); of several, the one that filed one between its first and last bar
-/// (Bear Stearns Companies Inc, not the LLC that filed after the merger); `None` for none or
-/// a tie. Returns the CIK and the filer's filing span.
+/// First and last report (`REPORT_FORMS`) of a filer; `None` without one.
+#[must_use]
+pub fn report_range(forms: &Forms) -> Option<(NaiveDate, NaiveDate)> {
+    let mut d = forms
+        .iter()
+        .filter(|(f, _)| REPORT_FORMS.contains(&f.as_str()))
+        .map(|x| x.1);
+    let first = d.next()?;
+    Some(d.fold((first, first), |(a, z), x| (a.min(x), z.max(x))))
+}
+
+/// The day the filer of `later` took over the registration of the filer of `earlier`: `later`
+/// filed an 8-K12B or 8-K12G3 (`SUCCESSION_FORMS`) within `SUCCESSION_DAYS` of a Form 25 or
+/// 15 of `earlier` (`DEREGISTRATION_FORMS`), and `earlier` filed a report (`REPORT_FORMS`) in
+/// the `SUCCESSION_REPORT_DAYS` before. Exxon Mobil (CIK 34088) to ExxonMobil Holdings
+/// (2115436) on 2026-07-01; `None` when `later` succeeded no filer of `earlier`'s kind.
+#[must_use]
+pub fn succession(earlier: &Forms, later: &Forms) -> Option<NaiveDate> {
+    let near = |d: NaiveDate, s: NaiveDate, days: u64| {
+        let n = chrono::Days::new(days);
+        s.checked_sub_days(n).unwrap_or(NaiveDate::MIN) <= d
+            && d <= s.checked_add_days(n).unwrap_or(NaiveDate::MAX)
+    };
+    later
+        .iter()
+        .filter(|(f, _)| SUCCESSION_FORMS.contains(&f.as_str()))
+        .map(|x| x.1)
+        .find(|&s| {
+            earlier.iter().any(|(f, d)| {
+                DEREGISTRATION_FORMS.contains(&f.as_str()) && near(*d, s, SUCCESSION_DAYS)
+            }) && earlier.iter().any(|(f, d)| {
+                REPORT_FORMS.contains(&f.as_str()) && *d < s && near(*d, s, SUCCESSION_REPORT_DAYS)
+            })
+        })
+}
+
+/// Of the EDGAR filers `ciks` with a security's name, the one that filed one of `reports`
+/// (`DOMESTIC_FORMS` for a training-only key; `REPORT_FORMS` for a listed security, whose
+/// 20-F or 40-F the D12 scope needs) while the security traded (`priced`, a year of slack each
+/// side, [`cik_confirmed`]). Of several, in order: the one that filed one between its first and
+/// last bar (Bear Stearns Companies Inc, not the LLC that filed after the merger); the last of
+/// a chain of [`succession`]s (WestRock 2015 taken over by WestRock 2018); the one whose
+/// reports span more of the price history by a year (Cott, renamed Primo Water in 2020, not the
+/// Primo it bought); the one `exact` names as filed ([`exact_candidates`]). `None` for none or
+/// a tie. `forms` gives a filer's filings. Returns the CIK and the filer's filing span.
 pub fn pick_filer<'a>(
     ciks: impl IntoIterator<Item = &'a String>,
     priced: (NaiveDate, NaiveDate),
-    filers: &mut dyn FnMut(&str) -> Option<Filer>,
+    reports: &[&str],
+    forms: &mut dyn FnMut(&str) -> Option<Forms>,
+    exact: &dyn Fn(&str) -> bool,
 ) -> Option<(String, (NaiveDate, NaiveDate))> {
-    let mut ok: Vec<(String, Filer)> = Vec::new();
+    let mut ok: Vec<(String, Forms, Filer)> = Vec::new();
     for cik in ciks {
-        let Some((periodic, span)) = filers(cik) else {
+        let Some(f) = forms(cik) else {
             continue;
         };
+        let Some((_, span)) = filer(&f) else {
+            continue;
+        };
+        let periodic: Vec<NaiveDate> = f
+            .iter()
+            .filter(|(x, _)| reports.contains(&x.as_str()))
+            .map(|x| x.1)
+            .collect();
         let range = periodic
             .iter()
             .min()
             .copied()
             .zip(periodic.iter().max().copied());
         if cik_confirmed(Some(priced), range) {
-            ok.push((cik.clone(), (periodic, span)));
+            ok.push((cik.clone(), f, (periodic, span)));
         }
     }
     if ok.len() > 1 {
-        ok.retain(|(_, (p, _))| p.iter().any(|d| priced.0 <= *d && *d <= priced.1));
+        ok.retain(|(_, _, (p, _))| p.iter().any(|d| priced.0 <= *d && *d <= priced.1));
+    }
+    if ok.len() > 1 {
+        ok.sort_by_key(|(_, _, (p, _))| p.iter().min().copied());
+        if ok
+            .windows(2)
+            .all(|w| matches!(w, [a, b] if succession(&a.1, &b.1).is_some()))
+        {
+            ok.drain(..ok.len() - 1);
+        }
+    }
+    if ok.len() > 1 {
+        // Days of the price history between a filer's first and last report.
+        let cover = |p: &[NaiveDate]| {
+            let (Some(a), Some(z)) = (p.iter().min(), p.iter().max()) else {
+                return 0;
+            };
+            (priced.1.min(*z) - priced.0.max(*a)).num_days().max(0)
+        };
+        ok.sort_by_key(|(_, _, (p, _))| std::cmp::Reverse(cover(p)));
+        let at = |i: usize| ok.get(i).map_or(0, |x| cover(&x.2.0));
+        if at(0) - at(1) >= 365 {
+            ok.truncate(1);
+        }
+    }
+    if ok.len() > 1 && ok.iter().filter(|x| exact(&x.0)).count() == 1 {
+        ok.retain(|x| exact(&x.0));
     }
     match ok.as_slice() {
-        [(cik, (_, span))] => Some((cik.clone(), *span)),
+        [(cik, _, (_, span))] => Some((cik.clone(), *span)),
         _ => None,
     }
+}
+
+/// A predecessor filer of a security: its CIK and the last day its filings are the security's.
+pub type Predecessor = (String, NaiveDate);
+
+/// The filers a security's filer `cik` took over ([`succession`]) after the first bar `p0`,
+/// newest first: among the filers with one of the security's name `keys` ([`name_key`], from
+/// `candidates`) and not `taken` by another security, the one `cik` succeeded, then the one
+/// that filer succeeded, up to three. Each ends the day before its successor's notice (the
+/// later filings of a predecessor that stays a debt issuer are not the security's). Two
+/// candidates for one link end the chain: never guessed.
+pub fn predecessors(
+    cik: &str,
+    p0: NaiveDate,
+    keys: &[String],
+    candidates: &BTreeMap<String, BTreeSet<String>>,
+    taken: &dyn Fn(&str) -> bool,
+    forms: &mut dyn FnMut(&str) -> Option<Forms>,
+) -> Vec<Predecessor> {
+    let pool: BTreeSet<&String> = keys
+        .iter()
+        .filter_map(|k| candidates.get(k))
+        .flatten()
+        .collect();
+    let mut out: Vec<Predecessor> = Vec::new();
+    let mut current = cik.to_owned();
+    while out.len() < 3 {
+        let Some(later) = forms(&current) else {
+            break;
+        };
+        let mut found = Vec::new();
+        for k in &pool {
+            if k.as_str() == cik || taken(k) || out.iter().any(|(o, _)| o == *k) {
+                continue;
+            }
+            if let Some(s) = forms(k)
+                .and_then(|e| succession(&e, &later))
+                .filter(|s| *s > p0)
+            {
+                found.push(((*k).clone(), s));
+            }
+        }
+        let [(k, s)] = found.as_slice() else {
+            break;
+        };
+        out.push((k.clone(), s.pred_opt().unwrap_or(*s)));
+        current.clone_from(k);
+    }
+    out
 }
 
 /// `(CIK, filing span, price span)` of a security whose name several filers share.
 pub type SharedCik = (String, (NaiveDate, NaiveDate), (NaiveDate, NaiveDate));
 
-/// The CIK of each delisted resolved code whose name several EDGAR filers share
-/// ([`pick_filer`]; a name of one filer goes through `cik_by_name` in [`master_batch`]):
-/// EODHD code -> [`SharedCik`]. Lehman Brothers Holdings and Fannie Mae had no CIK, so no
-/// filings, no fundamentals and no delisting record.
+/// The CIK of each resolved code whose name several EDGAR filers share ([`pick_filer`]; a
+/// name of one filer goes through `cik_by_name` in [`master_batch`], and an active code's
+/// current ticker comes first there): EODHD code -> [`SharedCik`]. Lehman Brothers Holdings
+/// and Fannie Mae had no CIK, so no filings, no fundamentals and no delisting record.
 pub fn shared_name_ciks(
     resolved: &[Resolved],
     candidates: &BTreeMap<String, BTreeSet<String>>,
+    exact: &BTreeMap<String, BTreeSet<String>>,
     spans: &mut dyn FnMut(&str) -> Option<(NaiveDate, NaiveDate)>,
-    filers: &mut dyn FnMut(&str) -> Option<Filer>,
+    forms: &mut dyn FnMut(&str) -> Option<Forms>,
 ) -> BTreeMap<String, SharedCik> {
     resolved
         .iter()
-        .filter(|r| r.code.delisted)
         .filter_map(|r| {
-            let ciks = candidates
-                .get(&name_key(&r.code.name))
-                .filter(|c| c.len() > 1)?;
+            let key = name_key(&r.code.name);
+            let ciks = candidates.get(&key).filter(|c| c.len() > 1)?;
             let priced = spans(&r.code.code)?;
-            let (cik, filed) = pick_filer(ciks, priced, filers)?;
+            let named = exact.get(&key);
+            let (cik, filed) = pick_filer(ciks, priced, REPORT_FORMS, forms, &|c| {
+                named.is_some_and(|s| s.contains(c))
+            })?;
             Some((r.code.code.clone(), (cik, filed, priced)))
         })
         .collect()
@@ -645,28 +791,35 @@ pub struct EodKeyed {
 }
 
 /// Training-only keys (DECISIONS D17, amended 2026-10-12) for delisted codes no FIGI route
-/// reached: the key is `EOD:<code>` when [`pick_filer`] finds the code's EDGAR filer among
-/// those with its name (`candidates`, [`cik_candidates`]). Left out, never guessed: a code
-/// without bars, a filer a resolved security already has (`taken`: a twin or another class),
-/// and every code of a filer whose candidate codes trade over overlapping dates. `spans`
-/// gives a code's first and last bar, `filers` a filer's [`Filer`].
+/// reached: the key is `EOD:<code>` when [`pick_filer`] finds the code's EDGAR filer, a 10-K or
+/// 10-Q filer, among those with its name (`candidates`, [`cik_candidates`]; `exact`,
+/// [`exact_candidates`]). Left out, never guessed: a code without bars, a code whose filer a
+/// resolved security already has (`taken`: a twin or another class, never the next filer of
+/// the name: old Allergan is not Allergan plc), and every code of a filer whose candidate codes
+/// trade over overlapping dates. `spans` gives a code's first and last bar, `forms` a filer's
+/// filings.
 pub fn eod_keys(
     unresolved: &[Code],
     candidates: &BTreeMap<String, BTreeSet<String>>,
+    exact: &BTreeMap<String, BTreeSet<String>>,
     taken: &BTreeSet<String>,
     spans: &mut dyn FnMut(&str) -> Option<(NaiveDate, NaiveDate)>,
-    filers: &mut dyn FnMut(&str) -> Option<Filer>,
+    forms: &mut dyn FnMut(&str) -> Option<Forms>,
 ) -> Vec<EodKeyed> {
     let mut by_cik: BTreeMap<String, Vec<EodKeyed>> = BTreeMap::new();
     for c in unresolved.iter().filter(|c| c.delisted) {
-        let Some(ciks) = candidates.get(&name_key(&c.name)) else {
+        let key = name_key(&c.name);
+        let Some(ciks) = candidates.get(&key) else {
             continue;
         };
+        let named = exact.get(&key);
         let Some(priced) = spans(&c.code) else {
             continue;
         };
-        let free = ciks.iter().filter(|k| !taken.contains(*k));
-        let Some((cik, filed)) = pick_filer(free, priced, filers) else {
+        let Some((cik, filed)) = pick_filer(ciks, priced, DOMESTIC_FORMS, forms, &|c| {
+            named.is_some_and(|s| s.contains(c))
+        })
+        .filter(|(cik, _)| !taken.contains(cik)) else {
             continue;
         };
         by_cik.entry(cik.clone()).or_default().push(EodKeyed {
@@ -720,10 +873,38 @@ fn nullable(fields: &[(&str, DataType)]) -> Arc<Schema> {
     ))
 }
 
+/// An EDGAR name without its trailing jurisdiction tag: `ALLEGHANY CORP /DE` and
+/// `PLANTRONICS INC /CA/` are Alleghany Corporation and Plantronics Inc.
+fn without_jurisdiction(name: &str) -> &str {
+    let t = name.trim_end().trim_end_matches('/');
+    match t.rsplit_once('/') {
+        Some((head, tag))
+            if (2..=3).contains(&tag.trim().len())
+                && tag.trim().bytes().all(|b| b.is_ascii_alphabetic()) =>
+        {
+            head
+        }
+        _ => name,
+    }
+}
+
 /// EDGAR's `cik-lookup-data.txt` (`NAME:CIK:` per line, current and former names of every
-/// filer) as [`name_key`] -> every CIK with that key.
+/// filer) as [`name_key`] -> every CIK with that key; a name with a jurisdiction tag counts
+/// with and without it.
 #[must_use]
 pub fn cik_candidates(text: &str) -> BTreeMap<String, BTreeSet<String>> {
+    lookup_keys(text, true)
+}
+
+/// [`cik_candidates`] by the names as filed (a jurisdiction tag kept): the filers whose own
+/// name a security has, preferred in a tie ([`pick_filer`]). W. R. Grace & Co, not Sealed Air
+/// (once `W R GRACE & CO /DE/`).
+#[must_use]
+pub fn exact_candidates(text: &str) -> BTreeMap<String, BTreeSet<String>> {
+    lookup_keys(text, false)
+}
+
+fn lookup_keys(text: &str, untagged: bool) -> BTreeMap<String, BTreeSet<String>> {
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for line in text.lines() {
         let Some((name, cik)) = line
@@ -733,11 +914,15 @@ pub fn cik_candidates(text: &str) -> BTreeMap<String, BTreeSet<String>> {
         else {
             continue;
         };
-        let key = name_key(name);
-        if key.is_empty() || cik.len() != 10 || !cik.bytes().all(|b| b.is_ascii_digit()) {
+        if cik.len() != 10 || !cik.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }
-        out.entry(key).or_default().insert(cik.to_owned());
+        let tagless = untagged.then(|| name_key(without_jurisdiction(name)));
+        for key in std::iter::once(name_key(name)).chain(tagless) {
+            if !key.is_empty() {
+                out.entry(key).or_default().insert(cik.to_owned());
+            }
+        }
     }
     out
 }
@@ -755,31 +940,6 @@ pub fn unique_ciks(c: &BTreeMap<String, BTreeSet<String>>) -> BTreeMap<String, O
 #[must_use]
 pub fn parse_cik_lookup(text: &str) -> BTreeMap<String, Option<String>> {
     unique_ciks(&cik_candidates(text))
-}
-
-/// First and last filing date of an EDGAR submissions JSON (`filings.recent` plus the older
-/// `filings.files` pages); `None` without a date.
-#[must_use]
-pub fn submissions_span(body: &[u8]) -> Option<(NaiveDate, NaiveDate)> {
-    let v: Value = serde_json::from_slice(body).ok()?;
-    let f = v.get("filings")?;
-    let date = |s: &Value| NaiveDate::parse_from_str(s.as_str()?, "%Y-%m-%d").ok();
-    let recent = f
-        .pointer("/recent/filingDate")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(date);
-    let pages = f
-        .get("files")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(|p| [p.get("filingFrom"), p.get("filingTo")])
-        .flatten()
-        .filter_map(date);
-    let all: Vec<NaiveDate> = recent.chain(pages).collect();
-    Some((*all.iter().min()?, *all.iter().max()?))
 }
 
 /// A CIK found by name is kept only when the filer's filings overlap the price history, with
@@ -1010,13 +1170,79 @@ pub fn with_sic(
     RecordBatch::try_new(schema, cols)
 }
 
+/// The [`predecessors`] of every security of `master` (`security_master` rows) with a CIK and a
+/// `first_bar` (by FIGI), by FIGI. The names are the EODHD and OpenFIGI names; a filer that
+/// another security has as its CIK is not a predecessor, and one that securities of two
+/// different filers would take goes to neither.
+pub fn master_predecessors(
+    master: &RecordBatch,
+    first_bar: &BTreeMap<String, NaiveDate>,
+    candidates: &BTreeMap<String, BTreeSet<String>>,
+    forms: &mut dyn FnMut(&str) -> Option<Forms>,
+) -> BTreeMap<String, Vec<Predecessor>> {
+    use arrow::array::{Array, AsArray};
+    let col = |n: &str| {
+        master
+            .column_by_name(n)
+            .map(|c| c.as_string::<i32>().clone())
+    };
+    let (Some(figi), Some(cik), Some(name), Some(figi_name)) =
+        (col("figi"), col("cik"), col("name"), col("figi_name"))
+    else {
+        return BTreeMap::new();
+    };
+    let taken: BTreeSet<&str> = cik.iter().flatten().collect();
+    let mut found: Vec<(&str, &str, Vec<Predecessor>)> = Vec::new();
+    for i in (0..master.num_rows()).filter(|&i| cik.is_valid(i)) {
+        let Some(p0) = first_bar.get(figi.value(i)) else {
+            continue;
+        };
+        let keys: Vec<String> = [&name, &figi_name]
+            .iter()
+            .filter(|a| a.is_valid(i))
+            .map(|a| name_key(a.value(i)))
+            .collect();
+        let p = predecessors(
+            cik.value(i),
+            *p0,
+            &keys,
+            candidates,
+            &|k| taken.contains(k),
+            forms,
+        );
+        if !p.is_empty() {
+            found.push((figi.value(i), cik.value(i), p));
+        }
+    }
+    let mut owners: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (_, c, p) in &found {
+        for (k, _) in p {
+            owners.entry(k.as_str()).or_default().insert(*c);
+        }
+    }
+    found
+        .iter()
+        .map(|(f, _, p)| {
+            let kept = p
+                .iter()
+                .take_while(|(k, _)| owners.get(k.as_str()).is_some_and(|o| o.len() == 1))
+                .cloned()
+                .collect::<Vec<_>>();
+            ((*f).to_owned(), kept)
+        })
+        .filter(|(_, p)| !p.is_empty())
+        .collect()
+}
+
 /// `(figi, id_type, value)`.
 type SpellKey<'a> = (String, &'a str, String);
 /// `(valid_from, valid_to, source)`.
 type Span<'a> = (Option<NaiveDate>, Option<NaiveDate>, &'a str);
 
 /// `security_spells` rows: each code's EODHD code, ticker, ISIN and CUSIP; the CUSIP of a
-/// 13(f) resolution carries the first and last quarter it was listed.
+/// 13(f) resolution carries the first and last quarter it was listed; a predecessor filer's
+/// CIK (`preds`, by FIGI, [`master_predecessors`]) is valid to the day before its successor's
+/// notice (source `edgar_succession`).
 ///
 /// # Errors
 ///
@@ -1024,8 +1250,17 @@ type Span<'a> = (Option<NaiveDate>, Option<NaiveDate>, &'a str);
 pub fn spells_batch(
     resolved: &[Resolved],
     cusip_span: &BTreeMap<String, (NaiveDate, NaiveDate)>,
+    preds: &BTreeMap<String, Vec<Predecessor>>,
 ) -> Result<RecordBatch, arrow::error::ArrowError> {
     let mut rows: BTreeMap<SpellKey<'_>, Span<'_>> = BTreeMap::new();
+    for (figi, p) in preds {
+        for (cik, to) in p {
+            rows.insert(
+                (figi.clone(), "cik", cik.clone()),
+                (None, Some(*to), "edgar_succession"),
+            );
+        }
+    }
     for r in resolved {
         let f = r.figi.figi.clone();
         rows.insert(
@@ -1384,7 +1619,8 @@ mod tests {
         let names = cik_candidates(
             "BEAR STEARNS COMPANIES INC:0000777001:\nBEAR STEARNS COMPANIES LLC:0001442180:\n\
              NATIONAL CITY CORP:0000069970:\nSOME FOREIGN CO:0000000003:\nTAKEN CORP:0000000004:\n\
-             TWIN CORP:0000000005:\nTWO FILERS INC:0000000006:\nTWO FILERS CORP:0000000007:\n",
+             TWIN CORP:0000000005:\nTWO FILERS INC:0000000006:\nTWO FILERS CORP:0000000007:\n\
+             SOME FOREIGN CO /UK/:0000000008:\nALLERGAN INC:0000850693:\nALLERGAN PLC:0001578845:\n",
         );
         let codes = [
             code("BSC_old", "Bear Stearns Companies Inc"),
@@ -1394,36 +1630,50 @@ mod tests {
             code("TWN", "Twin Corp"),
             code("TWN_old", "Twin Corp"),
             code("TWO", "Two Filers Inc"),
+            code("AGN_old", "Allergan Inc"),
             Code {
                 delisted: false,
                 ..code("LIVE", "Bear Stearns Companies Inc")
             },
         ];
-        let taken = BTreeSet::from(["0000000004".to_owned()]);
+        let taken = BTreeSet::from(["0000000004".to_owned(), "0000850693".to_owned()]);
         let mut spans = |c: &str| match c {
             "NCC_old" => Some((d(2005, 1), d(2008, 12))),
             _ => Some((d(2005, 1), d(2008, 3))),
         };
         let mut filers = |cik: &str| {
-            filer(&match cik {
+            Some(match cik {
                 "0000000003" => vec![("20-F".to_owned(), d(2006, 6))],
+                "0000000008" => vec![("8-K".to_owned(), d(2006, 6))],
                 "0000069970" => vec![("10-K".to_owned(), d(2001, 3))],
                 "0001442180" => vec![("10-K".to_owned(), d(2009, 2))],
+                "0000850693" => vec![
+                    ("10-Q".to_owned(), d(2005, 5)),
+                    ("10-Q".to_owned(), d(2008, 2)),
+                ],
+                "0001578845" => vec![("10-K".to_owned(), d(2006, 3))],
                 _ => vec![
                     ("10-Q".to_owned(), d(2007, 10)),
                     ("8-K".to_owned(), d(2008, 3)),
                 ],
             })
         };
-        let keyed = eod_keys(&codes, &names, &taken, &mut spans, &mut filers);
+        let keyed = eod_keys(&codes, &names, &names, &taken, &mut spans, &mut filers);
         // A FIGI security whose name two filers share takes the one that filed while priced.
         let lehman = Resolved {
             code: code("LEH", "Bear Stearns Companies Inc"),
             figi: keyed[0].resolved.figi.clone(),
             how: Resolution::Cusip13f("524908100".into()),
         };
-        let shared = shared_name_ciks(&[lehman], &names, &mut spans, &mut filers);
+        // A listed foreign filer whose name a tagged filer shares keeps its 20-F filer (D12).
+        let navios = Resolved {
+            code: code("SFC", "Some Foreign Co"),
+            figi: keyed[0].resolved.figi.clone(),
+            how: Resolution::Isin("MHY621971198".into()),
+        };
+        let shared = shared_name_ciks(&[lehman, navios], &names, &names, &mut spans, &mut filers);
         assert_eq!(shared.get("LEH").map(|s| s.0.as_str()), Some("0000777001"));
+        assert_eq!(shared.get("SFC").map(|s| s.0.as_str()), Some("0000000003"));
         assert_eq!(
             keyed
                 .iter()
@@ -1431,8 +1681,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["EOD:BSC_old"],
             "National City stopped filing years before it was priced; a 20-F filer, a taken \
-             filer, overlapping twins, two filers that both filed while priced and an active \
-             code get no key"
+             filer, old Allergan (its filer is taken, the next one of the name is not its), \
+             overlapping twins, two filers that both filed while priced and an active code get \
+             no key"
         );
         assert_eq!(
             keyed[0].cik, "0000777001",
@@ -1453,6 +1704,256 @@ mod tests {
             cik.as_any().downcast_ref::<StringArray>().unwrap().value(0),
             "0000777001",
             "the master row takes the filer even when its name is shared"
+        );
+    }
+
+    #[test]
+    fn edgar_names_match_without_their_jurisdiction_tag() {
+        let c = cik_candidates(
+            "ALLEGHANY CORP /DE:0000775368:\nPLANTRONICS INC /CA/:0000914025:\n\
+             NOVO NORDISK A/S:0000353278:\n",
+        );
+        let get = |k: &str| c.get(k).map(|s| s.iter().cloned().collect::<Vec<_>>());
+        assert_eq!(get("ALLEGHANY"), Some(vec!["0000775368".to_owned()]));
+        assert_eq!(get("ALLEGHANYDE"), Some(vec!["0000775368".to_owned()]));
+        assert_eq!(get("PLANTRONICS"), Some(vec!["0000914025".to_owned()]));
+        assert_eq!(
+            get("NOVONORDISKS"),
+            Some(vec!["0000353278".to_owned()]),
+            "a one-letter part is a legal form, not a tag"
+        );
+        assert_eq!(get("NOVONORDISK"), None);
+    }
+
+    #[test]
+    fn successors_take_their_predecessors_filings_up_to_the_notice() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let f = |v: &[(&str, &str)]| -> Forms {
+            v.iter()
+                .map(|(form, day)| ((*form).to_owned(), d(day)))
+                .collect()
+        };
+        let all = BTreeMap::from([
+            // Exxon Mobil to ExxonMobil Holdings: the old filer co-filed one 10-Q after.
+            (
+                "0000034088",
+                f(&[
+                    ("10-K", "2026-02-25"),
+                    ("10-Q", "2026-05-01"),
+                    ("25-NSE", "2026-07-02"),
+                    ("10-Q", "2026-08-03"),
+                ]),
+            ),
+            (
+                "0002115436",
+                f(&[("8-K12B", "2026-07-01"), ("10-Q", "2026-08-03")]),
+            ),
+            // A same-name filer that keeps reporting and never deregistered.
+            (
+                "0000000777",
+                f(&[("10-K", "2026-03-01"), ("10-Q", "2026-08-01")]),
+            ),
+            // WestRock 2018 took over WestRock 2015, which took over RockTenn.
+            (
+                "0001732845",
+                f(&[("8-K12B", "2018-11-07"), ("10-K", "2018-11-16")]),
+            ),
+            (
+                "0001636023",
+                f(&[
+                    ("8-K12B", "2015-07-02"),
+                    ("10-Q", "2015-08-10"),
+                    ("10-Q", "2018-08-03"),
+                    ("25-NSE", "2018-11-05"),
+                ]),
+            ),
+            (
+                "0000230498",
+                f(&[("10-K", "2014-11-20"), ("25-NSE", "2015-07-01")]),
+            ),
+        ]);
+        let mut forms = |c: &str| all.get(c).cloned();
+        let candidates = cik_candidates(
+            "EXXON MOBIL CORP:0000034088:\nEXXON MOBIL CO:0000000777:\n\
+             EXXONMOBIL HOLDINGS CORP:0002115436:\nWESTROCK CO:0001732845:\n\
+             WESTROCK CO:0001636023:\nROCK-TENN CO:0000230498:\n",
+        );
+        let keys = |k: &[&str]| k.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let p0 = d("2005-01-03");
+        let none = |_: &str| false;
+        assert_eq!(
+            predecessors(
+                "0002115436",
+                p0,
+                &keys(&["EXXONMOBIL"]),
+                &candidates,
+                &none,
+                &mut forms
+            ),
+            [("0000034088".to_owned(), d("2026-06-30"))],
+            "the filer that deregistered at the notice, to the day before"
+        );
+        assert!(
+            predecessors(
+                "0002115436",
+                p0,
+                &keys(&["EXXONMOBIL"]),
+                &candidates,
+                &|k| k == "0000034088",
+                &mut forms
+            )
+            .is_empty(),
+            "a filer another security has"
+        );
+        assert!(
+            predecessors(
+                "0002115436",
+                d("2026-07-06"),
+                &keys(&["EXXONMOBIL"]),
+                &candidates,
+                &none,
+                &mut forms
+            )
+            .is_empty(),
+            "a succession before the first bar"
+        );
+        assert_eq!(
+            predecessors(
+                "0001732845",
+                p0,
+                &keys(&["WESTROCK", "ROCKTENN"]),
+                &candidates,
+                &none,
+                &mut forms
+            ),
+            [
+                ("0001636023".to_owned(), d("2018-11-06")),
+                ("0000230498".to_owned(), d("2015-07-01"))
+            ],
+            "a chain, newest first"
+        );
+        assert_eq!(
+            predecessors(
+                "0001732845",
+                p0,
+                &keys(&["WESTROCK"]),
+                &candidates,
+                &none,
+                &mut forms
+            )
+            .len(),
+            1,
+            "only filers with the security's names"
+        );
+        // Two filers with the name both deregistered at the notice: not guessed.
+        let mut two = |c: &str| match c {
+            "0000000777" => all.get("0000034088").cloned(),
+            _ => all.get(c).cloned(),
+        };
+        assert!(
+            predecessors(
+                "0002115436",
+                p0,
+                &keys(&["EXXONMOBIL"]),
+                &candidates,
+                &none,
+                &mut two
+            )
+            .is_empty()
+        );
+        // The two WestRock filers share the name and both filed while WRK traded: the chain's last.
+        let wrk = BTreeSet::from(["0001636023".to_owned(), "0001732845".to_owned()]);
+        assert_eq!(
+            pick_filer(
+                &wrk,
+                (d("2015-07-01"), d("2024-07-05")),
+                DOMESTIC_FORMS,
+                &mut forms,
+                &|_| false
+            )
+            .map(|x| x.0),
+            Some("0001732845".to_owned())
+        );
+        // A predecessor two securities of different filers would take goes to neither.
+        let s = |v: &[&str]| Arc::new(StringArray::from(v.to_vec())) as ArrayRef;
+        let master = RecordBatch::try_new(
+            nullable(&[
+                ("figi", DataType::Utf8),
+                ("cik", DataType::Utf8),
+                ("name", DataType::Utf8),
+                ("figi_name", DataType::Utf8),
+            ]),
+            vec![
+                s(&["BBG_XOM", "BBG_OTHER", "BBG_WRK"]),
+                s(&["0002115436", "0000000777", "0001732845"]),
+                s(&["Exxon Mobil Corp", "Exxon Mobil Co", "WestRock Co"]),
+                s(&["EXXONMOBIL HOLDINGS", "EXXON MOBIL", "WESTROCK CO"]),
+            ],
+        )
+        .unwrap();
+        let bars = BTreeMap::from([
+            ("BBG_XOM".to_owned(), p0),
+            ("BBG_OTHER".to_owned(), p0),
+            ("BBG_WRK".to_owned(), d("2015-07-01")),
+        ]);
+        let mut claims = |c: &str| match c {
+            "0000000777" => Some(f(&[("8-K12B", "2026-07-01")])),
+            _ => all.get(c).cloned(),
+        };
+        let p = master_predecessors(&master, &bars, &candidates, &mut claims);
+        assert_eq!(
+            p.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["BBG_WRK"],
+            "Exxon's old filer is claimed twice"
+        );
+    }
+
+    #[test]
+    fn shared_name_ties_go_to_more_of_the_history_then_the_name_as_filed() {
+        let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        let reports =
+            |a: i32, z: i32| -> Forms { (a..=z).map(|y| ("10-K".to_owned(), d(y, 3))).collect() };
+        // COT: Cott (renamed Primo Water in 2020) and the Primo Water it bought.
+        let cot = BTreeSet::from(["0000884713".to_owned(), "0001365101".to_owned()]);
+        let mut forms = |c: &str| {
+            Some(match c {
+                "0000884713" => reports(2005, 2024),
+                _ => reports(2010, 2019),
+            })
+        };
+        let priced = (d(2005, 1), d(2024, 6));
+        assert_eq!(
+            pick_filer(&cot, priced, DOMESTIC_FORMS, &mut forms, &|c| c
+                == "0001365101")
+            .map(|x| x.0),
+            Some("0000884713".to_owned()),
+            "ten more years of the history beat the name as filed"
+        );
+        // GRA: W. R. Grace & Co and Sealed Air (once `W R GRACE & CO /DE/`) both span it.
+        let gra = BTreeSet::from(["0001045309".to_owned(), "0001012100".to_owned()]);
+        let mut both = |_: &str| Some(reports(2000, 2024));
+        let exact = |c: &str| c == "0001045309";
+        assert_eq!(
+            pick_filer(
+                &gra,
+                (d(2005, 1), d(2021, 9)),
+                DOMESTIC_FORMS,
+                &mut both,
+                &exact
+            )
+            .map(|x| x.0),
+            Some("0001045309".to_owned())
+        );
+        assert_eq!(
+            pick_filer(
+                &gra,
+                (d(2005, 1), d(2021, 9)),
+                DOMESTIC_FORMS,
+                &mut both,
+                &|_| false
+            ),
+            None,
+            "still a tie without the name"
         );
     }
 
@@ -1624,15 +2125,17 @@ mod tests {
             "an unconfirmed name match stays null"
         );
         let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
-        let sub = br#"{"filings":{"recent":{"filingDate":["2018-03-01","2009-05-04"]},"files":[{"filingFrom":"1996-01-02","filingTo":"2009-05-01"}]}}"#;
+        let forms = vec![
+            ("8-K".to_owned(), d("1996-01-02")),
+            ("10-Q".to_owned(), d("2009-05-04")),
+            ("20-F".to_owned(), d("2018-03-01")),
+        ];
         assert_eq!(
-            submissions_span(sub),
-            Some((d("1996-01-02"), d("2018-03-01")))
+            report_range(&forms),
+            Some((d("2009-05-04"), d("2018-03-01"))),
+            "an 8-K confirms nothing; a 20-F does"
         );
-        assert_eq!(
-            submissions_span(br#"{"filings":{"recent":{"filingDate":[]},"files":[]}}"#),
-            None
-        );
+        assert_eq!(report_range(&forms[..1].to_vec()), None);
         let filed = Some((d("2019-01-01"), d("2021-12-31")));
         assert!(
             cik_confirmed(Some((d("2005-01-03"), d("2018-06-01"))), filed),
@@ -1659,11 +2162,24 @@ mod tests {
                 NaiveDate::from_ymd_opt(2008, 9, 30).unwrap(),
             ),
         )]);
-        let s = spells_batch(&ok, &spans).unwrap();
+        let preds = BTreeMap::from([(
+            "BBG000BKRK35".to_owned(),
+            vec![("0000000009".to_owned(), d("2005-06-30"))],
+        )]);
+        let s = spells_batch(&ok, &spans, &preds).unwrap();
         assert_eq!(
             s.num_rows(),
-            7,
-            "MON_old: code, ticker, isin, cusip; LEH: code, ticker, cusip"
+            8,
+            "MON_old: code, ticker, isin, cusip; LEH: code, ticker, cusip, a predecessor's CIK"
+        );
+        assert_eq!(
+            col(&s, "value")
+                .iter()
+                .zip(col(&s, "source"))
+                .filter(|(_, src)| src.as_deref() == Some("edgar_succession"))
+                .map(|(v, _)| v.clone())
+                .collect::<Vec<_>>(),
+            [Some("0000000009".to_owned())]
         );
     }
 }
@@ -1761,6 +2277,9 @@ pub mod run {
         /// Distinct 13(f) CUSIPs.
         pub cusips: usize,
     }
+
+    /// Name key -> CIKs ([`super::cik_candidates`]).
+    type Names = BTreeMap<String, BTreeSet<String>>;
 
     fn body(m: &Manifest, key: (&str, &str, &str)) -> Result<Option<Vec<u8>>, RunError> {
         match m.landed(key)? {
@@ -1910,11 +2429,9 @@ pub mod run {
         Ok(out)
     }
 
-    /// EDGAR name -> its CIKs from `cik-lookup-data.txt`, landed once a month (it changes slowly).
-    async fn cik_names(
-        job: &Job,
-        today: NaiveDate,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, RunError> {
+    /// EDGAR name -> its CIKs from `cik-lookup-data.txt`, landed once a month (it changes slowly):
+    /// with and without jurisdiction tags, and as filed ([`super::exact_candidates`]).
+    async fn cik_names(job: &Job, today: NaiveDate) -> Result<(Names, Names), RunError> {
         let chunk = format!("cik-lookup-data-{}", today.format("%Y-%m"));
         let r = Request {
             entity: "cik_lookup",
@@ -1926,41 +2443,10 @@ pub mod run {
             empty_is_gone: false,
         };
         job.sec.fetch(&r).await?;
-        Ok(
-            body(&job.manifest, (job.sec.spec.id, "cik_lookup", &chunk))?
-                .map(|b| super::cik_candidates(&String::from_utf8_lossy(&b)))
-                .unwrap_or_default(),
-        )
-    }
-
-    /// First and last filing date of `cik` from its EDGAR submissions JSON, landed once a month.
-    async fn filing_span(
-        job: &Job,
-        cik: &str,
-        today: NaiveDate,
-    ) -> Result<Option<(NaiveDate, NaiveDate)>, RunError> {
-        let (entity, chunk) = (
-            format!("CIK{cik}"),
-            format!("submissions-{}", today.format("%Y-%m")),
-        );
-        let url = format!("https://data.sec.gov/submissions/CIK{cik}.json");
-        let r = Request {
-            entity: &entity,
-            chunk: &chunk,
-            url: &url,
-            ext: "json",
-            cost: 1,
-            dataset: "security_master",
-            empty_is_gone: false,
-        };
-        if matches!(
-            job.sec.fetch(&r).await?,
-            Outcome::Failed(_) | Outcome::Gone(_)
-        ) {
-            return Ok(None);
-        }
-        Ok(body(&job.manifest, (job.sec.spec.id, &entity, &chunk))?
-            .and_then(|b| super::submissions_span(&b)))
+        let text = body(&job.manifest, (job.sec.spec.id, "cik_lookup", &chunk))?
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        Ok((super::cik_candidates(&text), super::exact_candidates(&text)))
     }
 
     /// Run J4a: resolve `codes` (all in-scope codes when `None`) and write #31 and #36.
@@ -2042,47 +2528,30 @@ pub mod run {
         bad.retain(|(c, _)| !linked.contains(&c.code));
         ok.extend(links);
         let cik = ciks(job, today).await?;
-        let candidates = cik_names(job, today).await?;
+        let (candidates, exact) = cik_names(job, today).await?;
         let names = super::unique_ciks(&candidates);
-        // Each CIK found by name must have filed while the security traded (`cik_confirmed`).
-        // shortcut: one request at a time (about 25 minutes the first run of a month, then
-        // landed); run them concurrently if this ever runs daily.
-        let (mut priced, mut filed) = (BTreeMap::new(), BTreeMap::new());
-        for r in &ok {
-            if !r.code.delisted && cik.contains_key(&r.code.ticker) {
-                continue;
-            }
-            let Some(Some(c)) = names.get(&super::name_key(&r.code.name)) else {
-                continue;
-            };
-            if !filed.contains_key(c) {
-                filed.insert(c.clone(), filing_span(job, c, today).await?);
-            }
-            let span =
-                bars(&r.code.code).and_then(|b| Some((*b.keys().next()?, *b.keys().next_back()?)));
-            priced.insert(r.code.code.clone(), span);
-        }
-        // Names several EDGAR filers share, and the D17 training-only keys: both checked against
-        // the landed submissions zip (no requests).
+        // Every filer is read from the landed submissions zip (no requests): the reports that
+        // confirm a CIK found by name, names several filers share, the D17 training-only keys
+        // and the predecessor filers.
         let mut subs = match &job.submissions {
             Some(p) => Some(crate::edgar::open(p).map_err(|e| RunError::Other(e.to_string()))?),
             None => None,
         };
         if subs.is_none() {
             println!(
-                "identity: no submissions zip landed, no shared-name CIKs or training-only keys"
+                "identity: no submissions zip landed, no CIKs by name, training-only keys or predecessor filers"
             );
         }
         let mut zip_error = None;
-        let mut cache: BTreeMap<String, Option<super::Filer>> = BTreeMap::new();
-        let mut filers = |c: &str| {
+        let mut cache: BTreeMap<String, Option<super::Forms>> = BTreeMap::new();
+        let mut forms = |c: &str| {
             cache
                 .entry(c.to_owned())
                 .or_insert_with(
                     || match subs.as_mut().map(|z| crate::edgar::filer_filings(z, c)) {
-                        Some(Ok(f)) => f.and_then(|f| {
-                            super::filer(&f.into_iter().map(|x| (x.form, x.filing_date)).collect())
-                        }),
+                        Some(Ok(f)) => {
+                            f.map(|f| f.into_iter().map(|x| (x.form, x.filing_date)).collect())
+                        }
                         Some(Err(e)) => {
                             zip_error.get_or_insert(e.to_string());
                             None
@@ -2094,11 +2563,25 @@ pub mod run {
         };
         let mut spans =
             |code: &str| bars(code).and_then(|b| Some((*b.keys().next()?, *b.keys().next_back()?)));
-        let shared = super::shared_name_ciks(&ok, &candidates, &mut spans, &mut filers);
+        // Each CIK found by name must have filed a report while the security traded
+        // (`cik_confirmed`).
+        let (mut priced, mut filed) = (BTreeMap::new(), BTreeMap::new());
+        for r in &ok {
+            if !r.code.delisted && cik.contains_key(&r.code.ticker) {
+                continue;
+            }
+            let Some(Some(c)) = names.get(&super::name_key(&r.code.name)) else {
+                continue;
+            };
+            if !filed.contains_key(c) {
+                filed.insert(c.clone(), forms(c).as_ref().and_then(super::report_range));
+            }
+            priced.insert(r.code.code.clone(), spans(&r.code.code));
+        }
+        let shared = super::shared_name_ciks(&ok, &candidates, &exact, &mut spans, &mut forms);
         let mut chosen: BTreeMap<String, String> = BTreeMap::new();
-        for (code, (c, f, p)) in shared {
+        for (code, (c, _, p)) in shared {
             priced.insert(code.clone(), Some(p));
-            filed.insert(c.clone(), Some(f));
             chosen.insert(code, c);
         }
         println!(
@@ -2130,16 +2613,13 @@ pub mod run {
         let keyed = super::eod_keys(
             &unresolved_now,
             &candidates,
+            &exact,
             &taken,
             &mut spans,
-            &mut filers,
+            &mut forms,
         );
-        if let Some(e) = zip_error {
-            return Err(RunError::Other(format!("submissions zip: {e}")));
-        }
         for k in &keyed {
             priced.insert(k.resolved.code.code.clone(), Some(k.priced));
-            filed.insert(k.cik.clone(), Some(k.filed));
         }
         let keyed_codes: BTreeSet<&str> = keyed
             .iter()
@@ -2213,10 +2693,26 @@ pub mod run {
             })
             .count();
         println!(
-            "identity: {} name-matched codes, {rejected} CIKs rejected (no filings while priced)",
+            "identity: {} name-matched codes, {rejected} CIKs rejected (no report while priced)",
             priced.len()
         );
         let master = super::master_batch(&ok, &cik, &names, &chosen, &confirm, Utc::now())?;
+        let mut first_bar: BTreeMap<String, NaiveDate> = BTreeMap::new();
+        for r in &ok {
+            if let Some((p0, _)) = spans(&r.code.code) {
+                let e = first_bar.entry(r.figi.figi.clone()).or_insert(p0);
+                *e = (*e).min(p0);
+            }
+        }
+        let preds = super::master_predecessors(&master, &first_bar, &candidates, &mut forms);
+        if let Some(e) = zip_error {
+            return Err(RunError::Other(format!("submissions zip: {e}")));
+        }
+        println!(
+            "identity: {} predecessor filers of {} securities (8-K12B/8-K12G3 successions)",
+            preds.values().map(Vec::len).sum::<usize>(),
+            preds.len()
+        );
         // J4 owns the SIC columns (`quant-ingest edgar sic`): keep them across a rebuild.
         let old = lake.read_dataset("security_master", None, &[], None)?;
         let master = super::with_sic(&master, &super::sic_by_cik(&old))?;
@@ -2224,7 +2720,7 @@ pub mod run {
         lake.write_dataset("security_master", &master, lake::Mode::Replace)?;
         lake.write_dataset(
             "security_spells",
-            &super::spells_batch(&ok, &span)?,
+            &super::spells_batch(&ok, &span, &preds)?,
             lake::Mode::Replace,
         )?;
         Ok(s)
