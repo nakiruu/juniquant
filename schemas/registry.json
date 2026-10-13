@@ -3717,12 +3717,12 @@
                 {
                     "name": "first_member_date",
                     "type": "date32",
-                    "nullable": false
+                    "nullable": true
                 },
                 {
                     "name": "last_member_date",
                     "type": "date32",
-                    "nullable": false
+                    "nullable": true
                 },
                 {
                     "name": "first_price_date",
@@ -3778,6 +3778,16 @@
                     "name": "built_at",
                     "type": "timestamp[ns, UTC]",
                     "nullable": false
+                },
+                {
+                    "name": "listing_exchange",
+                    "type": "utf8",
+                    "nullable": true
+                },
+                {
+                    "name": "later_price",
+                    "type": "bool",
+                    "nullable": true
                 }
             ],
             "primary_key": [
@@ -3805,10 +3815,12 @@
                 "gap_reason:VARCHAR",
                 "terminal_class:VARCHAR",
                 "data_end:DATE",
-                "built_at:TIMESTAMP WITH TIME ZONE"
+                "built_at:TIMESTAMP WITH TIME ZONE",
+                "listing_exchange:VARCHAR",
+                "later_price:BOOLEAN"
             ],
-            "hash": "e755a0488d2270668a7e71b9d2b009604925f80554bd4b56540922b725c61841",
-            "last_migration": "2026-10-10-initial"
+            "hash": "9b9c1360316c85866a83d540dc3605fde1f899e93b843cb46cc65944f251781d",
+            "last_migration": "2026-10-12-price-coverage-every-security"
         },
         "listings": {
             "number": 35,

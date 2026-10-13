@@ -61,10 +61,10 @@ uses only information available at `date`: the latest holdings snapshot with
 | `weight_iwp` | `float64` | yes | Percent, from the snapshot; null if not a member |
 | `median_dollar_vol_60d` | `float64` | yes | Median of `close x volume` (as traded) over the 60 trading days ending `date`; null with fewer than 40 valid days |
 | `history_days` | `int32` | no | Count of valid price days on or before `date` |
-| `market_cap` | `float64` | yes | USD, `close x` split-aligned shares from the latest filing with `filing_date <= date` (`02-panel-construction/FEATURES.md` §0); null without a CIK or a filed share count |
-| `mcap_pct` | `float64` | yes | Percentile rank in [0, 1] of `market_cap` among rows of `date` with a non-null `market_cap`; null with `market_cap` (D21) |
-| `eligible` | `bool` | no | `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` and `mcap_pct >= 0.30` when not null (D21; a null never excludes) and no `data_quality` FAIL for the security at `date`. IWF/IWP membership is not a condition (D20) |
-| `exclusion_reason` | `utf8` | yes | Null if eligible, else the first failing of `data_quality` / `history` / `liquidity` / `size` |
+| `market_cap` | `float64` | yes | USD, `close x` split-aligned shares from the latest filing with `filing_date <= date` (`02-panel-construction/FEATURES.md` §0); null without a CIK or a filed share count, with a count stated more than 455 days before `date`, or when `median_dollar_vol_60d` exceeds half of it (a wrong count; D21 amended 2026-10-12) |
+| `mcap_pct` | `float64` | yes | Percentile rank in [0, 1] of `market_cap` among the in-scope rows of `date` with a non-null `market_cap`; null with `market_cap`, and on a date where fewer than 60% of the in-scope rows with a valid bar have one (D21 amended 2026-10-12) |
+| `eligible` | `bool` | no | In scope (D12: not an ETF, `security_type` `ETP`; not a filer whose latest annual report filed by `date` is a 20-F or 40-F) and `median_dollar_vol_60d >= 5,000,000` and `history_days >= 756` and `mcap_pct >= 0.30` when not null (D21; a null never excludes) and no `data_quality` FAIL for the security at `date`. IWF/IWP membership is not a condition (D20) |
+| `exclusion_reason` | `utf8` | yes | Null if eligible, else the first failing of `scope` / `data_quality` / `history` / `liquidity` / `size` |
 
 Primary key: `(date, figi)`.
 
@@ -1024,20 +1024,22 @@ Primary key: `(accession, item, figi)` (re-keyed from `ticker` 2026-10-12, befor
 
 ## 34. `price_coverage`
 
-Rows: ~2,500 (one per security that was ever a member of a membership universe; estimate). Writer: Julia (universe builder). Update: daily, after the universe; rewritten in full. Partitioned: no.
+Rows: ~10,000 (one per security that was ever a member of a membership universe, and one per other security with prices: the terminal values of the labels, D20; estimate). Writer: Julia (universe builder). Update: daily, after the universe; rewritten in full. Partitioned: no.
 
 The survivorship coverage report in data form
-(`01-data-ingestion/SURVIVORSHIP.md` §4). It is derived and may be rebuilt at
-any time. The yearly missing-share table is a query over `universe` and this
-dataset (`QUERY-PATTERNS.md`).
+(`01-data-ingestion/SURVIVORSHIP.md` §4), and the per-security terminal record the labels
+read (`02-panel-construction/TARGETS.md` §3). It is derived and may be rebuilt at any
+time. The yearly missing-share table is a query over `universe` and this dataset
+(`QUERY-PATTERNS.md`); a security that was never a member has null member dates and
+`n_member_days = 0`, so it does not enter that table.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `figi` | `utf8` | yes | US composite FIGI (D17); null for a member the identity job could not resolve (`gap_reason = identity_unresolved`) |
 | `ticker` | `utf8` | no | Canonical symbol: the latest one for a FIGI, the holdings symbol when `figi` is null |
 | `cik` | `utf8` | yes | |
-| `first_member_date` | `date32` | no | First trading day as a member of IWF or IWP, from `etf_holdings` (`available_date`); a member without a FIGI has no `universe` row |
-| `last_member_date` | `date32` | no | Last such date |
+| `first_member_date` | `date32` | yes | First trading day as a member of IWF or IWP, from `etf_holdings` (`available_date`); a member without a FIGI has no `universe` row. Null for a security that was never a member (nullable since 2026-10-12) |
+| `last_member_date` | `date32` | yes | Last such date; null as `first_member_date` |
 | `first_price_date` | `date32` | yes | Null if no prices |
 | `last_price_date` | `date32` | yes | |
 | `n_member_days` | `int32` | no | Member days (trading days) |
@@ -1046,9 +1048,11 @@ dataset (`QUERY-PATTERNS.md`).
 | `est_last_trading_date` | `date32` | yes | From `delistings` |
 | `coverage_status` | `utf8` | no | `complete` (priced through the last expected day) / `terminal_known` (series ends at a delisting with a terminal-value rule) / `gap` (priced days missing, cause logged) |
 | `gap_reason` | `utf8` | yes | `vendor_no_data` / `vendor_truncated` / `late_start` / `symbol_reused` / `identity_unresolved` / `internal_gaps` / null |
-| `terminal_class` | `utf8` | no | `none` (alive) / `bankrupt` / `acquired` / `unknown` (disappeared without a rule: labels are censored and flagged `survivorship_gap`) |
+| `terminal_class` | `utf8` | no | `none` (alive) / `bankrupt` / `performance_delist` (a `delisted_performance` row whose series reaches within 10 trading days of its Form 25) / `acquired` / `unknown` (disappeared without a rule: labels are censored and flagged `survivorship_gap`) |
 | `data_end` | `date32` | no | Last price date the report is computed against |
 | `built_at` | `timestamp[ns, UTC]` | no | |
+| `listing_exchange` | `utf8` | yes | Appended 2026-10-12. `nyse_amex` / `nasdaq` / `other` from `security_master.exchange` (the EODHD exchange of the latest code); null if unknown. Selects the delisting return of `TARGETS.md` §3 |
+| `later_price` | `bool` | yes | Appended 2026-10-12. For `bankrupt` and `performance_delist`: the series trades more than 10 trading days past its exchange delisting (the Form 25, else the estimate), so the last price holds the delisting loss; null for the other classes |
 
 Primary key: `(figi, ticker)`: one row per FIGI, and per ticker among members without one (nulls compare equal, `IO-CONTRACT.md` §3). Re-keyed from `ticker` 2026-10-11, before first write (D17, D20). New dataset: register it in `schemas/registry.json`; no migration file (`MIGRATIONS.md`).
 

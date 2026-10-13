@@ -4,6 +4,16 @@
 const MIN_DOLLAR_VOL = 5_000_000.0
 const MIN_HISTORY = 756
 const MIN_MCAP_PCT = 0.30
+# D21 (amended 2026-10-12): the floor ranks a date only when this share of its in-scope names has a cap.
+const MIN_MCAP_COVERAGE = 0.60
+# A share count older than this many days gives no cap (a 10-K and a missed quarter).
+const MAX_SHARES_AGE = 455
+# A 60-day median dollar volume above this share of the cap means the share count is wrong.
+const MAX_TURNOVER = 0.5
+# D12 scope: a foreign private issuer files these annual reports; the reference ETFs are `ETP`.
+const FOREIGN_FORMS = Set(["20-F", "40-F"])
+const OUT_OF_SCOPE_TYPES = Set(["ETP"])
+const NO_ANNUAL = (figi = String[], filing_date = Date[], form_type = String[])
 const WINDOW = 60
 const MIN_WINDOW = 40
 const GICS = Set(["Communication Services", "Consumer Discretionary", "Consumer Staples",
@@ -48,18 +58,26 @@ end
 valid_bar(c, v) = c !== missing && v !== missing && isfinite(c) && c > 0 && v >= 0
 
 """
-    universe_rows(prices, master, fund, splits, tdays) -> NamedTuple
+    universe_rows(prices, master, fund, splits, tdays; rejected, annual) -> NamedTuple
 
 The per-row metrics of `universe`, for the `prices` rows whose FIGI is in `master`, in
-(figi, date) order: `src` (row index into `prices`), `history_days`,
+(figi, date) order: `src` (row index into `prices`), `in_scope`, `history_days`,
 `median_dollar_vol_60d`, `market_cap`, `mcap_pct`. Inputs are Tables.jl column tables:
-`prices` (`figi, date, close, volume`), `master` (`figi, cik`), `fund` (`figi, filing_date,
-shares_outstanding, shares_asof_date`), `splits` (`figi, ex_date, ratio`); `tdays` is the
-sorted trading calendar covering the price dates. Point in time: row `t` reads bars, filings
-and splits dated `<= t` only.
+`prices` (`figi, date, close, volume`), `master` (`figi, cik`, optionally `security_type`),
+`fund` (`figi, filing_date, shares_outstanding, shares_asof_date`), `splits` (`figi, ex_date,
+ratio`), `annual` (`figi, filing_date, form_type`: the annual reports of `filing_events`);
+`tdays` is the sorted trading calendar covering the price dates. Point in time: row `t`
+reads bars, filings and splits dated `<= t` only.
 
 A valid bar has a positive close and a volume and lies outside the ranges G2 `rejected`
-([`g2_rejected`]). shortcut: the de-SPAC start (§5a) waits for SIC 6770.
+([`g2_rejected`]). Out of scope (D12): an ETF (`security_type` `ETP`: the reference codes),
+and a filer whose latest annual report filed by `t` is a 20-F or 40-F (a foreign private
+issuer). A market cap needs a share count stated at most [`MAX_SHARES_AGE`] days before `t`
+and a 60-day median dollar volume of at most [`MAX_TURNOVER`] times the cap (a larger one
+means a wrong share count). `mcap_pct` ranks the in-scope rows of a date with a market cap,
+on a date where at least [`MIN_MCAP_COVERAGE`] of the in-scope rows with a valid bar have one
+(D21, amended 2026-10-12: early XBRL filers alone are mostly large caps); otherwise it is
+`missing`. shortcut: the de-SPAC start (§5a) waits for SIC 6770.
 
 # Example
 ```julia
@@ -67,8 +85,11 @@ u = universe_rows(prices, master, fund, splits, tdays; rejected = g2_rejected(dq
 ```
 """
 function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date};
-                       rejected = Rejected())
+                       rejected = Rejected(), annual = NO_ANNUAL)
     has_cik = Dict(String(f) => c !== missing for (f, c) in zip(master.figi, master.cik))
+    etf = hasproperty(master, :security_type) ?
+          Set(String(f) for (f, t) in zip(master.figi, master.security_type)
+              if coalesce(t, "") in OUT_OF_SCOPE_TYPES) : Set{String}()
     id = Dict{String,Int}()
     pf, pd = prices.figi, prices.date
     keys_ = Int64[]
@@ -83,8 +104,11 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
     src = src[sortperm(keys_)]
     fund_by = group_rows(fund.figi)
     split_by = group_rows(splits.figi)
+    annual_by = group_rows(annual.figi)
     n = length(src)
     hist = Vector{Int32}(undef, n)
+    scope = falses(n)
+    valid = falses(n)
     mdv = Vector{Union{Missing,Float64}}(missing, n)
     mcap = Vector{Union{Missing,Float64}}(missing, n)
     buf = Float64[]
@@ -98,9 +122,11 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
         end
         fr = sort(get(fund_by, f, Int[]); by = j -> fund.filing_date[j])
         sp = sort(get(split_by, f, Int[]); by = j -> splits.ex_date[j])
+        ar = sort(get(annual_by, f, Int[]); by = j -> annual.filing_date[j])
         spans = get(rejected, f, NO_SPANS)
         good = [valid_bar(close_[src[r]], vol[src[r]]) && !in_spans(spans, pd[src[r]]) for r in lo:hi]
-        h, j0, k, shares, cover = Int32(0), lo, 1, missing, missing
+        h, j0, k, ka, shares, cover = Int32(0), lo, 1, 1, missing, missing
+        foreign = false
         for r in lo:hi
             i = src[r]
             d = pd[i]
@@ -108,6 +134,12 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
             ok = good[r-lo+1]
             h += ok
             hist[r] = h
+            valid[r] = ok
+            while ka <= length(ar) && annual.filing_date[ar[ka]] <= d
+                foreign = annual.form_type[ar[ka]] in FOREIGN_FORMS
+                ka += 1
+            end
+            scope[r] = !(foreign || f in etf)
             ti = searchsortedfirst(tdays, d)
             while tdays_index(tdays, pd[src[j0]]) <= ti - WINDOW
                 j0 += 1
@@ -120,23 +152,35 @@ function universe_rows(prices, master, fund, splits, tdays::AbstractVector{Date}
             length(buf) >= MIN_WINDOW && (mdv[r] = median!(buf))
             while k <= length(fr) && fund.filing_date[fr[k]] <= d
                 s = fund.shares_outstanding[fr[k]]
-                if s !== missing
+                if s !== missing && s > 0
                     shares = s
                     a = fund.shares_asof_date[fr[k]]
                     cover = a === missing ? fund.filing_date[fr[k]] : a
                 end
                 k += 1
             end
-            if ok && shares !== missing && has_cik[f]
+            if ok && shares !== missing && has_cik[f] && Dates.value(d - cover) <= MAX_SHARES_AGE
                 rho = prod((splits.ratio[j] for j in sp if cover < splits.ex_date[j] <= d); init = 1.0)
-                mcap[r] = c * shares * rho
+                m = c * shares * rho
+                (mdv[r] === missing || mdv[r] <= MAX_TURNOVER * m) && (mcap[r] = m)
             end
         end
         lo = hi + 1
     end
     dates = [pd[i] for i in src]
-    return (src = src, date = dates, history_days = hist, median_dollar_vol_60d = mdv,
-        market_cap = mcap, mcap_pct = percentile_by_date(dates, mcap))
+    ranked = [scope[r] ? mcap[r] : missing for r in 1:n]
+    pct = percentile_by_date(dates, ranked)
+    seen, capped = Dict{Date,Int}(), Dict{Date,Int}()
+    for r in 1:n
+        (scope[r] && valid[r]) || continue
+        seen[dates[r]] = get(seen, dates[r], 0) + 1
+        ranked[r] === missing || (capped[dates[r]] = get(capped, dates[r], 0) + 1)
+    end
+    for r in 1:n
+        get(capped, dates[r], 0) >= MIN_MCAP_COVERAGE * get(seen, dates[r], 0) || (pct[r] = missing)
+    end
+    return (src = src, date = dates, in_scope = scope, history_days = hist,
+        median_dollar_vol_60d = mdv, market_cap = mcap, mcap_pct = pct)
 end
 
 tdays_index(tdays, d) = searchsortedfirst(tdays, d)
@@ -226,7 +270,8 @@ end
 The `universe` columns (registry order) for `rows` of `u` (from [`universe_rows`]).
 `master` has `figi, cik, sic`; `holdings` has `etf, figi, snapshot_date, available_date,
 weight, sector`. Membership on `t` is the latest snapshot per ETF with `available_date <= t`.
-A row inside a range G2 `rejected` is excluded first, with reason `data_quality`.
+An out-of-scope row ([`universe_rows`]) is excluded first, with reason `scope`; then a row inside a
+range G2 `rejected`, with reason `data_quality`.
 
 # Example
 ```julia
@@ -273,7 +318,8 @@ function universe_columns(u, rows, prices, master, holdings, ranges; rejected = 
             sector[o], source[o] = sic[f], "sic_fallback"
         end
         dv, p = u.median_dollar_vol_60d[r], u.mcap_pct[r]
-        reason[o] = in_spans(get(rejected, f, NO_SPANS), d) ? "data_quality" :
+        reason[o] = !u.in_scope[r] ? "scope" :
+                    in_spans(get(rejected, f, NO_SPANS), d) ? "data_quality" :
                     u.history_days[r] < MIN_HISTORY ? "history" :
                     (dv === missing || dv < MIN_DOLLAR_VOL) ? "liquidity" :
                     (p !== missing && p < MIN_MCAP_PCT) ? "size" : missing
