@@ -386,6 +386,12 @@ refuses to run unless the gates in `QUALITY-GATES.md` (G0-G9) have a passing
 report to the panel. No flag skips them; a threshold change is a commit to
 `config/quality_gates.toml`, which is recorded in the caveat.
 
+Built 2026-10-14 (`features/src/preflight.jl`): "for the current data end" means that the
+latest run of each gate started after the last lake write. An offline rebuild runs
+`quant-ingest identity --offline DATE`, `quant-ingest eodhd backfill --offline DATE`,
+`quant-ingest edgar events`, `edgar fundamentals`, `edgar sic`, `quant-ingest gates g2`, J9,
+`quant-ingest gates`, then `julia --project=features features/bin/preflight.jl`.
+
 ## 11. What Not to Do
 
 - Do not start the panel build, or train anything, before the gates pass.

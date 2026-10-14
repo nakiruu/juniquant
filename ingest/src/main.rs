@@ -14,7 +14,7 @@
 //! quant-ingest edgar delistings                        J6, delistings alone from filing_events and prices (D0)
 //! quant-ingest edgar daily                              J7 + J6 daily: filers in the day's form index
 //! quant-ingest macro backfill|daily                      J8, BACKFILL.md §5.3 (same run; daily refetches what changed)
-//! quant-ingest gates [g0] [g2] [g7] [g8]                  QUALITY-GATES.md G0 calendar, G2 prices, G7 filings, G8 events
+//! quant-ingest gates [g0] [g1] [g2] [g3] [g5] [g6] [g7] [g8] [g9]   QUALITY-GATES.md (G4 is Julia preflight)
 //! ```
 //!
 //! Paths from `QUANT_ROOT` / `QUANT_STATE`, the registry from `QUANT_REGISTRY_PATH`, the key
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
         ["gates", rest @ ..] => gates(rest),
         _ => {
             eprintln!(
-                "usage: quant-ingest probe <p1..p6|y1..y4|s1>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N] [--offline DATE]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4] [--offline DATE]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       quant-ingest gates [g0] [g2] [g7] [g8]"
+                "usage: quant-ingest probe <p1..p6|y1..y4|s1>\n       quant-ingest eodhd backfill [--codes A,B] [--limit N] [--offline DATE]\n       quant-ingest identity [--codes A,B] [--quarters 2008q1-2008q4] [--offline DATE]\n       quant-ingest ishares snapshot\n       quant-ingest macro backfill|daily\n       quant-ingest edgar fetch|fundamentals|events|sic|delistings|daily\n       {GATES_USAGE}"
             );
             return ExitCode::from(2);
         }
@@ -1209,9 +1209,9 @@ fn write_delistings(s: &Setup) -> Result<String, String> {
     Ok(notes)
 }
 
-/// Gates G7 and G8 (`QUALITY-GATES.md` §2): `data_quality` rows with `source = Gate`, an
-/// aggregate per sub-check and one row per offender. Exits non-zero when a HARD check fails
-/// or cannot run.
+/// The Rust gates of `QUALITY-GATES.md` §2 (G4 is Julia's `preflight()`): `data_quality` rows
+/// with `source = Gate`, an aggregate per sub-check and one row per offender. Exits non-zero
+/// when a HARD check fails or cannot run.
 fn gates(rest: &[&str]) -> Result<(), String> {
     use std::collections::HashSet;
 
@@ -1219,11 +1219,9 @@ fn gates(rest: &[&str]) -> Result<(), String> {
     use arrow::datatypes::{Date32Type, Float64Type, TimestampNanosecondType};
     use ingest::gates::{self, FilingRow, Outcome};
     use ingest::infra::quality::{Check, Level, Row};
-    const GATES: [&str; 4] = ["g0", "g2", "g7", "g8"];
+    const GATES: [&str; 9] = ["g0", "g1", "g2", "g3", "g5", "g6", "g7", "g8", "g9"];
     if let Some(g) = rest.iter().find(|g| !GATES.contains(g)) {
-        return Err(format!(
-            "unknown gate {g}; usage: quant-ingest gates [g0] [g2] [g7] [g8]"
-        ));
+        return Err(format!("unknown gate {g}; usage: {GATES_USAGE}"));
     }
     let want = |g: &str| rest.is_empty() || rest.contains(&g);
     let (g7, g8) = (want("g7"), want("g8"));
@@ -1231,10 +1229,58 @@ fn gates(rest: &[&str]) -> Result<(), String> {
     let e = |e: lake::LakeError| e.to_string();
     let ciks: HashSet<String> = filer_securities(&s.lake)?.into_keys().collect();
     let mut results: Vec<(&'static str, &'static str, Outcome)> = Vec::new();
-    if want("g0") || want("g2") {
+    if want("g1") {
+        for o in gate_g1(&s)? {
+            results.push(("G1", "manifest", o));
+        }
+    }
+    let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
+    let eligible = if want("g3") || want("g5") || want("g6") {
+        eligible_summary(&s)?
+    } else {
+        EligibleSummary::default()
+    };
+    if want("g5") {
+        for o in gate_g5(&s, &cal, &eligible)? {
+            results.push(("G5", "etf_holdings", o));
+        }
+    }
+    if want("g6") {
+        let panel = eligible
+            .per_date
+            .iter()
+            .find(|(_, n)| **n >= 50)
+            .map(|(d, _)| *d);
+        let days = match (panel, eligible.per_date.keys().next_back()) {
+            (Some(a), Some(&z)) => trading_days(&cal, a, z),
+            _ => Vec::new(),
+        };
+        for o in gate_g6(&s, &days, eligible.end.unwrap_or(s.today))? {
+            results.push(("G6", "macro", o));
+        }
+    }
+    if want("g9") {
+        for o in gate_g9(&s, &cal)? {
+            results.push(("G9", "manifest", o));
+        }
+    }
+    if want("g0") || want("g2") || want("g3") {
         let (bars, names) = price_bars(&s)?;
+        if want("g3") {
+            let index = sec_index(&names);
+            let years: HashSet<(u32, i32)> = eligible
+                .years
+                .iter()
+                .filter_map(|(f, ys)| Some((*index.get(f.as_str())?, ys)))
+                .flat_map(|(sec, ys)| ys.iter().map(move |y| (sec, *y)))
+                .collect();
+            let end = bars.iter().map(|b| b.date).max().unwrap_or(s.today);
+            let tdays = trading_days(&cal, s.ctx.from, end);
+            for o in gates::completeness(&bars, &names, &years, &tdays) {
+                results.push(("G3", "prices", o));
+            }
+        }
         if want("g0") {
-            let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
             let m = s
                 .lake
                 .read_dataset("security_master", Some(&["figi", "ticker"]), &[], None)
@@ -1270,7 +1316,6 @@ fn gates(rest: &[&str]) -> Result<(), String> {
         }
     }
     if g7 {
-        let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
         let b = s
             .lake
             .read_dataset(
@@ -1439,7 +1484,6 @@ fn gates(rest: &[&str]) -> Result<(), String> {
             .collect();
         results.push(("G8", "filing_events", gates::items_share(&items)));
         let last = last_prices(&s)?;
-        let cal = calendar::Calendar::from_env().map_err(|e| e.to_string())?;
         let mut cutoff = last.values().max().copied().unwrap_or(s.today);
         for _ in 0..10 {
             cutoff = cal.prev_trading_day(cutoff).map_err(|e| e.to_string())?;
@@ -1524,6 +1568,401 @@ fn gates(rest: &[&str]) -> Result<(), String> {
     } else {
         Err(format!("HARD checks failed: {hard_fail:?}"))
     }
+}
+
+const GATES_USAGE: &str = "quant-ingest gates [g0] [g1] [g2] [g3] [g5] [g6] [g7] [g8] [g9]";
+
+/// The calendar's trading days in `[from, to]`.
+fn trading_days(cal: &calendar::Calendar, from: NaiveDate, to: NaiveDate) -> Vec<NaiveDate> {
+    from.iter_days()
+        .take_while(|d| *d <= to)
+        .filter(|d| cal.is_trading_day(*d))
+        .collect()
+}
+
+/// What G3, G5 and G6 read of the eligible `universe` rows.
+#[derive(Default)]
+struct EligibleSummary {
+    /// Eligible names per date.
+    per_date: std::collections::BTreeMap<NaiveDate, usize>,
+    /// The calendar years with an eligible day, per FIGI.
+    years: std::collections::HashMap<String, std::collections::BTreeSet<i32>>,
+    /// The last `universe` date (the data end J9 built to).
+    end: Option<NaiveDate>,
+}
+
+/// One pass over `universe`, a year at a time.
+fn eligible_summary(s: &Setup) -> Result<EligibleSummary, String> {
+    use arrow::array::AsArray;
+    use arrow::datatypes::Date32Type;
+    let mut out = EligibleSummary::default();
+    for y in s.ctx.from.year()..=s.today.year() {
+        let (Some(a), Some(z)) = (
+            NaiveDate::from_ymd_opt(y, 1, 1),
+            NaiveDate::from_ymd_opt(y, 12, 31),
+        ) else {
+            continue;
+        };
+        let u = s
+            .lake
+            .read_dataset(
+                "universe",
+                Some(&["date", "figi", "eligible"]),
+                &[],
+                Some((a, z)),
+            )
+            .map_err(|e| e.to_string())?;
+        let (d, f, e) = (
+            u.column(0).as_primitive::<Date32Type>(),
+            u.column(1).as_string::<i32>(),
+            u.column(2).as_boolean(),
+        );
+        for i in 0..u.num_rows() {
+            let day = from_days(d.value(i));
+            out.end = out.end.max(Some(day));
+            if !e.value(i) {
+                continue;
+            }
+            *out.per_date.entry(day).or_default() += 1;
+            match out.years.get_mut(f.value(i)) {
+                Some(ys) => {
+                    ys.insert(y);
+                }
+                None => {
+                    out.years.insert(f.value(i).to_owned(), [y].into());
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// G1: the manifest's states, the raw provenance of `prices`, `splits`, `dividends` and
+/// `etf_holdings`, and a 5% sample of the landed bodies re-hashed.
+fn gate_g1(s: &Setup) -> Result<Vec<ingest::gates::Outcome>, String> {
+    use std::collections::HashSet;
+
+    use arrow::array::{Array, AsArray};
+    use ingest::infra::landing;
+    let chunks = s.manifest.chunks().map_err(|e| e.to_string())?;
+    let keyed: HashSet<String> = load_figis(&s.lake)?.into_keys().collect();
+    let landed: HashSet<&str> = chunks.iter().filter_map(|c| c.sha256.as_deref()).collect();
+    let mut lake_hashes: Vec<(&str, HashSet<String>)> = Vec::new();
+    for dataset in ["prices", "splits", "dividends", "etf_holdings"] {
+        let mut set = HashSet::new();
+        // prices a year at a time (25M rows); the others are small.
+        let ranges: Vec<Option<(NaiveDate, NaiveDate)>> = if dataset == "prices" {
+            (s.ctx.from.year()..=s.today.year())
+                .map(|y| NaiveDate::from_ymd_opt(y, 1, 1).zip(NaiveDate::from_ymd_opt(y, 12, 31)))
+                .filter(Option::is_some)
+                .collect()
+        } else {
+            vec![None]
+        };
+        for r in ranges {
+            let b = s
+                .lake
+                .read_dataset(dataset, Some(&["raw_sha256"]), &[], r)
+                .map_err(|e| e.to_string())?;
+            let c = b.column(0).as_string::<i32>();
+            for i in (0..b.num_rows()).filter(|&i| c.is_valid(i)) {
+                if !set.contains(c.value(i)) {
+                    set.insert(c.value(i).to_owned());
+                }
+            }
+        }
+        lake_hashes.push((dataset, set));
+    }
+    let salt = s.quality.date.to_string();
+    let (mut bad, mut n) = (Vec::new(), 0usize);
+    for c in &chunks {
+        let (Some(path), Some(sha)) = (&c.raw_path, &c.sha256) else {
+            continue;
+        };
+        let key = format!("{} {} {}", c.source, c.entity, c.chunk);
+        if !ingest::gates::sampled(&key, &salt, 20) {
+            continue;
+        }
+        n += 1;
+        match landing::read(std::path::Path::new(path)) {
+            Ok(b) if landing::sha256_hex(&b) == *sha => {}
+            Ok(_) => bad.push((key, "SHA-256 differs from the manifest".to_owned())),
+            Err(e) => bad.push((key, format!("cannot read {path}: {e}"))),
+        }
+    }
+    Ok(vec![
+        ingest::gates::chunk_states(&chunks, &keyed, s.today),
+        ingest::gates::raw_provenance(&lake_hashes, &landed),
+        ingest::gates::rehash(bad, n),
+    ])
+}
+
+/// G5 on the archived snapshots: their `etf_holdings` rows, the tickers of the landed files
+/// that do not normalize, the member rows of `universe` from the first usable snapshot.
+fn gate_g5(
+    s: &Setup,
+    cal: &calendar::Calendar,
+    eligible: &EligibleSummary,
+) -> Result<Vec<ingest::gates::Outcome>, String> {
+    use std::collections::BTreeMap;
+
+    use arrow::array::{Array, AsArray};
+    use arrow::datatypes::{Date32Type, Float64Type};
+    use ingest::infra::landing;
+    let h = s
+        .lake
+        .read_dataset(
+            "etf_holdings",
+            Some(&["etf", "snapshot_date", "available_date", "weight", "figi"]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let (etf, sd, ad) = (
+        h.column(0).as_string::<i32>(),
+        h.column(1).as_primitive::<Date32Type>(),
+        h.column(2).as_primitive::<Date32Type>(),
+    );
+    let (w, f) = (
+        h.column(3).as_primitive::<Float64Type>(),
+        h.column(4).as_string::<i32>(),
+    );
+    let mut snaps: BTreeMap<(String, NaiveDate), ingest::gates::Snapshot> = BTreeMap::new();
+    for i in 0..h.num_rows() {
+        let date = from_days(sd.value(i));
+        let x = snaps
+            .entry((etf.value(i).to_owned(), date))
+            .or_insert_with(|| ingest::gates::Snapshot {
+                etf: etf.value(i).to_owned(),
+                snapshot_date: date,
+                available_date: from_days(ad.value(i)),
+                ..Default::default()
+            });
+        let weight = if w.is_valid(i) { w.value(i) } else { 0.0 };
+        x.rows += 1;
+        x.weight += weight;
+        if f.is_null(i) {
+            x.unresolved += 1;
+            x.unresolved_weight += weight;
+        }
+    }
+    for c in s.manifest.chunks().map_err(|e| e.to_string())? {
+        let Some(path) = c.raw_path.as_deref().filter(|_| c.source == "ishares") else {
+            continue;
+        };
+        let body = landing::read(std::path::Path::new(path)).map_err(|e| e.to_string())?;
+        let snap = ingest::ishares::parse(&body).map_err(|e| format!("{path}: {e}"))?;
+        if let Some(x) = snaps.get_mut(&(c.entity.clone(), snap.snapshot_date)) {
+            x.unparseable = snap
+                .dropped
+                .get("ticker_does_not_normalize")
+                .copied()
+                .unwrap_or_default();
+        }
+    }
+    let end = eligible.end.unwrap_or(s.today);
+    let first = snaps.values().map(|x| x.available_date).min();
+    let mut members = ingest::gates::MemberRows::new();
+    if let Some(a) = first.filter(|a| *a <= end) {
+        let u = s
+            .lake
+            .read_dataset(
+                "universe",
+                Some(&["date", "in_iwf", "in_iwp", "sector", "sector_source"]),
+                &[],
+                Some((a, end)),
+            )
+            .map_err(|e| e.to_string())?;
+        let d = u.column(0).as_primitive::<Date32Type>();
+        let (iwf, iwp) = (u.column(1).as_boolean(), u.column(2).as_boolean());
+        let (sector, source) = (
+            u.column(3).as_string::<i32>(),
+            u.column(4).as_string::<i32>(),
+        );
+        let yes = |a: &arrow::array::BooleanArray, i| a.is_valid(i) && a.value(i);
+        for i in (0..u.num_rows()).filter(|&i| yes(iwf, i) || yes(iwp, i)) {
+            let m = members.entry(from_days(d.value(i)).year()).or_default();
+            m.0 += 1;
+            m.1 += usize::from(sector.is_null(i));
+            m.2 += usize::from(source.is_valid(i) && source.value(i) == "sic_fallback");
+        }
+    }
+    let tdays = first.map_or_else(Vec::new, |a| trading_days(cal, a, end));
+    let first_eligible = eligible.per_date.keys().next().copied();
+    let snaps: Vec<_> = snaps.into_values().collect();
+    Ok(ingest::gates::holdings(
+        &snaps,
+        &tdays,
+        &members,
+        first_eligible,
+    ))
+}
+
+/// G6 over every `macro` row, on the panel's trading days `panel`.
+fn gate_g6(
+    s: &Setup,
+    panel: &[NaiveDate],
+    data_end: NaiveDate,
+) -> Result<Vec<ingest::gates::Outcome>, String> {
+    use arrow::array::{Array, AsArray};
+    use arrow::datatypes::{Date32Type, Float64Type};
+    let m = s
+        .lake
+        .read_dataset(
+            "macro",
+            Some(&[
+                "series_id",
+                "obs_date",
+                "value",
+                "known_from",
+                "known_from_basis",
+            ]),
+            &[],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    let (id, obs) = (
+        m.column(0).as_string::<i32>(),
+        m.column(1).as_primitive::<Date32Type>(),
+    );
+    let (v, known, basis) = (
+        m.column(2).as_primitive::<Float64Type>(),
+        m.column(3).as_primitive::<Date32Type>(),
+        m.column(4).as_string::<i32>(),
+    );
+    let rows: Vec<ingest::gates::Obs> = (0..m.num_rows())
+        .map(|i| ingest::gates::Obs {
+            series: id.value(i).to_owned(),
+            obs_date: from_days(obs.value(i)),
+            value: v.is_valid(i).then(|| v.value(i)),
+            known_from: from_days(known.value(i)),
+            lag_rule: basis.is_valid(i) && basis.value(i) == "lag_rule",
+        })
+        .collect();
+    Ok(ingest::gates::macro_series(&rows, panel, data_end))
+}
+
+/// G9: each dataset's latest recorded inputs hash against its stage files now, and a 2% sample
+/// of the stage files re-hashed (the EODHD ones re-parsed from their landed bodies).
+fn gate_g9(s: &Setup, cal: &calendar::Calendar) -> Result<[ingest::gates::Outcome; 2], String> {
+    use ingest::infra::manifest::Status;
+    let mut latest: std::collections::BTreeMap<String, (String, String)> = Default::default();
+    // Ordered by write time: the last row of a dataset is its current compaction.
+    for (d, p, h, _) in s.manifest.partitions().map_err(|e| e.to_string())? {
+        latest.insert(d, (p, h));
+    }
+    let mut checked = Vec::new();
+    for (dataset, (partition, recorded)) in latest {
+        let sources: Vec<&str> = partition.trim_end_matches("/*").split('+').collect();
+        let (_, now) =
+            ingest::infra::stage::inputs(&s.manifest, &s.paths.stage, &sources, &dataset)
+                .map_err(|e| e.to_string())?;
+        checked.push((dataset, partition, recorded, now));
+    }
+    let salt = s.quality.date.to_string();
+    let tmp = s.paths.stage.join(".g9");
+    let (mut bad, mut n, mut reparsed) = (Vec::new(), 0usize, 0usize);
+    for c in s.manifest.chunks().map_err(|e| e.to_string())? {
+        let (Some(path), Some(sha)) = (c.stage_path.as_deref(), c.stage_sha256.as_deref()) else {
+            continue;
+        };
+        let key = format!("{} {} {}", c.source, c.entity, c.chunk);
+        if !matches!(c.status, Status::Parsed | Status::Compacted)
+            || !ingest::gates::sampled(&key, &salt, 50)
+        {
+            continue;
+        }
+        n += 1;
+        match std::fs::read(path) {
+            Ok(b) if ingest::infra::landing::sha256_hex(&b) == sha => {}
+            Ok(_) => {
+                bad.push((key, "stage file differs from its recorded hash".to_owned()));
+                continue;
+            }
+            Err(e) => {
+                bad.push((key, format!("cannot read {path}: {e}")));
+                continue;
+            }
+        }
+        // shortcut: only EODHD chunks (99% of the stage files) are re-parsed; the SEC, ALFRED
+        // and iShares parsers need their job's whole context, so those stage files are only
+        // re-hashed; re-parse them once those jobs parse one chunk at a time.
+        if c.source == "eodhd" {
+            reparsed += 1;
+            match reparse_eodhd(s, cal, &c, path, &tmp) {
+                Ok(h) if h == sha => {}
+                Ok(_) => bad.push((key, "re-parsed from the landed body, it differs".to_owned())),
+                Err(e) => bad.push((key, format!("re-parse failed: {e}"))),
+            }
+        }
+    }
+    // The scratch directory holds only this run's re-parsed copies.
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(ingest::gates::replay(&checked, bad, n, reparsed))
+}
+
+/// The SHA-256 of the stage file an EODHD chunk gives when re-parsed from its landed body, with
+/// the FIGI and ticker its recorded stage file carries (G9 tests the parser, not identity).
+fn reparse_eodhd(
+    s: &Setup,
+    cal: &calendar::Calendar,
+    c: &ingest::infra::manifest::ChunkRow,
+    stage_path: &str,
+    tmp: &std::path::Path,
+) -> Result<String, String> {
+    use arrow::array::{Array, AsArray};
+    use ingest::infra::landing;
+    let e = |e: &dyn std::fmt::Display| e.to_string();
+    let staged = lake::read_file(std::path::Path::new(stage_path)).map_err(|x| e(&x))?;
+    let first = |col: &str| {
+        staged
+            .column_by_name(col)
+            .map(|a| a.as_string::<i32>())
+            .filter(|a| !a.is_empty() && a.is_valid(0))
+            .map_or_else(String::new, |a| a.value(0).to_owned())
+    };
+    let (raw, sha, at) = s
+        .manifest
+        .landed((&c.source, &c.entity, &c.chunk))
+        .map_err(|x| e(&x))?
+        .ok_or("not landed")?;
+    let body = landing::read(std::path::Path::new(&raw)).map_err(|x| e(&x))?;
+    let origin = eodhd::Origin {
+        figi: first("figi"),
+        ticker: first("ticker"),
+        fetched_at: at,
+        raw_sha256: sha,
+    };
+    let batch = match c.chunk.as_str() {
+        "eod-full" => {
+            let splits = match s
+                .manifest
+                .landed((&c.source, &c.entity, "splits-full"))
+                .map_err(|x| e(&x))?
+            {
+                Some((p, _, _)) => eodhd::parse_splits(
+                    &landing::read(std::path::Path::new(&p)).map_err(|x| e(&x))?,
+                ),
+                None => Vec::new(),
+            };
+            eodhd::prices(&body, &splits, cal, &origin)
+                .map_err(|x| e(&x))?
+                .0
+        }
+        "splits-full" => {
+            eodhd::splits_batch(&eodhd::parse_splits(&body), &origin)
+                .map_err(|x| e(&x))?
+                .0
+        }
+        "div-full" => eodhd::dividends(&body, &origin).map_err(|x| e(&x))?.0,
+        other => return Err(format!("no re-parse for {other}")),
+    };
+    std::fs::create_dir_all(tmp).map_err(|x| e(&x))?;
+    let out = tmp.join(format!("{}-{}.parquet", c.entity, c.chunk));
+    lake::write_file(&out, &batch).map_err(|x| e(&x))?;
+    let hash = landing::sha256_hex(&std::fs::read(&out).map_err(|x| e(&x))?);
+    std::fs::remove_file(&out).map_err(|x| e(&x))?;
+    Ok(hash)
 }
 
 /// J8: every vintage of the 9 macro series (BACKFILL.md §5.3): vintage dates, windows of at

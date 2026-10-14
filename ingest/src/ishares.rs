@@ -139,7 +139,19 @@ pub fn parse(body: &[u8]) -> Result<Snapshot, String> {
         }
         let vendor = get(t).trim().to_owned();
         let Ok(canon) = symbols::normalize(&vendor) else {
-            *dropped.entry("ticker_does_not_normalize").or_default() += 1;
+            // iShares files a distributed right or warrant under Equity: out of scope (D12).
+            let derivative = get(n).split_whitespace().any(|w| {
+                matches!(
+                    w.to_ascii_uppercase().as_str(),
+                    "RIGHT" | "RIGHTS" | "WARRANT" | "WARRANTS" | "CVR" | "UNIT" | "UNITS"
+                )
+            });
+            let why = if derivative {
+                "not_common"
+            } else {
+                "ticker_does_not_normalize"
+            };
+            *dropped.entry(why).or_default() += 1;
             continue;
         };
         if !seen.insert(canon.as_str().to_owned()) {
@@ -258,7 +270,7 @@ mod tests {
 
     use super::*;
 
-    const FILE: &str = "\u{feff}iShares Russell 1000 Growth ETF\nFund Holdings as of,\"Oct 09, 2026\"\nInception Date,\"May 22, 2000\"\n\nTicker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date\n\"NVDA\",\"NVIDIA\",\"Information Technology\",\"Equity\",\"20,081,938,647.36\",\"15.39\",\"20,081,938,647.36\",\"87,586,962.00\",\"229.28\",\"United States\",\"NASDAQ\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"BRK.B\",\"BERKSHIRE HATHAWAY INC CLASS B\",\"Financials\",\"Equity\",\"1.00\",\"0.10\",\"1.00\",\"2.00\",\"500.00\",\"United States\",\"New York Stock Exchange Inc.\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"UWMC-R-W\",\"UWM HOLDINGS RIGHTS WHEN ISSUED EX\",\"Financials\",\"Equity\",\"280.93\",\"0.00\",\"280.93\",\"133,777.00\",\"0.00\",\"United States\",\"NYSE\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"RGYZ6\",\"RUSSELL1000 GRWTH MINI CME DEC 26\",\"Cash and/or Derivatives\",\"Futures\",\"0.00\",\"0.00\",\"112,625,170.00\",\"434.00\",\"5,190.10\",\"-\",\"Chicago Mercantile Exchange\",\"USD\",\"1.00\",\"USD\",\"-\"\n \nThe content contained herein is owned or licensed by BlackRock\n";
+    const FILE: &str = "\u{feff}iShares Russell 1000 Growth ETF\nFund Holdings as of,\"Oct 09, 2026\"\nInception Date,\"May 22, 2000\"\n\nTicker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date\n\"NVDA\",\"NVIDIA\",\"Information Technology\",\"Equity\",\"20,081,938,647.36\",\"15.39\",\"20,081,938,647.36\",\"87,586,962.00\",\"229.28\",\"United States\",\"NASDAQ\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"BRK.B\",\"BERKSHIRE HATHAWAY INC CLASS B\",\"Financials\",\"Equity\",\"1.00\",\"0.10\",\"1.00\",\"2.00\",\"500.00\",\"United States\",\"New York Stock Exchange Inc.\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"UWMC-R-W\",\"UWM HOLDINGS RIGHTS WHEN ISSUED EX\",\"Financials\",\"Equity\",\"280.93\",\"0.00\",\"280.93\",\"133,777.00\",\"0.00\",\"United States\",\"NYSE\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"X-Y-Z\",\"ODD TICKER CORP\",\"Financials\",\"Equity\",\"1.00\",\"0.00\",\"1.00\",\"1.00\",\"1.00\",\"United States\",\"NYSE\",\"USD\",\"1.00\",\"USD\",\"-\"\n\"RGYZ6\",\"RUSSELL1000 GRWTH MINI CME DEC 26\",\"Cash and/or Derivatives\",\"Futures\",\"0.00\",\"0.00\",\"112,625,170.00\",\"434.00\",\"5,190.10\",\"-\",\"Chicago Mercantile Exchange\",\"USD\",\"1.00\",\"USD\",\"-\"\n \nThe content contained herein is owned or licensed by BlackRock\n";
 
     #[test]
     fn parses_the_p7_layout() {
@@ -278,7 +290,12 @@ mod tests {
         assert_eq!(s.holdings[0].shares, Some(87_586_962.0));
         assert_eq!(
             s.dropped,
-            BTreeMap::from([("not_equity", 1), ("ticker_does_not_normalize", 1)])
+            BTreeMap::from([
+                ("not_common", 1),
+                ("not_equity", 1),
+                ("ticker_does_not_normalize", 1)
+            ]),
+            "the UWMC rights line is out of scope, X-Y-Z is unreadable"
         );
     }
 

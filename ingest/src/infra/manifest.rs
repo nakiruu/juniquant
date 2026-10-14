@@ -72,6 +72,27 @@ impl Status {
 /// `(source, entity, chunk)`.
 pub type Key<'a> = (&'a str, &'a str, &'a str);
 
+/// One manifest row, as the gates read it (G1, G9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkRow {
+    /// Source id.
+    pub source: String,
+    /// Entity.
+    pub entity: String,
+    /// Chunk.
+    pub chunk: String,
+    /// State.
+    pub status: Status,
+    /// SHA-256 of the landed body.
+    pub sha256: Option<String>,
+    /// Where the body is landed.
+    pub raw_path: Option<String>,
+    /// The stage file.
+    pub stage_path: Option<String>,
+    /// SHA-256 of the stage file.
+    pub stage_sha256: Option<String>,
+}
+
 /// The manifest.
 pub struct Manifest {
     conn: Mutex<Connection>,
@@ -441,6 +462,64 @@ impl Manifest {
         )?;
         Ok(())
     }
+
+    /// Every recorded partition: `(dataset, partition, inputs_hash, written_at)`.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn partitions(&self) -> Result<Vec<(String, String, String, String)>, rusqlite::Error> {
+        let db = self.db();
+        let mut st = db.prepare(
+            "SELECT dataset, partition, inputs_hash, written_at FROM partitions ORDER BY dataset, written_at",
+        )?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect()
+    }
+
+    /// Every chunk, in key order.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn chunks(&self) -> Result<Vec<ChunkRow>, rusqlite::Error> {
+        let db = self.db();
+        let mut st = db.prepare(
+            "SELECT source, entity, chunk, status, sha256, raw_path, stage_path, stage_sha256
+             FROM chunks ORDER BY source, entity, chunk",
+        )?;
+        st.query_map([], |r| {
+            let status: String = r.get(3)?;
+            Ok(ChunkRow {
+                source: r.get(0)?,
+                entity: r.get(1)?,
+                chunk: r.get(2)?,
+                // The table's CHECK constraint allows only the states Status knows.
+                status: Status::parse(&status).unwrap_or(Status::Failed),
+                sha256: r.get(4)?,
+                raw_path: r.get(5)?,
+                stage_path: r.get(6)?,
+                stage_sha256: r.get(7)?,
+            })
+        })?
+        .collect()
+    }
+
+    /// A failed chunk whose data another chunk holds (a 13(f) list found at another candidate
+    /// URL) is `gone` with `reason`; its HTTP status and error stay. Only a `failed` row
+    /// changes; returns whether one did.
+    ///
+    /// # Errors
+    ///
+    /// SQLite errors.
+    pub fn supersede(&self, (s, e, c): Key<'_>, reason: &str) -> Result<bool, rusqlite::Error> {
+        let n = self.db().execute(
+            "UPDATE chunks SET status='gone', reason=?4, updated_at=?5
+             WHERE source=?1 AND entity=?2 AND chunk=?3 AND status='failed'",
+            params![s, e, c, reason, now()],
+        )?;
+        Ok(n > 0)
+    }
 }
 
 #[cfg(test)]
@@ -484,5 +563,35 @@ mod tests {
         assert_eq!(m.status(g).unwrap(), Some(Status::Gone));
         assert_eq!(m.add_calls("eodhd", 1).unwrap(), 1);
         assert_eq!(m.add_calls("eodhd", 100).unwrap(), 101);
+    }
+
+    #[test]
+    fn only_a_failed_candidate_is_superseded() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = Manifest::open(&dir.path().join("manifest.db")).unwrap();
+        let (a, b) = (
+            ("sec_13f_list", "13flist", "2012q1-0.pdf"),
+            ("sec_13f_list", "13flist", "2012q1-1.pdf"),
+        );
+        m.begin_fetch(a).unwrap();
+        m.failed(a, Some(404), "HTTP 404").unwrap();
+        m.begin_fetch(b).unwrap();
+        let landed = Landed {
+            path: "/y".into(),
+            sha256: "cd".into(),
+            bytes: 2,
+            new: true,
+        };
+        m.fetched(b, 200, Utc::now(), &landed).unwrap();
+        assert!(m.supersede(a, "the list is at 2012q1-1.pdf").unwrap());
+        assert!(!m.supersede(b, "x").unwrap(), "a landed chunk stays");
+        let rows = m.chunks().unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.status).collect::<Vec<_>>(),
+            [Status::Gone, Status::Fetched]
+        );
+        assert_eq!(rows[1].sha256.as_deref(), Some("cd"));
+        m.record_partition("prices", "eodhd/*", "h", "h").unwrap();
+        assert_eq!(m.partitions().unwrap()[0].2, "h");
     }
 }

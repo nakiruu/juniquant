@@ -9,9 +9,11 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 use crate::edgar::IndexLine;
+use crate::infra::landing::sha256_hex;
+use crate::infra::manifest::{ChunkRow, Status};
 use crate::infra::quality::Level;
 
 /// One sub-check's result.
@@ -513,6 +515,161 @@ pub fn calendar_match(
         o.level = Level::Fail;
         o.measured = None;
         o.note = "no SPY bars".into();
+    }
+    o
+}
+
+/// Whether `key` is in the `1/every` sample of the run with `salt` (its date): a hash, so one
+/// day's sample is reproducible and the next day's differs (G1 re-hash, G9 re-parse).
+#[must_use]
+pub fn sampled(key: &str, salt: &str, every: u32) -> bool {
+    let h = sha256_hex(format!("{salt} {key}").as_bytes());
+    u32::from_str_radix(h.get(..8).unwrap_or_default(), 16).is_ok_and(|v| v % every.max(1) == 0)
+}
+
+/// Whether a landed chunk feeds a lake dataset, so that `fetched` means its compaction is
+/// missing: the EODHD bodies of a code with a key (`keyed`, D17) and prices (its `eod-full`
+/// not in `no_prices`, the codes whose answer was "no data"), the iShares files, the stitched
+/// ALFRED series, the SEC bulk zips and the companyfacts deltas. The rest is read in place
+/// (symbol lists, OpenFIGI answers, 13(f) lists, indexes, vintage windows), and an EODHD code
+/// without a key or prices is kept raw on purpose.
+fn compacts(c: &ChunkRow, keyed: &HashSet<String>, no_prices: &HashSet<&str>) -> bool {
+    match c.source.as_str() {
+        "eodhd" => {
+            c.chunk.ends_with("-full")
+                && !no_prices.contains(c.entity.as_str())
+                && c.entity
+                    .strip_suffix(".US")
+                    .is_some_and(|code| keyed.contains(code))
+        }
+        "ishares" => true,
+        "fred_alfred" => c.chunk == "all_vintages",
+        "sec_bulk" => c.entity.ends_with("_zip"),
+        "sec_api" => c.chunk.starts_with("facts-"),
+        _ => false,
+    }
+}
+
+/// The quarter (`2026q4`) of a 13(f) list candidate (`2026q4-1.pdf`).
+fn list_quarter(c: &ChunkRow) -> Option<&str> {
+    (c.source == "sec_13f_list" && c.entity == "13flist")
+        .then(|| c.chunk.split('-').next())
+        .flatten()
+}
+
+/// Whether the quarter `2026q4` ends on or after `day`.
+fn quarter_open(q: &str, day: NaiveDate) -> bool {
+    let Some((y, n)) = q.split_once('q') else {
+        return false;
+    };
+    let (Ok(y), Ok(n)) = (y.parse::<i32>(), n.parse::<u32>()) else {
+        return false;
+    };
+    let next = if n >= 4 {
+        NaiveDate::from_ymd_opt(y + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(y, 3 * n + 1, 1)
+    };
+    next.is_some_and(|d| d > day)
+}
+
+/// G1 chunks (HARD, 0 allowed): no chunk `failed`, stuck (`pending`, `fetching`, `parsed`) or
+/// landed without the compaction its dataset needs (`compacts`). A failed 13(f) list
+/// candidate is not a failure when another candidate of its quarter landed, or the quarter has
+/// not ended on `today` (the SEC posts a list during its quarter).
+#[must_use]
+pub fn chunk_states(chunks: &[ChunkRow], keyed: &HashSet<String>, today: NaiveDate) -> Outcome {
+    let landed: HashSet<&str> = chunks
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.status,
+                Status::Fetched | Status::Parsed | Status::Compacted
+            )
+        })
+        .filter_map(list_quarter)
+        .collect();
+    let no_prices: HashSet<&str> = chunks
+        .iter()
+        .filter(|c| c.source == "eodhd" && c.chunk == "eod-full" && c.status == Status::Gone)
+        .map(|c| c.entity.as_str())
+        .collect();
+    let (mut kept, mut lists, mut out) = (BTreeMap::<&str, usize>::new(), 0usize, Vec::new());
+    for c in chunks {
+        let key = || format!("{} {} {}", c.source, c.entity, c.chunk);
+        match c.status {
+            Status::Compacted | Status::Gone => {}
+            Status::Fetched if compacts(c, keyed, &no_prices) => {
+                out.push((key(), "landed, never compacted".to_owned()));
+            }
+            Status::Fetched => *kept.entry(&c.source).or_default() += 1,
+            Status::Failed
+                if list_quarter(c)
+                    .is_some_and(|q| landed.contains(q) || quarter_open(q, today)) =>
+            {
+                lists += 1;
+            }
+            s => out.push((key(), format!("{s:?}").to_lowercase())),
+        }
+    }
+    let mut o = count(
+        "chunks",
+        true,
+        "chunks failed, stuck or landed without their compaction",
+        out,
+    );
+    let kept: Vec<String> = kept.iter().map(|(s, n)| format!("{s} {n}")).collect();
+    o.note = format!(
+        "{}; kept raw on purpose (read in place, or an EODHD code without a key): {}; 13(f) list candidates superseded or not due: {lists}",
+        o.note,
+        kept.join(", ")
+    );
+    o
+}
+
+/// G1 (HARD, 0 allowed): every `raw_sha256` of the lake datasets in `lake` is a body the
+/// manifest landed.
+#[must_use]
+pub fn raw_provenance(lake: &[(&str, HashSet<String>)], manifest: &HashSet<&str>) -> Outcome {
+    let n: usize = lake.iter().map(|(_, h)| h.len()).sum();
+    let mut out: Vec<_> = lake
+        .iter()
+        .flat_map(|(dataset, hashes)| {
+            hashes
+                .iter()
+                .filter(|h| !manifest.contains(h.as_str()))
+                .map(|h| {
+                    (
+                        (*dataset).to_owned(),
+                        format!("raw_sha256 {h} not in the manifest"),
+                    )
+                })
+        })
+        .collect();
+    out.sort();
+    count(
+        "raw_hashes",
+        true,
+        &format!(
+            "of {n} distinct raw_sha256 in prices, splits, dividends and etf_holdings not in the manifest"
+        ),
+        out,
+    )
+}
+
+/// G1 re-hash (HARD, 0 allowed): `bad` lists the sampled landed bodies, of `n`, whose SHA-256
+/// differs from the manifest's or that cannot be read.
+#[must_use]
+pub fn rehash(bad: Vec<(String, String)>, n: usize) -> Outcome {
+    let mut o = count(
+        "rehash",
+        true,
+        &format!("of {n} sampled landed bodies (5%) differ from the manifest or cannot be read"),
+        bad,
+    );
+    if n == 0 {
+        o.level = Level::Fail;
+        o.note = "no landed body sampled".into();
     }
     o
 }
@@ -1137,6 +1294,574 @@ pub fn price_sanity(
     ]
 }
 
+/// A run of missing trading days `(first, last, days)` over 5 days long is a G3 gap of `name`.
+fn push_gap(
+    run: &mut Option<(NaiveDate, NaiveDate, usize)>,
+    name: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    if let Some((a, z, n)) = run.take()
+        && n > 5
+    {
+        out.push((name.to_owned(), format!("gap {a} to {z}: {n} trading days")));
+    }
+}
+
+/// G3: priced days over the trading days `tdays` (the calendar's) between each security's first
+/// and last bar, counted only in the calendar years in which it has an eligible day
+/// (`eligible`: `(sec, year)`; owner, 2026-10-14). HARD: at least 98% in every year. WARN:
+/// securities under 95% over those years, and gaps over 5 trading days in them.
+#[must_use]
+pub fn completeness(
+    bars: &[Bar],
+    names: &[String],
+    eligible: &HashSet<(u32, i32)>,
+    tdays: &[NaiveDate],
+) -> [Outcome; 3] {
+    let mut years: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
+    let (mut thin, mut gaps) = (Vec::new(), Vec::new());
+    for s in bars.chunk_by(|a, b| a.sec == b.sec) {
+        let (Some(first), Some(last)) = (s.first(), s.last()) else {
+            continue;
+        };
+        let name = names.get(first.sec as usize).map_or("", String::as_str);
+        let (a, z) = (
+            tdays.partition_point(|d| *d < first.date),
+            tdays.partition_point(|d| *d <= last.date),
+        );
+        let (mut want, mut got, mut run) = (0usize, 0usize, None);
+        let mut it = s.iter().peekable();
+        for &d in tdays.get(a..z).unwrap_or_default() {
+            let mut has = false;
+            while let Some(b) = it.next_if(|b| b.date <= d) {
+                has |= b.date == d && priced(b);
+            }
+            if !eligible.contains(&(first.sec, d.year())) {
+                push_gap(&mut run, name, &mut gaps);
+                continue;
+            }
+            let y = years.entry(d.year()).or_default();
+            y.0 += 1;
+            want += 1;
+            if has {
+                y.1 += 1;
+                got += 1;
+                push_gap(&mut run, name, &mut gaps);
+            } else {
+                run = Some(run.map_or((d, d, 1), |(a, _, n)| (a, d, n + 1)));
+            }
+        }
+        push_gap(&mut run, name, &mut gaps);
+        if want > 0 && (got as f64) < 0.95 * want as f64 {
+            thin.push((
+                name.to_owned(),
+                format!(
+                    "{:.2}% of {want} trading days priced",
+                    100.0 * got as f64 / want as f64
+                ),
+            ));
+        }
+    }
+    let threshold = 0.98;
+    let share = |(want, got): (usize, usize)| got as f64 / want.max(1) as f64;
+    let under: Vec<(String, String)> = years
+        .iter()
+        .filter(|(_, v)| share(**v) < threshold)
+        .map(|(y, v)| {
+            (
+                y.to_string(),
+                format!("{:.2}% of {} expected days priced", share(*v) * 100.0, v.0),
+            )
+        })
+        .collect();
+    let worst = years
+        .iter()
+        .map(|(y, v)| (*y, share(*v)))
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    let aggregate = match worst {
+        None => Outcome {
+            chunk: "completeness",
+            level: Level::Fail,
+            measured: None,
+            threshold: Some(threshold),
+            note: "no eligible security-years (universe not built, J9)".into(),
+            offenders: Vec::new(),
+        },
+        Some((y, w)) => Outcome {
+            chunk: "completeness",
+            level: if under.is_empty() {
+                Level::Ok
+            } else {
+                Level::Fail
+            },
+            measured: Some(w),
+            threshold: Some(threshold),
+            note: format!(
+                "worst year {y}: {:.2}% of expected trading days priced over {} eligible security-years; {} years under 98%",
+                w * 100.0,
+                eligible.len(),
+                under.len()
+            ),
+            offenders: under,
+        },
+    };
+    [
+        aggregate,
+        count(
+            "per_security",
+            false,
+            "securities under 95% of their trading days in eligible years",
+            thin,
+        ),
+        count(
+            "gaps",
+            false,
+            "gaps over 5 trading days in eligible years",
+            gaps,
+        ),
+    ]
+}
+
+/// One iShares snapshot, for G5.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Snapshot {
+    /// `IWF` or `IWP`.
+    pub etf: String,
+    /// The file's as-of date.
+    pub snapshot_date: NaiveDate,
+    /// The trading day it is usable from.
+    pub available_date: NaiveDate,
+    /// Equity rows in `etf_holdings`.
+    pub rows: usize,
+    /// Of them, without a FIGI.
+    pub unresolved: usize,
+    /// Weight (%) of the rows, and of those without a FIGI.
+    pub weight: f64,
+    /// Weight (%) of the rows without a FIGI.
+    pub unresolved_weight: f64,
+    /// Equity lines of the landed file whose ticker does not normalize.
+    pub unparseable: usize,
+}
+
+/// Member rows of `universe` in one year, for G5: `(rows, null sector, sic_fallback sector)`.
+pub type MemberRows = BTreeMap<i32, (usize, usize, usize)>;
+
+fn rule(
+    chunk: &'static str,
+    hard: bool,
+    ok: bool,
+    measured: f64,
+    threshold: f64,
+    note: String,
+    offenders: Vec<(String, String)>,
+) -> Outcome {
+    Outcome {
+        chunk,
+        level: match (ok, hard) {
+            (true, _) => Level::Ok,
+            (false, true) => Level::Fail,
+            (false, false) => Level::Warn,
+        },
+        measured: Some(measured),
+        threshold: Some(threshold),
+        note,
+        offenders,
+    }
+}
+
+/// G5 on the archived snapshots (D20: membership exists from the first one, 2026-10-09).
+/// HARD: unresolved identifiers at most 1% of a snapshot's rows and 0.5% of its weight;
+/// tickers that do not normalize at most 0.1% of its equity lines; on every trading day in
+/// `tdays` (through the data end) from an ETF's first usable snapshot, its latest one at most 45
+/// days old; each snapshot's rows within 25% of the median of the ETF's earlier ones; null
+/// sector on at most 1% of member rows. WARN: `sic_fallback` sectors on more than 5% of a
+/// year's member rows. Reported: the first snapshot and the first eligible date.
+#[must_use]
+pub fn holdings(
+    snaps: &[Snapshot],
+    tdays: &[NaiveDate],
+    members: &MemberRows,
+    first_eligible: Option<NaiveDate>,
+) -> Vec<Outcome> {
+    let mut snaps: Vec<&Snapshot> = snaps.iter().collect();
+    snaps.sort_by(|a, b| (&a.etf, a.snapshot_date).cmp(&(&b.etf, b.snapshot_date)));
+    let name = |s: &Snapshot| format!("{} {}", s.etf, s.snapshot_date);
+    let part = |a: usize, b: usize| a as f64 / b.max(1) as f64;
+    let (mut unres, mut worst_unres) = (Vec::new(), 0.0f64);
+    let (mut unparse, mut worst_unparse) = (Vec::new(), 0.0f64);
+    let (mut stale, mut max_age, mut used, mut drifted) = (Vec::new(), 0i64, 0usize, Vec::new());
+    for list in snaps.chunk_by(|a, b| a.etf == b.etf) {
+        let (mut over, mut first_over, mut earlier) = (0usize, None, Vec::new());
+        for s in list {
+            let r = part(s.unresolved, s.rows);
+            let w = s.unresolved_weight / s.weight.max(f64::MIN_POSITIVE);
+            worst_unres = worst_unres.max(r);
+            if r > 0.01 || w > 0.005 {
+                let why = format!(
+                    "{} of {} rows without a FIGI ({:.2}% of the weight)",
+                    s.unresolved,
+                    s.rows,
+                    w * 100.0
+                );
+                unres.push((name(s), why));
+            }
+            let lines = s.rows + s.unparseable;
+            let u = part(s.unparseable, lines);
+            worst_unparse = worst_unparse.max(u);
+            if u > 0.001 {
+                let why = format!("{} of {lines} equity lines do not normalize", s.unparseable);
+                unparse.push((name(s), why));
+            }
+            let mut sorted: Vec<usize> = earlier.clone();
+            sorted.sort_unstable();
+            if let Some(&m) = sorted.get(sorted.len() / 2)
+                && (s.rows as f64 - m as f64).abs() > 0.25 * m as f64
+            {
+                let why = format!("{} rows, median of the earlier snapshots {m}", s.rows);
+                drifted.push((name(s), why));
+            }
+            earlier.push(s.rows);
+        }
+        for &t in tdays {
+            let Some(s) = list.iter().rev().find(|s| s.available_date <= t) else {
+                continue;
+            };
+            used += 1;
+            let age = (t - s.snapshot_date).num_days();
+            max_age = max_age.max(age);
+            if age > 45 {
+                over += 1;
+                first_over.get_or_insert(t);
+            }
+        }
+        if let (Some(t), Some(s)) = (first_over, list.first()) {
+            let why = format!("{over} trading days on a snapshot over 45 days old, from {t}");
+            stale.push((s.etf.clone(), why));
+        }
+    }
+    let (rows, null) = members.values().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));
+    let heavy: Vec<(String, String)> = members
+        .iter()
+        .filter(|(_, v)| part(v.2, v.0) > 0.05)
+        .map(|(y, v)| {
+            (
+                y.to_string(),
+                format!(
+                    "{} of {} member rows take the SIC fallback sector",
+                    v.2, v.0
+                ),
+            )
+        })
+        .collect();
+    let first = snaps
+        .iter()
+        .map(|s| (s.snapshot_date, s.available_date))
+        .min();
+    vec![
+        rule(
+            "unresolved",
+            true,
+            unres.is_empty(),
+            worst_unres,
+            0.01,
+            format!(
+                "{} of {} snapshots over 1% of rows or 0.5% of weight without a FIGI",
+                unres.len(),
+                snaps.len()
+            ),
+            unres,
+        ),
+        rule(
+            "unparseable",
+            true,
+            unparse.is_empty(),
+            worst_unparse,
+            0.001,
+            format!(
+                "{} of {} snapshots over 0.1% of equity lines whose ticker does not normalize",
+                unparse.len(),
+                snaps.len()
+            ),
+            unparse,
+        ),
+        rule(
+            "snapshot_age",
+            true,
+            stale.is_empty(),
+            max_age as f64,
+            45.0,
+            if used == 0 {
+                format!(
+                    "no trading day through the data end uses a snapshot yet (first usable {})",
+                    first.map_or_else(|| "none".into(), |f| f.1.to_string())
+                )
+            } else {
+                format!("{used} ETF-days use a snapshot, the oldest {max_age} days old")
+            },
+            stale,
+        ),
+        rule(
+            "holdings_count",
+            true,
+            drifted.is_empty(),
+            drifted.len() as f64,
+            0.0,
+            format!(
+                "{} snapshots more than 25% off the median count of their ETF's earlier ones",
+                drifted.len()
+            ),
+            drifted,
+        ),
+        rule(
+            "null_sector",
+            true,
+            part(null, rows) <= 0.01,
+            part(null, rows),
+            0.01,
+            format!("{null} of {rows} member rows without a sector"),
+            Vec::new(),
+        ),
+        rule(
+            "sic_fallback",
+            false,
+            heavy.is_empty(),
+            heavy.len() as f64,
+            0.05,
+            format!(
+                "{} years with the SIC fallback sector on over 5% of member rows",
+                heavy.len()
+            ),
+            heavy,
+        ),
+        Outcome {
+            chunk: "first_dates",
+            level: Level::Ok,
+            measured: None,
+            threshold: None,
+            note: format!(
+                "first snapshot {} (usable {}); first eligible date {}",
+                first.map_or_else(|| "none".into(), |f| f.0.to_string()),
+                first.map_or_else(|| "none".into(), |f| f.1.to_string()),
+                first_eligible.map_or_else(|| "none".into(), |d| d.to_string())
+            ),
+            offenders: Vec::new(),
+        },
+    ]
+}
+
+/// One `macro` row for G6.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Obs {
+    /// FRED series id.
+    pub series: String,
+    /// Observation date (a monthly series: the first of the month).
+    pub obs_date: NaiveDate,
+    /// The value; `None` for FRED's missing marker.
+    pub value: Option<f64>,
+    /// When it became known.
+    pub known_from: NaiveDate,
+    /// `known_from_basis = lag_rule`.
+    pub lag_rule: bool,
+}
+
+/// The last day of `d`'s month.
+fn month_end(d: NaiveDate) -> NaiveDate {
+    d.with_day(1)
+        .and_then(|f| f.checked_add_months(chrono::Months::new(1)))
+        .and_then(|n| n.pred_opt())
+        .unwrap_or(d)
+}
+
+/// G6 over the `macro` rows. HARD: `DGS3MO` has a value known (`known_from <= t`) on every day
+/// of `panel` (the trading days from the first one with 50 eligible names through the data end).
+/// WARN: per series of `crate::alfred::SERIES`, since its first observation, a run of more than 5
+/// missing business days (daily) or a missing month (monthly); the latest observation more than
+/// its lag (the period end plus the release buffer) plus 5 days before `data_end`; deferred
+/// series (first observation over a month after 2004-01-01). Reported: the share of
+/// `lag_rule` rows per series.
+#[must_use]
+pub fn macro_series(rows: &[Obs], panel: &[NaiveDate], data_end: NaiveDate) -> Vec<Outcome> {
+    let mut by: BTreeMap<&str, Vec<&Obs>> = BTreeMap::new();
+    for r in rows {
+        by.entry(&r.series).or_default().push(r);
+    }
+    let start = NaiveDate::from_ymd_opt(2004, 1, 1).unwrap_or_default();
+    let (mut runs, mut months, mut late, mut deferred, mut lag) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for s in crate::alfred::SERIES {
+        let all = by.get(s.id).map(Vec::as_slice).unwrap_or_default();
+        let have: std::collections::BTreeSet<NaiveDate> = all
+            .iter()
+            .filter(|r| r.value.is_some())
+            .map(|r| r.obs_date)
+            .collect();
+        let (Some(&first), Some(&last)) = (have.first(), have.last()) else {
+            late.push((s.id.to_owned(), "no observation".to_owned()));
+            continue;
+        };
+        if (first - start).num_days() > crate::alfred::DEFERRED_AFTER_DAYS {
+            deferred.push((s.id.to_owned(), format!("first observation {first}")));
+        }
+        let lagged = all.iter().filter(|r| r.lag_rule).count();
+        lag.push(format!(
+            "{} {:.1}%",
+            s.id,
+            100.0 * lagged as f64 / all.len().max(1) as f64
+        ));
+        let end = if s.monthly { month_end(last) } else { last };
+        let allowed = s.buffer_days.max(s.min_lag_days) + 5;
+        if (data_end - end).num_days() > allowed {
+            late.push((
+                s.id.to_owned(),
+                format!(
+                    "latest observation {last}, {} days before {data_end} (allowed {allowed})",
+                    (data_end - end).num_days()
+                ),
+            ));
+        }
+        if s.monthly {
+            let mut m = first;
+            while m <= last {
+                if !have.contains(&m) {
+                    months.push((
+                        s.id.to_owned(),
+                        format!("no value for {}", m.format("%Y-%m")),
+                    ));
+                }
+                m = m
+                    .checked_add_months(chrono::Months::new(1))
+                    .unwrap_or(NaiveDate::MAX);
+            }
+        } else {
+            let mut run: Option<(NaiveDate, NaiveDate, usize)> = None;
+            let mut d = first;
+            while d <= last {
+                if !calendar::is_weekend(d) {
+                    if have.contains(&d) {
+                        if let Some((a, z, n)) = run.take()
+                            && n > 5
+                        {
+                            runs.push((
+                                s.id.to_owned(),
+                                format!("no value {a} to {z}: {n} business days"),
+                            ));
+                        }
+                    } else {
+                        run = Some(run.map_or((d, d, 1), |(a, _, n)| (a, d, n + 1)));
+                    }
+                }
+                d = d.succ_opt().unwrap_or(NaiveDate::MAX);
+            }
+        }
+    }
+    let mut known: Vec<NaiveDate> = rows
+        .iter()
+        .filter(|r| r.series == "DGS3MO" && r.value.is_some())
+        .map(|r| r.known_from)
+        .collect();
+    known.sort_unstable();
+    let unknown: Vec<(String, String)> = panel
+        .iter()
+        .filter(|t| known.first().is_none_or(|k| k > *t))
+        .map(|t| ("DGS3MO".to_owned(), format!("{t} no value known")))
+        .collect();
+    let share = 1.0 - unknown.len() as f64 / panel.len().max(1) as f64;
+    vec![
+        rule(
+            "dgs3mo",
+            true,
+            !panel.is_empty() && unknown.is_empty(),
+            share,
+            1.0,
+            format!(
+                "DGS3MO known on {} of {} panel trading days from {}",
+                panel.len() - unknown.len(),
+                panel.len(),
+                panel
+                    .first()
+                    .map_or_else(|| "none".into(), ToString::to_string)
+            ),
+            unknown,
+        ),
+        count(
+            "daily_runs",
+            false,
+            "runs of more than 5 business days without a value",
+            runs,
+        ),
+        count("monthly_gaps", false, "missing months", months),
+        count(
+            "latest",
+            false,
+            "series with an observation older than its lag plus 5 days",
+            late,
+        ),
+        count(
+            "deferred",
+            false,
+            "deferred series (history starts after 2004-01)",
+            deferred,
+        ),
+        Outcome {
+            chunk: "lag_rule",
+            level: Level::Ok,
+            measured: None,
+            threshold: None,
+            note: format!("rows known by the lag rule: {}", lag.join(", ")),
+            offenders: Vec::new(),
+        },
+    ]
+}
+
+/// G9 (HARD, 0 allowed). `partitions`: `(dataset, partition, recorded, recomputed)` inputs
+/// hash of each dataset's latest compaction; `bad`: the sampled stage files (2%) whose bytes,
+/// or the stage file re-parsed from the landed body, differ from the recorded hash, of `n`
+/// sampled and `reparsed` re-parsed.
+#[must_use]
+pub fn replay(
+    partitions: &[(String, String, String, String)],
+    bad: Vec<(String, String)>,
+    n: usize,
+    reparsed: usize,
+) -> [Outcome; 2] {
+    let off: Vec<_> = partitions
+        .iter()
+        .filter(|p| p.2 != p.3)
+        .map(|p| {
+            (
+                p.0.clone(),
+                format!("{} recorded {} recomputed {}", p.1, p.2, p.3),
+            )
+        })
+        .collect();
+    let mut inputs = count(
+        "inputs_hash",
+        true,
+        &format!(
+            "of {} datasets whose recorded inputs hash differs from their stage files",
+            partitions.len()
+        ),
+        off,
+    );
+    if partitions.is_empty() {
+        inputs.level = Level::Fail;
+        inputs.note = "no compaction recorded".into();
+    }
+    let mut stage = count(
+        "reparse",
+        true,
+        &format!(
+            "of {n} sampled stage files (2%) differ from their recorded hash ({reparsed} EODHD chunks re-parsed from the landed body, the rest re-hashed)"
+        ),
+        bad,
+    );
+    if n == 0 {
+        stage.level = Level::Fail;
+        stage.note = "no stage file sampled".into();
+    }
+    [inputs, stage]
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test")]
@@ -1541,5 +2266,263 @@ mod tests {
             "{}",
             spans.note
         );
+    }
+
+    fn chunk(source: &str, entity: &str, chunk: &str, status: Status) -> ChunkRow {
+        ChunkRow {
+            source: source.into(),
+            entity: entity.into(),
+            chunk: chunk.into(),
+            status,
+            sha256: None,
+            raw_path: None,
+            stage_path: None,
+            stage_sha256: None,
+        }
+    }
+
+    #[test]
+    fn g1_fails_stuck_and_uncompacted_chunks_only() {
+        let keyed: HashSet<String> = ["AAPL".to_owned(), "YY".to_owned()].into();
+        let rows = [
+            chunk("eodhd", "AAPL.US", "eod-full", Status::Compacted),
+            chunk("eodhd", "AAPL.US", "div-full", Status::Fetched),
+            chunk("eodhd", "ZZZ.US", "eod-full", Status::Fetched),
+            chunk("openfigi", "id_isin", "ab12", Status::Fetched),
+            chunk("sec_13f_list", "13flist", "2012q1-0.pdf", Status::Failed),
+            chunk("sec_13f_list", "13flist", "2012q1-1.pdf", Status::Fetched),
+            chunk("sec_13f_list", "13flist", "2013q1-0.pdf", Status::Failed),
+            chunk("sec_13f_list", "13flist", "2026q4-0.txt", Status::Failed),
+            chunk("eodhd", "XX.US", "eod-full", Status::Pending),
+            chunk("eodhd", "YY.US", "eod-full", Status::Gone),
+            chunk("eodhd", "YY.US", "div-full", Status::Fetched),
+        ];
+        let o = chunk_states(&rows, &keyed, d("2026-10-14"));
+        assert_eq!(o.level, Level::Fail);
+        let who: Vec<&str> = o.offenders.iter().map(|(e, _)| e.as_str()).collect();
+        assert_eq!(
+            who,
+            [
+                "eodhd AAPL.US div-full",
+                "sec_13f_list 13flist 2013q1-0.pdf",
+                "eodhd XX.US eod-full"
+            ],
+            "a keyed code's body must be compacted; a past quarter needs its list"
+        );
+        assert!(
+            o.note.contains("eodhd 2, openfigi 1, sec_13f_list 1"),
+            "{}",
+            o.note
+        );
+        assert!(o.note.contains("superseded or not due: 2"), "{}", o.note);
+        assert!(!quarter_open("2026q3", d("2026-10-14")));
+        assert!(quarter_open("2026q4", d("2026-12-31")));
+    }
+
+    #[test]
+    fn g1_raw_provenance_and_samples() {
+        let lake = [("prices", HashSet::from(["a".to_owned(), "b".to_owned()]))];
+        let o = raw_provenance(&lake, &HashSet::from(["a"]));
+        assert_eq!((o.level, o.measured), (Level::Fail, Some(1.0)));
+        assert_eq!(
+            raw_provenance(&lake, &HashSet::from(["a", "b"])).level,
+            Level::Ok
+        );
+        let n = (0..2000)
+            .filter(|i| sampled(&i.to_string(), "2026-10-14", 20))
+            .count();
+        assert!((60..140).contains(&n), "{n} of 2000 sampled at 5%");
+        assert_ne!(
+            (0..200)
+                .map(|i| sampled(&i.to_string(), "2026-10-14", 20))
+                .collect::<Vec<_>>(),
+            (0..200)
+                .map(|i| sampled(&i.to_string(), "2026-10-15", 20))
+                .collect::<Vec<_>>(),
+            "another day, another sample"
+        );
+        assert_eq!(rehash(Vec::new(), 0).level, Level::Fail);
+        assert_eq!(rehash(Vec::new(), 3).level, Level::Ok);
+    }
+
+    #[test]
+    fn g3_counts_the_eligible_years_only() {
+        let cal = calendar::Calendar::rules_only();
+        let tdays: Vec<NaiveDate> = d("2023-01-01")
+            .iter_days()
+            .take_while(|x| *x <= d("2024-12-31"))
+            .filter(|x| cal.is_trading_day(*x))
+            .collect();
+        let bar = |sec, date| Bar {
+            sec,
+            date,
+            open: 1.0,
+            high: 1.0,
+            low: 1.0,
+            close: 1.0,
+            volume: 1,
+            adj: 1.0,
+        };
+        // A misses 2024-03-01..08 (6 trading days); B misses every other day of 2023, a year in
+        // which it is not eligible.
+        let gap = |x: &NaiveDate| *x >= d("2024-03-01") && *x <= d("2024-03-08");
+        let mut bars: Vec<Bar> = tdays
+            .iter()
+            .filter(|x| !gap(x))
+            .map(|x| bar(0, *x))
+            .collect();
+        bars.extend(
+            tdays
+                .iter()
+                .enumerate()
+                .filter(|(i, x)| x.year() == 2024 || i % 2 == 0)
+                .map(|(_, x)| bar(1, *x)),
+        );
+        let names = ["A".to_owned(), "B".to_owned(), "C".to_owned()];
+        let eligible = HashSet::from([(0, 2024), (1, 2024)]);
+        let n = tdays.iter().filter(|x| x.year() == 2024).count() as f64;
+        let [agg, thin, gaps] = completeness(&bars, &names, &eligible, &tdays);
+        assert_eq!(
+            (agg.level, agg.measured),
+            (Level::Ok, Some((2.0 * n - 6.0) / (2.0 * n)))
+        );
+        assert!(thin.offenders.is_empty());
+        assert_eq!(
+            gaps.offenders,
+            [(
+                "A".to_owned(),
+                "gap 2024-03-01 to 2024-03-08: 6 trading days".to_owned()
+            )]
+        );
+        // C, eligible in 2024, is priced on every other day.
+        bars.extend(
+            tdays
+                .iter()
+                .enumerate()
+                .filter(|(i, x)| x.year() == 2024 && i % 2 == 0)
+                .map(|(_, x)| bar(2, *x)),
+        );
+        let eligible = HashSet::from([(0, 2024), (1, 2024), (2, 2024)]);
+        let [agg, thin, _] = completeness(&bars, &names, &eligible, &tdays);
+        assert_eq!(agg.level, Level::Fail);
+        assert_eq!(agg.offenders.len(), 1);
+        assert_eq!(thin.offenders.len(), 1);
+        let none = completeness(&bars, &names, &HashSet::new(), &tdays);
+        assert_eq!((none[0].level, none[0].measured), (Level::Fail, None));
+    }
+
+    #[test]
+    fn g5_checks_the_archived_snapshots() {
+        let cal = calendar::Calendar::rules_only();
+        let tdays: Vec<NaiveDate> = d("2026-10-01")
+            .iter_days()
+            .take_while(|x| *x <= d("2026-12-31"))
+            .filter(|x| cal.is_trading_day(*x))
+            .collect();
+        let snap = |date: &str, avail: &str, rows, unresolved| Snapshot {
+            etf: "IWF".into(),
+            snapshot_date: d(date),
+            available_date: d(avail),
+            rows,
+            unresolved,
+            weight: 100.0,
+            unresolved_weight: 0.1 * unresolved as f64,
+            unparseable: 0,
+        };
+        let snaps = [
+            snap("2026-10-09", "2026-10-12", 370, 1),
+            snap("2026-10-30", "2026-11-02", 260, 0),
+        ];
+        let members = MemberRows::from([(2026, (1000, 20, 0))]);
+        let o = holdings(&snaps, &tdays, &members, Some(d("2008-01-03")));
+        let level = |c: &str| o.iter().find(|x| x.chunk == c).map(|x| x.level);
+        assert_eq!(level("unresolved"), Some(Level::Ok), "1 of 370 rows");
+        assert_eq!(level("unparseable"), Some(Level::Ok));
+        assert_eq!(level("holdings_count"), Some(Level::Fail), "260 after 370");
+        assert_eq!(
+            level("snapshot_age"),
+            Some(Level::Fail),
+            "no snapshot after 2026-10-30"
+        );
+        assert_eq!(level("null_sector"), Some(Level::Fail), "2% of member rows");
+        assert!(o.iter().any(|x| x.note
+            == "first snapshot 2026-10-09 (usable 2026-10-12); first eligible date 2008-01-03"));
+        // Through the data end no day uses a snapshot yet: nothing to fail.
+        let early = holdings(&snaps[..1], &[], &MemberRows::new(), None);
+        assert!(early.iter().all(|x| x.level == Level::Ok), "{early:?}");
+    }
+
+    #[test]
+    fn g6_dgs3mo_on_every_panel_day_and_the_series_checks() {
+        let obs = |series: &str, date: &str, known: &str| Obs {
+            series: series.into(),
+            obs_date: d(date),
+            value: Some(1.0),
+            known_from: d(known),
+            lag_rule: false,
+        };
+        let cal = calendar::Calendar::rules_only();
+        let panel: Vec<NaiveDate> = d("2008-01-02")
+            .iter_days()
+            .take_while(|x| *x <= d("2008-01-10"))
+            .filter(|x| cal.is_trading_day(*x))
+            .collect();
+        let get = |o: &[Outcome], c: &str| o.iter().find(|x| x.chunk == c).cloned().unwrap();
+        let mut rows = vec![obs("DGS3MO", "2008-01-03", "2008-01-04")];
+        let o = macro_series(&rows, &panel, d("2008-01-10"));
+        assert_eq!(get(&o, "dgs3mo").level, Level::Fail);
+        assert_eq!(get(&o, "dgs3mo").offenders.len(), 2, "01-02 and 01-03");
+        rows.extend([
+            obs("DGS3MO", "2007-12-31", "2008-01-02"),
+            obs("DGS10", "2008-01-02", "2008-01-03"),
+            obs("DGS10", "2008-01-14", "2008-01-15"),
+            obs("CPIAUCSL", "2008-01-01", "2008-02-15"),
+            obs("CPIAUCSL", "2008-03-01", "2008-04-15"),
+            obs("BAMLC0A0CM", "2023-10-10", "2023-10-11"),
+        ]);
+        let o = macro_series(&rows, &panel, d("2008-01-10"));
+        assert_eq!(get(&o, "dgs3mo").level, Level::Ok);
+        assert_eq!(
+            get(&o, "daily_runs").offenders,
+            [(
+                "DGS10".to_owned(),
+                "no value 2008-01-03 to 2008-01-11: 7 business days".to_owned()
+            )]
+        );
+        assert_eq!(
+            get(&o, "monthly_gaps").offenders,
+            [("CPIAUCSL".to_owned(), "no value for 2008-02".to_owned())]
+        );
+        assert!(
+            get(&o, "deferred")
+                .offenders
+                .iter()
+                .any(|(s, why)| s == "BAMLC0A0CM" && why == "first observation 2023-10-10"),
+            "every series here starts after 2004-01"
+        );
+        assert!(
+            get(&o, "latest")
+                .offenders
+                .iter()
+                .any(|(s, why)| s == "VIXCLS" && why == "no observation")
+        );
+    }
+
+    #[test]
+    fn g9_flags_a_changed_input_hash_or_stage_file() {
+        let p = |r: &str, n: &str| {
+            (
+                "prices".to_owned(),
+                "eodhd/*".to_owned(),
+                r.to_owned(),
+                n.to_owned(),
+            )
+        };
+        let [i, s] = replay(&[p("a", "a")], Vec::new(), 10, 8);
+        assert_eq!((i.level, s.level), (Level::Ok, Level::Ok));
+        let bad = vec![("eodhd X.US eod-full".to_owned(), "differs".to_owned())];
+        let [i, s] = replay(&[p("a", "b")], bad, 10, 8);
+        assert_eq!((i.level, s.level), (Level::Fail, Level::Fail));
+        assert_eq!(replay(&[], Vec::new(), 0, 0)[0].level, Level::Fail);
     }
 }

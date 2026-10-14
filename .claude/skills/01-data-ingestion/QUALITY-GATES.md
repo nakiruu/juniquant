@@ -15,9 +15,16 @@ environment).
 
 | Gates | Evaluated by | Result |
 |---|---|---|
-| G0-G3, G6-G9 | Rust `quant-ingest gates` (SQL over the lake and the manifest) | Rows in `data_quality` (`source = Gate`, `check_id`, `measured`, `threshold`, `status`) |
-| G4, G5 | Julia `preflight()` (they need `universe` and `price_coverage`, which Julia writes) | `reports/gates/<run_id>.json`; `preflight()` also re-reads the Rust rows |
+| G0-G3, G5-G9 | Rust `quant-ingest gates` (over the lake, the manifest and the landed files; G5 re-parses the landed iShares files) | Rows in `data_quality` (`source = Gate`, `check_id`, `measured`, `threshold`, `status`) |
+| G4 | Julia `preflight()` (it needs the member days of the coverage builder and the G2 rejections) | `reports/gates/<run_id>.json`; `preflight()` also re-reads the Rust rows |
 | G10 | Rust, only when a second price source exists | `data_quality` |
+
+`preflight()` (`features/src/preflight.jl`, `features/bin/preflight.jl`) passes when the
+latest run of every Rust gate with a HARD check (G0-G3, G5-G7, G9) started after the last
+lake write (`data_quality` aside) and has no FAIL, and G4 passes. It writes the report of
+every gate's checks and `reports/survivorship_caveat.json` (`SURVIVORSHIP.md` §4) whether or
+not it passes, then throws if it did not. A rebuild therefore ends with `quant-ingest gates`
+and then `preflight()`.
 
 `data_quality` rows are keyed `(date, source, dataset, entity, chunk,
 check_id, run_id)`; a gate row uses `entity = '*'` for the aggregate and one
@@ -31,16 +38,36 @@ caveat but do not block.
 | Gate | Check | Default threshold | Severity |
 |---|---|---|---|
 | **G0** Calendar | The trading calendar module (`09-lock-state-machine` §4 rules plus overrides) equals the set of dates of the `SPY` bars from `BACKFILL_START` to the data end. The calendar is never rebuilt from prices; a difference is a finding about the module | 0 differing dates | HARD |
-| **G1** Raw and manifest | No chunk in `failed` or `fetching`; every chunk `compacted` or `gone`; every `raw_sha256` in `prices`, `splits`, `dividends`, `etf_holdings` exists in the manifest; 5% sample of raw files re-hashed (full re-hash monthly) | 0 failed; 0 missing; 0 hash mismatches | HARD |
+| **G1** Raw and manifest | No chunk `failed`, `pending`, `fetching` or `parsed`; a `fetched` chunk only where the body is read in place (symbol lists, OpenFIGI answers, 13(f) lists, indexes, ALFRED windows) or kept raw on purpose (an EODHD code with no key, D17, or with no prices); the inputs of a compaction (an EODHD body of a code with a key and prices, an iShares file, a stitched ALFRED series, a bulk zip, a companyfacts delta) `compacted`. A failed 13(f) list candidate is no failure when another candidate of its quarter landed or the quarter has not ended (owner, 2026-10-14). Every `raw_sha256` in `prices`, `splits`, `dividends`, `etf_holdings` exists in the manifest; a 5% sample of the landed bodies re-hashed (a different sample each day; the monthly full re-hash is not scheduled yet) | 0 failed; 0 missing; 0 hash mismatches | HARD |
 | **G2** Price sanity | Per row: `high >= low`, `low <= close <= high`, prices > 0, `volume >= 0`, and `close x volume <= $500bn` (2026-10-12: over three times the largest real day in the data, Tesla's S&P inclusion on 2020-12-18 at $154bn; vendor unit errors reach trillions). Split-factor consistency: for each `splits` row, `close[ex] / close[ex-1] * ratio` lies in [0.4, 2.5]. Unexplained jumps: one-day as-traded ratio `>= 1.8` or `<= 0.55` with no split within one day. 10x jumps: ratio `>= 10` or `<= 0.1` without a split, classified by the rules of §2a; the ones no rule explains count when they fall within 365 days of an eligible `universe` row (all of them without a universe). Reconciliation: our adjusted 20-day ratio vs the vendor's `adj_close_vendor` ratio within 0.5% | Row failures <= 0.1% of rows; 0 unexplained ten-fold jumps near eligible rows; unexplained jumps <= 0.05% of ticker-days outside the rejected spans; reconciliation >= 99.5% | HARD for row failures and 10x jumps near eligible rows; WARN for the rest |
-| **G3** Price completeness | For tickers with vendor data: priced days / expected trading days (from the calendar) between each ticker's first and last price date, by year. Also gaps longer than 5 trading days inside a series, listed | >= 98% per year in aggregate; per ticker >= 95% (list below); gaps > 5 days listed | HARD for the 98% aggregate |
-| **G4** Survivorship coverage | `price_coverage` has a row for every ticker in `etf_holdings`; `gap` rows all have a `gap_reason`; the yearly missing-share table and the caveat file are produced. Missing share of member-days above `survivorship_warn_pct` (2%) in any year is a WARN printed in the caveat; above `survivorship_ack_pct` (10%) a model generation may not be promoted to production without an owner acknowledgement recorded in the report (decision D3) | Report always produced; thresholds in `config/quality_gates.toml` | HARD for completeness, WARN at 2%, owner-ack gate at 10% |
-| **G5** Universe vs holdings | Unresolved identifiers <= 1% of snapshot ticker-rows (0.5% by weight); unparseable symbols <= 0.1%; every snapshot at most 45 days old at each date it is used; holdings count per snapshot within 25% of the trailing median (truncated-file detection); null sector <= 1% of member rows; earliest snapshot date and the resulting first eligible date reported | as stated | HARD |
+| **G3** Price completeness | For securities with vendor data: priced days / expected trading days (from the calendar) between each security's first and last price date, by year, counted in the calendar years in which it has an eligible `universe` day (owner, 2026-10-14: over whole series the years after a delisting, when a name trades over the counter, are 83% priced and pull 16 years under 98%). Also gaps longer than 5 trading days inside those years, listed | >= 98% per year in aggregate; per security >= 95% (list below); gaps > 5 days listed | HARD for the 98% aggregate |
+| **G4** Survivorship coverage | `price_coverage` has a row for every holding in `etf_holdings` with member days through the data end and every security with a price G2 did not reject; `gap` rows all have a `gap_reason`; the yearly missing-share table and the caveat file are produced. Membership exists from the first archived snapshot (D20), so the member days start there. Missing share of member-days above `survivorship_warn_pct` (2%) in any year is a WARN printed in the caveat; above `survivorship_ack_pct` (10%) a model generation may not be promoted to production without an owner acknowledgement recorded in the report (decision D3) | Report always produced; thresholds in `config/quality_gates.toml` | HARD for completeness, WARN at 2%, owner-ack gate at 10% |
+| **G5** Universe vs holdings | On the archived snapshots (D20): unresolved identifiers <= 1% of a snapshot's ticker-rows (0.5% by weight); unparseable symbols <= 0.1% of its equity lines (a right or warrant iShares files as equity is out of scope, D12, not unparseable); every snapshot at most 45 days old on each trading day it is used through the data end; holdings count per snapshot within 25% of the median of the ETF's earlier ones (truncated-file detection); null sector <= 1% of member rows (WARN: the SIC fallback sector on more than 5% of a year's member rows); earliest snapshot date and the first eligible date reported | as stated | HARD |
 | **G6** FRED completeness | Each series: no run of more than 5 missing business days (daily) or any missing month (monthly) since 2004; latest observation not older than its lag plus 5 days; `DGS3MO` has a value known (`known_from <= t`) for **every** trading day `t` in the panel range; the share of `lag_rule` rows per series is reported; deferred series (ICE BofA if history is short) are named | `DGS3MO` coverage 100%; others as stated | HARD for `DGS3MO`; WARN for others |
 | **G7** Filings | the `validate-filings` rules (§4) pass; staleness: for eligible `(ticker, t)` from 2011-07-01, the latest `fundamentals.filing_date <= t` is at most 135 days old; the quarterly EDGAR `form.idx` lists no 10-K/10-Q of a universe CIK that has XBRL facts in `companyfacts` but is absent from `fundamentals` (`index_misses`); those with no facts at the source are listed apart (`index_no_xbrl`, WARN; D23); revenue-tag switches with a level jump above 30% listed; TTM null share reported | staleness >= 97% of eligible ticker-days; index misses <= 1%; validate-filings: 0 FAIL | HARD for validate-filings and index misses; WARN for the rest |
 | **G8** Events | Every CIK of `security_master` has a submissions chunk; `items` is non-empty for >= 99% of 8-K rows; every ticker whose series ends more than 10 trading days before the data end has a `delistings` row or is listed as a gap | as stated | WARN |
-| **G9** Replay determinism | Re-parse a random 2% of chunks from the landing zone: stage hashes equal the recorded ones; each lake partition's recorded `inputs_hash` equals the recomputed one | 0 differences | HARD |
+| **G9** Replay determinism | Re-parse a random 2% of chunks from the landing zone: stage hashes equal the recorded ones; each lake partition's recorded `inputs_hash` equals the recomputed one (each dataset's latest compaction). The EODHD chunks (99% of the stage files) are re-parsed with the FIGI and ticker their stage file carries; the SEC, ALFRED and iShares stage files are re-hashed only, as their parsers need a whole job's context | 0 differences | HARD |
 | **G10** Cross-source | Only with a second price source: as-traded close relative difference above 0.5% on more than 0.1% of common days WARN, above 1% FAIL. With one source: reported "not applicable", never "passed" | n/a | WARN/HARD when active |
+
+**Every gate built (2026-10-14).** G1, G3, G5, G6 and G9 joined `quant-ingest gates`, and
+G4 `preflight()`. First run over the 2026-10-13 lake (data end 2026-10-09): every HARD check
+passes and `preflight()` passes.
+- **G1**: 0 offending chunks; 3,419 sampled bodies re-hashed; all 18,032 raw hashes of the
+  four datasets landed. The first run failed on two rule gaps: 117 EODHD codes whose prices
+  answered "no data" still had landed splits and dividends (now kept raw), and 66 failed 13(f)
+  list candidates (63 at a URL the SEC does not use for the quarter, 3 for 2026q4, not yet
+  posted). `quant-ingest identity` marks a superseded candidate `gone` from its next run.
+- **G3**: the worst year is 2018 at 99.84% over 38,231 eligible security-years. WARN: 37
+  securities under 95%, 83 gaps over 5 trading days.
+- **G5**: no snapshot is used on or before the data end yet. The first run failed
+  `unparseable` on one line per ETF, UWM Holdings' rights (`UWMC-R-W`, filed as equity, out
+  of scope under D12); the iShares parser now drops such a line as `not_common`.
+- **G6**: DGS3MO known on all 4,722 panel days from 2008-01-03. WARN: the October 2025 CPI
+  and unemployment rate (not published during the federal shutdown) and the two ICE BofA
+  series that start in 2023.
+- **G9**: the 7 datasets' inputs hashes match; 0 of 650 sampled stage files differ, 645 of
+  them re-parsed from their landed EODHD bodies.
+- **G4**: no member day yet; every security with an unrejected price has a coverage row.
 
 **Built in `quant-ingest gates` (2026-10-12): G0, G2, G7, G8.** First G0/G2 run over
 24.7M bars: G0 0 differing dates; G2 rows 0.0099% (2,442), ten-fold jumps 8,076 (HARD FAIL:

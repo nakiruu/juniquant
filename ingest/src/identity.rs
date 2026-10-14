@@ -2304,12 +2304,14 @@ pub mod run {
                 .checked_add_months(chrono::Months::new(3))
                 .and_then(|d| d.pred_opt())
                 .unwrap_or(start);
-            for (i, (ext, url)) in super::list_urls(y, q).into_iter().enumerate() {
+            let urls = super::list_urls(y, q);
+            for (i, (ext, url)) in urls.iter().enumerate() {
+                let (ext, url) = (*ext, url.as_str());
                 let chunk = format!("{y}q{q}-{i}.{ext}");
                 let r = Request {
                     entity: "13flist",
                     chunk: &chunk,
-                    url: &url,
+                    url,
                     ext,
                     cost: 1,
                     dataset: "security_master",
@@ -2324,6 +2326,14 @@ pub mod run {
                 let Some(bytes) = body(&job.manifest, (job.sec.spec.id, "13flist", &chunk))? else {
                     continue;
                 };
+                // The SEC posts a quarter's list at one URL: the candidates tried before it are
+                // not there, so they stop being retried (gate G1).
+                for (j, (e, _)) in urls.iter().enumerate().take(i) {
+                    job.manifest.supersede(
+                        (job.sec.spec.id, "13flist", &format!("{y}q{q}-{j}.{e}")),
+                        &format!("the list is at {chunk}"),
+                    )?;
+                }
                 let text = if ext == "pdf" {
                     tokio::task::spawn_blocking(move || super::pdf_text(&bytes))
                         .await

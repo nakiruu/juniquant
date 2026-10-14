@@ -95,6 +95,39 @@ pub fn compact(
     compact_sources(lake, manifest, stage, &[source], dataset)
 }
 
+/// `(stage_path, stage_sha256, parse_version)`.
+pub type StageFile = (String, String, String);
+
+/// The stage files of `sources` for `dataset` in compaction order and their inputs hash, the
+/// one a compaction records for its partition (gate G9 recomputes it).
+///
+/// # Errors
+///
+/// Manifest errors.
+pub fn inputs(
+    manifest: &Manifest,
+    stage: &Path,
+    sources: &[&str],
+    dataset: &str,
+) -> Result<(Vec<StageFile>, String), StageError> {
+    let mut files: Vec<StageFile> = Vec::new();
+    for source in sources {
+        let prefix = stage.join(dataset).join(source);
+        files.extend(
+            manifest
+                .stage_files(source)?
+                .into_iter()
+                .filter(|(p, _, _)| Path::new(p).starts_with(&prefix)),
+        );
+    }
+    let lines: Vec<String> = files
+        .iter()
+        .map(|(_, sha, ver)| format!("{sha}:{ver}"))
+        .collect();
+    let hash = sha256_hex(lines.join("\n").as_bytes());
+    Ok((files, hash))
+}
+
 /// Rebuild `dataset` from the stage files of several sources, in the order given: on a
 /// duplicate key the earlier source's row is kept (`fundamentals`: the bulk zip before the
 /// daily API deltas).
@@ -110,22 +143,8 @@ pub fn compact_sources(
     sources: &[&str],
     dataset: &str,
 ) -> Result<Compacted, StageError> {
-    let mut files: Vec<(String, String, String)> = Vec::new();
-    for source in sources {
-        let prefix = stage.join(dataset).join(source);
-        files.extend(
-            manifest
-                .stage_files(source)?
-                .into_iter()
-                .filter(|(p, _, _)| Path::new(p).starts_with(&prefix)),
-        );
-    }
+    let (files, inputs_hash) = inputs(manifest, stage, sources, dataset)?;
     let source = sources.join("+");
-    let inputs: Vec<String> = files
-        .iter()
-        .map(|(_, sha, ver)| format!("{sha}:{ver}"))
-        .collect();
-    let inputs_hash = sha256_hex(inputs.join("\n").as_bytes());
     let partition = format!("{source}/*");
     if manifest.partition_inputs(dataset, &partition)?.as_deref() == Some(inputs_hash.as_str()) {
         return Ok(Compacted::Unchanged);
