@@ -36,8 +36,34 @@ function coverage_table(holdings, master, price_dates, delistings, tdays, data_e
             Dict(String(f) => e for (f, e) in zip(master.figi, master.exchange)) : Dict()
     delist = Dict(String(delistings.figi[i]) => i for i in eachindex(delistings.figi)
                   if delistings.figi[i] !== missing)
-    days = Dict{Tuple{Union{Missing,String},String},Set{Date}}()
-    for etf in unique(holdings.etf)
+    days = member_days(holdings, mticker, tdays, data_end)
+    ctx = (mcik, mexch, delistings, delist, tdays, data_end, built_at, rejected)
+    out = [coverage_row(key, sort!(collect(keys(d))), key[1] === missing ? Date[] :
+                        get(price_dates, key[1], Date[]), ctx) for (key, d) in days]
+    members = Set(k[1] for k in keys(days) if k[1] !== missing)
+    for (f, (a, z)) in spans
+        f in members || push!(out, coverage_row((f, get(mticker, f, f)), Date[], [a, z], ctx))
+    end
+    sort!(out; by = r -> (coalesce(r.figi, ""), r.ticker))
+    return NamedTuple{keys(COVERAGE)}(Tuple(T[r[c] for r in out] for (c, T) in pairs(COVERAGE)))
+end
+
+"""
+    member_days(holdings, mticker, tdays, data_end) -> Dict
+
+The member days of each holding, keyed `(figi, ticker)` (the `security_master` ticker, else
+the holdings one; `figi` is `missing` for a holding without one), each with its weight: the
+trading days from a snapshot's `available_date` to the day before its ETF's next one,
+through `data_end`. A name both ETFs hold weighs its IWF weight (QUERY-PATTERNS.md).
+
+# Example
+```julia
+d = member_days(holdings, Dict("BBG000B9XRY4" => "AAPL"), tdays, Date(2026, 10, 30))
+```
+"""
+function member_days(holdings, mticker, tdays, data_end)
+    days = Dict{Tuple{Union{Missing,String},String},Dict{Date,Float64}}()
+    for etf in sort!(unique(holdings.etf))  # IWF before IWP: the first weight stays
         rows = [i for i in eachindex(holdings.etf) if holdings.etf[i] == etf]
         av = sort!(unique(holdings.available_date[rows]))
         for i in rows
@@ -49,18 +75,12 @@ function coverage_table(holdings, master, price_dates, delistings, tdays, data_e
             f = holdings.figi[i]
             key = f === missing ? (missing, String(holdings.ticker[i])) :
                   (String(f), get(mticker, String(f), String(holdings.ticker[i])))
-            union!(get!(days, key, Set{Date}()), span)
+            w = hasproperty(holdings, :weight) ? coalesce(holdings.weight[i], 0.0) : 0.0
+            d = get!(days, key, Dict{Date,Float64}())
+            foreach(t -> get!(d, t, w), span)
         end
     end
-    ctx = (mcik, mexch, delistings, delist, tdays, data_end, built_at, rejected)
-    out = [coverage_row(key, sort!(collect(d)), key[1] === missing ? Date[] :
-                        get(price_dates, key[1], Date[]), ctx) for (key, d) in days]
-    members = Set(k[1] for k in keys(days) if k[1] !== missing)
-    for (f, (a, z)) in spans
-        f in members || push!(out, coverage_row((f, get(mticker, f, f)), Date[], [a, z], ctx))
-    end
-    sort!(out; by = r -> (coalesce(r.figi, ""), r.ticker))
-    return NamedTuple{keys(COVERAGE)}(Tuple(T[r[c] for r in out] for (c, T) in pairs(COVERAGE)))
+    return days
 end
 
 const COVERAGE = (figi = Union{Missing,String}, ticker = String, cik = Union{Missing,String},

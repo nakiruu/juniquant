@@ -101,7 +101,7 @@ uuid = "e2ba6199-217a-4e67-a87a-7c52f15ade04"
 version = "0.1.11"
 
 [[deps.Features]]
-deps = ["Arrow", "Dates", "LakeIO", "NYSECalendar", "TOML"]
+deps = ["Arrow", "Dates", "JSON3", "LakeIO", "NYSECalendar", "TOML"]
 path = "features"
 uuid = "5b0d4f1e-8a3c-4c2e-9f6d-2a7b1c9e4d30"
 version = "0.1.0"

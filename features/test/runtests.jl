@@ -207,4 +207,46 @@ row(u, f, d, prices) = only(r for r in eachindex(u.src) if prices.figi[u.src[r]]
         @test c.exclusion_reason[at(T[105])] == "data_quality" && !c.eligible[at(T[105])]
         @test c.exclusion_reason[at(T[300])] == "data_quality" && c.eligible[at(T[800])]
     end
+
+    @testset "preflight" begin
+        md = member_days(holdings, Dict("A" => "AAA", "C" => "CCC", "E" => "EEE"), T, T[800])
+        @test length(md[("A", "AAA")]) == 11
+        @test all(==(1.5), values(md[("A", "AAA")]))  # IWF's weight, not IWP's 0.5
+        @test haskey(md, (missing, "DDD"))
+        cov = (figi = S["A", "C", missing, "Z"], ticker = ["AAA", "CCC", "DDD", "ZZZ"],
+               coverage_status = ["complete", "gap", "gap", "gap"],
+               gap_reason = S[missing, "vendor_no_data", "identity_unresolved", missing])
+        th = Dict("warn_pct" => 2.0, "ack_pct" => 10.0)
+        checks, years = g4(md, cov, Set(["A", "C", "Q"]), Dict("A" => Set(T[790:800])), th)
+        st = Dict(c.chunk => c.status for c in checks)
+        @test st["coverage_rows"] == "FAIL"  # holding E and priced Q have no row
+        @test only(c.note for c in checks if c.chunk == "coverage_rows") ==
+              "2 holdings or priced securities without a price_coverage row: E Q"
+        @test st["gap_reasons"] == "FAIL"  # Z
+        @test st["missing_share"] == "WARN"
+        @test sum(y.member_days for y in years) == 44  # A, C, E and DDD on 11 days
+        @test sum(y.missing_days for y in years) == 33  # all but A's
+        @test all(y.missing_pct_by_weight == round(100 * 0.3 / 1.8; digits = 2) for y in years)
+        @test mergewith(+, (y.by_reason for y in years)...) ==
+              Dict("vendor_no_data" => 11, "identity_unresolved" => 11, "no_coverage_row" => 11)
+        one = (figi = S["A"], ticker = ["AAA"], coverage_status = ["complete"], gap_reason = S[missing])
+        ok, none = g4(Dict(), one, Set(["A"]), Dict(), th)  # before the first member day
+        @test all(c.status == "OK" for c in ok) && isempty(none)
+        dq = (source = ["Gate", "Gate", "Gate", "Gate", "Gate"],
+              check_id = S["G2", "G2", "G2", "G7", "G2"],
+              run_id = ["20261013T100000Z-gates", "20261013T200000Z-gates",
+                        "20261013T200000Z-gates", "20261013T200000Z-gates",
+                        "20261013T200000Z-gates"],
+              entity = ["*", "*", "*", "*", "BBG000B9XRY4"],
+              chunk = ["rows", "rows", "ten_fold", "staleness", "rows 2024-01-02 high < low"],
+              status = ["FAIL", "OK", "OK", "FAIL", "OK"],
+              measured = Union{Missing,Float64}[0.01, 0.0, 0.0, 0.9, missing],
+              threshold = Union{Missing,Float64}[0.001, 0.001, 0.0, 0.97, missing],
+              notes = S["a", "b", "c", "d", "e"])
+        v = gate_verdict(dq, "G2", DateTime(2026, 10, 13, 15))
+        @test v.passed && v.run_id == "20261013T200000Z-gates" && length(v.checks) == 2
+        @test !gate_verdict(dq, "G2", DateTime(2026, 10, 13, 21)).passed  # lake rewritten since
+        @test !gate_verdict(dq, "G7", DateTime(2026, 10, 13, 15)).passed
+        @test gate_verdict(dq, "G9", DateTime(2026)).run_id === missing
+    end
 end

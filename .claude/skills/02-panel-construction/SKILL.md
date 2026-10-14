@@ -21,7 +21,7 @@ appended security key `figi` (D20).
 
 The panel is **not** built until the data-quality gates pass
 (`01-data-ingestion/QUALITY-GATES.md`; `preflight()` is the first stage of the
-build). The build writes the survivorship caveat
+build, `features/src/preflight.jl`, built 2026-10-14). The build writes the survivorship caveat
 (`01-data-ingestion/SURVIVORSHIP.md` §4) next to the panel and refuses to
 finish without it.
 

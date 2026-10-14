@@ -186,7 +186,11 @@ such) so a reader sees the order of magnitude of the worst plausible effect.
 
 ### The caveat artifact
 
-The panel build writes `reports/survivorship_caveat.json`:
+The panel build writes `reports/survivorship_caveat.json`. Its first stage, `preflight()`
+(2026-10-14), writes the gates passed, the thresholds, the yearly table of gate G4 (from the
+first archived snapshot, D20) and, for the broad universe, the count of EODHD codes the
+latest identity run left without a key (`broad_universe`); the panel build adds `labels`
+and `bias_bound`:
 
 ```json
 {
@@ -196,12 +200,16 @@ The panel build writes `reports/survivorship_caveat.json`:
   "price_source": "eodhd",
   "other_price_sources": [],
   "gates_passed": ["G0", "G1", "..."],
+  "thresholds": {"warn_pct": 2.0, "ack_pct": 10.0},
   "years": [
-    {"year": 2012, "member_days": 0, "missing_days": 0,
+    {"year": 2027, "member_days": 0, "missing_days": 0,
      "missing_pct_by_count": 0.0, "missing_pct_by_weight": 0.0,
      "by_reason": {"vendor_no_data": 0, "vendor_truncated": 0, "late_start": 0,
-                   "symbol_reused": 0, "identity_unresolved": 0, "internal_gaps": 0}}
+                   "symbol_reused": 0, "identity_unresolved": 0, "internal_gaps": 0,
+                   "complete": 0}}
   ],
+  "broad_universe": {"identity_run": "20261013T152623Z-identity",
+                     "identity_unresolved_codes": 0},
   "labels": {"63d": {"by_year": {"2012": {"bankrupt": 0, "acquired": 0,
              "survivorship_gap": 0, "immature": 0, "data_gap": 0}}}},
   "bias_bound": {"r_missing": [-1.0, -0.5, 0.0], "by_year": {}},
@@ -209,7 +217,9 @@ The panel build writes `reports/survivorship_caveat.json`:
 }
 ```
 
-(The zeros are placeholders; the values come from the first run.)
+(The zeros are placeholders; the values come from the first run. `by_reason` splits the
+missing member days by the member's `gap_reason`, else its `coverage_status`: a `complete`
+member may miss up to 2% of its days.)
 
 **It is attached to every training and evaluation artifact.** A model
 directory under `models/` contains a copy `SURVIVORSHIP_CAVEAT.json` and the
